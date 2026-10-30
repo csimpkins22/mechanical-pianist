@@ -8,6 +8,7 @@ import type { CameraMode } from '../presentation/CinematicCamera';
 import { DEFAULT_LOOK } from '../presentation/SceneRenderer';
 import { DEFAULT_LIGHTS } from '../presentation/Environment';
 import { DEFAULT_FRAMING } from '../presentation/CinematicCamera';
+import { ROOMS, type RoomId } from '../audio/AudioEngine';
 
 const ICON = {
   play: '<path d="M8 5.5v13l11-6.5z"/>',
@@ -48,7 +49,7 @@ export class AppUI {
   private title!: HTMLDivElement;
   private drawer!: HTMLDivElement;
   private drawerBody!: HTMLDivElement;
-  private tab: 'fingering' | 'look' | 'debug' = 'fingering';
+  private tab: 'fingering' | 'look' | 'sound' | 'debug' = 'fingering';
   private camBtns: Record<CameraMode, HTMLButtonElement> = {} as never;
   private volBtn!: HTMLButtonElement;
   private loopBtn!: HTMLButtonElement;
@@ -126,7 +127,7 @@ export class AppUI {
       if (this.demoSel.value === 'file') this.pickFile();
       else this.app.loadDemo(this.demoSel.value as DemoId);
     };
-    const gear = this.btn(ICON.gear, 'Fingering, look and debug (A)', () => this.toggleDrawer());
+    const gear = this.btn(ICON.gear, 'Fingering, look, sound and debug (A)', () => this.toggleDrawer());
     right.append(this.speedSel, this.loopBtn, this.volBtn, vol, open, this.demoSel, gear);
     row.append(left, mid, right);
     this.bar.append(scrub, row);
@@ -139,6 +140,7 @@ export class AppUI {
     for (const [id, label] of [
       ['fingering', 'Fingering'],
       ['look', 'Look'],
+      ['sound', 'Sound'],
       ['debug', 'Debug'],
     ] as const) {
       const b = el('button', 'tab', label);
@@ -466,6 +468,7 @@ export class AppUI {
     body.innerHTML = '';
     if (this.tab === 'fingering') this.renderFingering(body);
     else if (this.tab === 'look') this.renderLook(body);
+    else if (this.tab === 'sound') this.renderSound(body);
     else this.renderDebugTab(body);
   }
 
@@ -545,28 +548,46 @@ export class AppUI {
     return row;
   }
 
+  private slider(body: HTMLElement, label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt = (v: number) => v.toFixed(2)) {
+    const row = el('label', 'slider');
+    const lab = el('span', '', label);
+    const inp = el('input') as HTMLInputElement;
+    inp.type = 'range';
+    inp.min = String(min);
+    inp.max = String(max);
+    inp.step = String(step);
+    inp.value = String(get());
+    const val = el('span', 'val', fmt(get()));
+    inp.oninput = () => {
+      set(parseFloat(inp.value));
+      val.textContent = fmt(parseFloat(inp.value));
+      this.app.renderNow();
+    };
+    row.append(lab, inp, val);
+    body.appendChild(row);
+  }
+
+  private renderSound(body: HTMLElement) {
+    const audio = this.app.audio;
+    body.appendChild(el('div', 'sec', 'Room'));
+    const room = el('select') as HTMLSelectElement;
+    for (const [id, r] of Object.entries(ROOMS)) room.appendChild(new Option(r.label, id, id === audio.room, id === audio.room));
+    room.onchange = () => audio.setReverb(audio.reverb, room.value as RoomId);
+    const row = el('label', 'slider');
+    row.append(el('span', '', 'Acoustics'), room);
+    body.appendChild(row);
+    this.slider(body, 'Reverb', 0, 1, 0.01, () => audio.reverb, (v) => audio.setReverb(v), (v) => `${Math.round(v * 100)}%`);
+    body.appendChild(
+      el('p', 'note', 'The piano is FreePats\' Upright Piano KW, recorded in a living room, so a little of that room is always there. The reverb adds the chosen space on top.'),
+    );
+  }
+
   private renderLook(body: HTMLElement) {
     const a = this.app;
     const look = a.view.look;
     const sec = (title: string) => body.appendChild(el('div', 'sec', title));
-    const slider = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void) => {
-      const row = el('label', 'slider');
-      const lab = el('span', '', label);
-      const inp = el('input') as HTMLInputElement;
-      inp.type = 'range';
-      inp.min = String(min);
-      inp.max = String(max);
-      inp.step = String(step);
-      inp.value = String(get());
-      const val = el('span', 'val', get().toFixed(2));
-      inp.oninput = () => {
-        set(parseFloat(inp.value));
-        val.textContent = parseFloat(inp.value).toFixed(2);
-        a.renderNow();
-      };
-      row.append(lab, inp, val);
-      body.appendChild(row);
-    };
+    const slider = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void) =>
+      this.slider(body, label, min, max, step, get, set);
     sec('Light');
     slider('Window sun', 0, 1.8, 0.01, () => a.lights.sun, (v) => a.setLights({ sun: v }));
     slider('Warmth', 0, 1, 0.01, () => a.lights.warmth, (v) => a.setLights({ warmth: v }));

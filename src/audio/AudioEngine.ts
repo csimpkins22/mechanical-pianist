@@ -5,7 +5,8 @@
 // two or three semitones, pitch-shifted to the notes in between) with
 // per-voice brightness from velocity, damper behaviour from the sustain pedal
 // (via the timeline's release times), undamped top octaves, quiet key-release
-// noises and a small synthesized room. If the samples cannot be loaded a
+// noises and an adjustable synthesized room (a convolution reverb whose
+// impulse response is generated here). If the samples cannot be loaded a
 // synthesized piano takes over. Nothing is ever started without a user gesture.
 import type { PerformanceNote } from '../core/types';
 import type { PerformanceTimeline } from '../performance/PerformanceTimeline';
@@ -48,11 +49,21 @@ interface Layer {
 
 export type AudioStatus = 'idle' | 'loading' | 'samples' | 'synth' | 'error';
 
+/** rooms for the reverb: decay time (RT60, s), pre-delay (s), size of the early reflections (s), brightness (0..1) */
+export const ROOMS = {
+  studio: { label: 'Small room', rt60: 0.45, pre: 0.004, early: 0.02, bright: 0.45 },
+  parlour: { label: 'Parlour', rt60: 1.1, pre: 0.009, early: 0.035, bright: 0.4 },
+  hall: { label: 'Recital hall', rt60: 2.1, pre: 0.018, early: 0.06, bright: 0.35 },
+  church: { label: 'Stone church', rt60: 4.2, pre: 0.03, early: 0.09, bright: 0.3 },
+} as const;
+export type RoomId = keyof typeof ROOMS;
+
 export class AudioEngine {
   ctx: AudioContext | null = null;
   private master!: GainNode;
   private dry!: GainNode;
   private wet!: GainNode;
+  private verb: { conv: ConvolverNode; out: GainNode } | null = null;
   private layers: Layer[] = [];
   private gain = 1;
   private release = new Map<number, AudioBuffer>();
@@ -66,6 +77,9 @@ export class AudioEngine {
   status: AudioStatus = 'idle';
   volume = 0.8;
   muted = false;
+  /** reverb amount, 0 (dry) .. 1 (very wet) */
+  reverb = 0.3;
+  room: RoomId = 'parlour';
   onStatus?: (s: AudioStatus) => void;
 
   constructor(private base: string) {}
@@ -88,11 +102,8 @@ export class AudioEngine {
     this.master.connect(comp).connect(ctx.destination);
     this.dry = ctx.createGain();
     this.wet = ctx.createGain();
-    this.wet.gain.value = 0.14; // the samples already carry their living room
-    const verb = ctx.createConvolver();
-    verb.buffer = this.roomImpulse(ctx);
     this.dry.connect(this.master);
-    this.wet.connect(verb).connect(this.master);
+    this.applyReverb(true);
     this.setStatus('loading');
     try {
       await this.loadSamples(ctx);
@@ -141,22 +152,81 @@ export class AudioEngine {
     ).catch(() => undefined);
   }
 
-  /** a small, dark wooden room: decaying stereo noise */
-  private roomImpulse(ctx: AudioContext): AudioBuffer {
-    const len = Math.floor(ctx.sampleRate * 1.6);
-    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-    let s = 99;
+  /**
+   * A room's impulse response: a few discrete early reflections, then a
+   * dense, decorrelated stereo tail that decays exponentially (to -60 dB at
+   * RT60) and darkens as it goes, as air and soft furnishings take the highs
+   * first. Normalised to the same energy for every room, so the amount
+   * setting means the same thing whichever room is chosen.
+   */
+  private roomImpulse(ctx: AudioContext, id: RoomId): AudioBuffer {
+    const room = ROOMS[id];
+    const sr = ctx.sampleRate;
+    const len = Math.floor(sr * (room.pre + room.rt60 * 1.1 + 0.05));
+    const buf = ctx.createBuffer(2, len, sr);
+    let s = 1234;
     const rnd = () => ((s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296) * 2 - 1;
+    const k = Math.log(1000) / room.rt60; // amplitude decay rate for -60 dB at rt60
+    let energy = 0;
     for (let c = 0; c < 2; c++) {
       const d = buf.getChannelData(c);
-      let lp = 0;
-      for (let i = 0; i < len; i++) {
-        const t = i / ctx.sampleRate;
-        lp += (rnd() - lp) * (0.35 - 0.2 * Math.min(1, t / 1.2)); // darker as it decays
-        d[i] = lp * Math.exp(-t * 3.4) * (t < 0.008 ? t / 0.008 : 1);
+      const pre = Math.floor(room.pre * sr);
+      // early reflections: sparse taps, alternating sign, thinning out
+      for (let r = 0; r < 14; r++) {
+        const t = room.pre + room.early * Math.pow((r + 1 + 0.5 * rnd()) / 14, 1.4);
+        const i = Math.floor(t * sr);
+        if (i < len) d[i] += (rnd() > 0 ? 1 : -1) * 0.55 * Math.exp(-k * (t - room.pre)) * (1 - r / 18);
       }
+      // the diffuse tail fades in over the early-reflection window
+      let lp = 0;
+      for (let i = pre; i < len; i++) {
+        const t = (i - pre) / sr;
+        const cut = room.bright * (0.45 + 0.55 * Math.exp(-t / (room.rt60 * 0.35)));
+        lp += (rnd() - lp) * cut;
+        const onset = Math.min(1, t / Math.max(0.005, room.early));
+        d[i] += lp * Math.exp(-k * t) * onset * onset * 0.6;
+      }
+      for (let i = 0; i < len; i++) energy += d[i] * d[i];
+    }
+    const norm = 1 / Math.sqrt(energy / 2);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] *= norm;
     }
     return buf;
+  }
+
+  /** set the reverb amount (0..1) and/or room; a room change crossfades to the new impulse */
+  setReverb(amount: number, room: RoomId = this.room) {
+    const changed = room !== this.room;
+    this.reverb = amount;
+    this.room = room;
+    if (this.ctx) this.applyReverb(changed);
+  }
+
+  private applyReverb(rebuild: boolean) {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    // the samples already carry a little of their own living room, so even
+    // "dry" keeps that; the dry level dips a touch as the room gets wetter
+    this.dry.gain.setTargetAtTime(1 - 0.25 * this.reverb, now, 0.05);
+    this.wet.gain.setTargetAtTime(0.55 * Math.pow(this.reverb, 1.3), now, 0.05);
+    if (!rebuild && this.verb) return;
+    const old = this.verb;
+    const conv = ctx.createConvolver();
+    conv.buffer = this.roomImpulse(ctx, this.room);
+    const out = ctx.createGain();
+    out.gain.value = old ? 0 : 1;
+    this.wet.connect(conv).connect(out).connect(this.master);
+    if (old) {
+      out.gain.setTargetAtTime(1, now, 0.08);
+      old.out.gain.setTargetAtTime(0, now, 0.08);
+      setTimeout(() => {
+        this.wet.disconnect(old.conv);
+        old.out.disconnect();
+      }, 600);
+    }
+    this.verb = { conv, out };
   }
 
   setVolume(v: number) {

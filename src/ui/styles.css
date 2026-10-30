@@ -118,6 +118,8 @@ input.vol { width: 72px; accent-color: var(--accent); }
 .slider { display: grid; grid-template-columns: 104px 1fr 38px; align-items: center; gap: 8px; padding: 3px 0; color: var(--ink-dim); font-size: 12px; }
 .slider input { accent-color: var(--accent); width: 100%; }
 .slider .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-faint); font-size: 11px; }
+.slider select { grid-column: 2 / 4; width: 100%; }
+.drawer-body p.note { color: var(--ink-faint); font-size: 11.5px; line-height: 1.5; margin: 12px 0 0; }
 .check { display: flex; gap: 8px; align-items: center; color: var(--ink); padding: 4px 0 10px; }
 .legend { color: var(--ink-dim); font-size: 12px; display: grid; gap: 4px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: -1px; }
