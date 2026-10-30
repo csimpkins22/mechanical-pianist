@@ -23,7 +23,7 @@ export interface LightSettings {
   rim: number;
 }
 
-export const DEFAULT_LIGHTS: LightSettings = { sun: 1, warmth: 0.6, fill: 1, rim: 1 };
+export const DEFAULT_LIGHTS: LightSettings = { sun: 1, warmth: 0.65, fill: 0.7, rim: 1 };
 
 export class Environment {
   readonly root = new THREE.Group();

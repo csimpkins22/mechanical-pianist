@@ -59,13 +59,23 @@ varying vec2 vUv;
 ${depthFns}
 void main() {
   vec2 o = uTexel * 0.5;
-  vec3 c = texture2D(tColor, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, -o.y)).rgb
-         + texture2D(tColor, vUv + vec2(-o.x, o.y)).rgb + texture2D(tColor, vUv + vec2(o.x, o.y)).rgb;
   float d = min(min(texture2D(tDepth, vUv + vec2(-o.x, -o.y)).r, texture2D(tDepth, vUv + vec2(o.x, -o.y)).r),
                 min(texture2D(tDepth, vUv + vec2(-o.x, o.y)).r, texture2D(tDepth, vUv + vec2(o.x, o.y)).r));
-  c *= 0.25;
+  // colour through a wider tent (about 3 half-res pixels), so a tiny bright
+  // highlight covers enough of the half-res image for the spiral gather to
+  // catch it everywhere: a soft disc, not the gather's own sample pattern
+  vec3 c = vec3(0.0);
+  float wsum = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      float w = (2.0 - abs(float(x))) * (2.0 - abs(float(y)));
+      c += texture2D(tColor, vUv + vec2(float(x), float(y)) * uTexel * 3.0).rgb * w;
+      wsum += w;
+    }
+  }
+  c /= wsum;
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c *= min(1.0, 24.0 / max(l, 1e-4));
+  c *= min(1.0, 16.0 / max(l, 1e-4));
   gl_FragColor = vec4(c, linearDepth(d));
 }
 `;
@@ -86,9 +96,12 @@ void main() {
   float nearW = 0.0;
   float radius = uRadScale;
   float maxR = uMaxCoc * 0.5;
+  // turn the spiral by a fixed per-pixel angle (interleaved gradient noise),
+  // so what the sparse gather leaves is fine noise, not a repeated pattern
+  float spin = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   for (int i = 0; i < 160; i++) {
     if (radius >= maxR) break;
-    float ang = float(i) * GOLDEN_ANGLE;
+    float ang = float(i) * GOLDEN_ANGLE + spin;
     vec2 tc = vUv + vec2(cos(ang), sin(ang)) * uHalfTexel * radius;
     vec4 s = texture2D(tHalf, tc);
     float sc = cocOf(s.a);

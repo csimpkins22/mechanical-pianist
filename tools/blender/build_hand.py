@@ -9,12 +9,14 @@ the fingering model read, so the rig the planner reasons about is the rig on
 screen. Each articulated part is its own node with its origin on the joint
 pivot; the left hand is this hand mirrored at runtime.
 
-Design language: porcelain-white dorsal shells over a graphite inner frame;
-narrow seams reveal chrome tendon rods; every joint is a chrome barrel whose
-top is hooded by the parent segment's shell, cut high at the sides so the
-pin caps show. Cyan light marks the knuckles (MCP), the middle joints (PIP),
-the thumb base and the wrist. Fingertips end in a soft elastomer pad shaped as a sphere
-of `tipRadius` around the IK's contact centre.
+Design language: smooth porcelain capsules between exposed chrome joint
+barrels; a single porcelain shell over the back of the hand carrying a thin
+cyan circle; iridescent glass on the thumb side and around the wrist, with
+lit mechanics behind it; a chrome wrist collar and a plain porcelain forearm.
+Cyan rings mark the barrel ends at the knuckles (MCP), the middle joints (PIP)
+and the thumb. Fingertips are long, rounded and white, with a pale matte pad
+underneath; the tip's underside follows a sphere of `tipRadius` around the
+IK's contact centre.
 
 Node hierarchy (three.js names):
     Hand (wrist pivot)
@@ -37,7 +39,7 @@ from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(__file__))
 from common import (MB, TAU, V, box, bake_masks, cyl_x, cyl_z, export_glb, lathe, lerp, mesh_objects, node, pill,  # noqa: E402
-                    scene, set_pose, sphere, tr, rot_x, rot_y, rot_z, torus_z, tri_count, tube, grid_surface, ALL)
+                    scene, set_pose, sphere, superellipse, tr, rot_x, rot_y, rot_z, torus_z, tri_count, tube, grid_surface, ALL)
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 SPEC = json.load(open(os.path.join(ROOT, "src", "core", "hand_spec.json")))
@@ -84,9 +86,8 @@ def barrel(mb, w, rb, band=False, side_glow=(False, False)):
 # Phalanges
 # -----------------------------------------------------------------------------
 def phalanx(name, f, k, parent, pos, is_thumb=False):
-    """Segment k of finger spec f, origin on its proximal joint. The dorsal
-    shell's distal end becomes a hood over the next joint's barrel, cut high at
-    the sides so the barrel's lit pin caps show."""
+    """Segment k of finger spec f, origin on its proximal joint: a smooth
+    porcelain capsule between two exposed chrome joint barrels."""
     L = f["segments"][k]
     w = f["widths"][k]
     h = f["heights"][k]
@@ -94,57 +95,42 @@ def phalanx(name, f, k, parent, pos, is_thumb=False):
     rt = f["tipRadius"]
     w2 = f["widths"][k + 1] if not last else 2 * rt
     h2 = f["heights"][k + 1] if not last else 2 * rt
-    rb = 0.38 * h
-    rb2 = 0.38 * h2
-    shell, pad, core, hw, glow, tend = MB(), MB(), MB(), MB(), MB(), MB()
+    rb = 0.47 * h
+    rb2 = 0.47 * h2
+    shell, pad, core, hw, glow = MB(), MB(), MB(), MB(), MB()
 
     if is_thumb and k == 0:
-        # CMC: a chrome ball socket with a light ring around the thumb's axis
-        sphere(hw, 0.0092, "chrome", 32, 16)
-        torus_z(glow, 0.0099, 0.0008, "glow", 48, 8, tr(0, 0, -0.0036))
-        torus_z(hw, 0.0102, 0.0012, "graphite", 48, 8, tr(0, 0, -0.0055))
-        z0 = -0.0058
+        # CMC: a chrome ball joint with a light ring around the thumb's axis
+        sphere(hw, 0.0094, "chrome", 32, 16)
+        torus_z(glow, 0.0101, 0.0008, "glow", 48, 8, tr(0, 0, -0.0034))
+        z0 = -0.0062
     else:
         joint = ["mcp", "pip", "dip"][k] if not is_thumb else ["cmc", "mcp", "ip"][k]
-        band = joint == "mcp" and not is_thumb
-        side = joint in ("pip",) or (is_thumb and joint == "mcp")
-        idx_side = (f.get("id") == 2, f.get("id") == 5)  # outer knuckles of the hand glow on their open side
-        side_glow = (side, side) if side else ((idx_side[0], idx_side[1]) if joint == "mcp" else (False, False))
-        barrel(hw, w, rb, band=band, side_glow=side_glow)
-        z0 = -(rb + 0.0009)
+        lit = joint in ("mcp", "pip") or (is_thumb and joint == "mcp")
+        barrel(hw, w, rb, band=False, side_glow=(lit, lit))
+        z0 = -(rb + 0.0007)
     wf = lambda u: lerp(w, w2, u)
     hf = lambda u: lerp(h, h2, u)
     if last:
+        # the fingertip: long, tapering, rounded; white all round, with a pale
+        # matte pad underneath where it meets the key
         z1 = -(L + rt)
         e1 = rt / abs(z1 - z0)
-        # distal: a tapering porcelain nail-shell above, an elastomer pad that
-        # wraps the rounded tip below; rounder toward the tip
-        n_of = lambda u: 2.4 - 0.4 * max(0.0, (u - 0.4) / 0.6)
-        wt = lambda u: lerp(w, 2 * rt, min(1.0, u * 1.15)) * (1 - 0.05 * math.sin(math.pi * min(1.0, u * 1.15)))
-        ht = lambda u: lerp(h, 2 * rt, min(1.0, u * 1.15))
-        pill(shell, "shell", z0, z1, wt, ht, n=n_of, e0=0.14, e1=e1, th=(-0.42, math.pi + 0.42), nu=36, nv=30)
-        pill(pad, "rubber", z0 - 0.0008, z1, lambda u: wt(u) * 0.965, lambda u: ht(u) * 0.99, n=n_of, e0=0.12, e1=e1,
-             th=(math.pi + 0.56, TAU - 0.56), nu=36, nv=14)
+        n_of = lambda u: 2.3 - 0.3 * max(0.0, (u - 0.4) / 0.6)
+        wt = lambda u: lerp(w, 2 * rt, min(1.0, u * 1.1))
+        ht = lambda u: lerp(h, 2 * rt, min(1.0, u * 1.1))
+        pill(shell, "shell", z0, z1, wt, ht, n=n_of, e0=0.2, e1=e1, th=(-0.62, math.pi + 0.62), nu=36, nv=32)
+        pill(pad, "pad", z0 - 0.0012, z1, lambda u: wt(u) * 0.985, lambda u: ht(u) * 0.995, n=n_of, e0=0.18, e1=e1,
+             th=(math.pi + 0.66, TAU - 0.66), nu=36, nv=12)
     else:
-        z1 = -(L - 0.0003)
-
-        def th_of(u):
-            q = max(0.0, (u - 0.62) / 0.38)
-            q = q * q * (3 - 2 * q)
-            return (lerp(-0.5, 0.5, q), lerp(math.pi + 0.5, math.pi - 0.5, q))
-
-        pill(shell, "shell", z0, z1, wf, lambda u: hf(u) * (1 + 0.06 * u), n=2.8, e0=0.16, e1=0.0, th=th_of,
-             nu=34, nv=30, yoff=lambda u: 0.0006 * u)
-        pill(pad, "shell", z0 - 0.0012, -(L - rb2 - 0.0014), lambda u: wf(u) * 0.92, lambda u: hf(u) * 0.985, n=2.8,
-             e0=0.22, e1=0.22, th=(math.pi + 0.95, TAU - 0.95), nu=24, nv=12)
-        for s in (-1, 1):  # tendon rods through the side seams
-            cyl_z(tend, 0.00042, z0 - 0.0004, -(L - rb2 - 0.0008), "chrome", 8, center=(s * w * 0.35, -h * 0.25))
+        z1 = -(L - rb2 - 0.0007)
+        pill(shell, "shell", z0, z1, wf, hf, n=2.3, e0=0.2, e1=0.2, nu=34, nv=36)
     # graphite inner frame, its ends buried in the barrels
-    pill(core, "graphite", -rb * 0.4, (-(L + rt * 0.1) if last else -(L - rb2 * 0.4)), lambda u: wf(u) * 0.64,
-         lambda u: hf(u) * 0.6, n=3.6, e0=0.08, e1=0.12, yoff=-h * 0.04, nu=16, nv=24)
-    parts = [(shell, {"solid": 0.0010, "bevel": 0.0003, "bseg": 2}),
+    pill(core, "graphite", -rb * 0.4, (-(L + rt * 0.1) if last else -(L - rb2 * 0.4)), lambda u: wf(u) * 0.5,
+         lambda u: hf(u) * 0.5, n=3.0, e0=0.08, e1=0.12, nu=12, nv=20)
+    parts = [(shell, {}),
              (pad, {"solid": 0.0009, "bevel": 0.00028, "bseg": 2}),
-             (core, {}), (hw, {}), (glow, {}), (tend, {})]
+             (core, {}), (hw, {}), (glow, {})]
     return node(name, parts, pos, parent)
 
 
@@ -169,24 +155,29 @@ def knuckle_line():
 
 def build_palm(parent):
     zk = knuckle_line()
-    shells, core, hw, pad, collar, rods, thenar = MB(), MB(), MB(), MB(), MB(), MB(), MB()
+    shells, core, hw, pad, collar, rods, thenar, glow = MB(), MB(), MB(), MB(), MB(), MB(), MB(), MB()
     xa_w, xb_w = -0.0285, 0.0335  # palm edges at the wrist end
     xa_k, xb_k = -0.0405, 0.0475  # and at the knuckles
     z_w = -0.0150
 
-    # three dorsal panels separated by seams that follow the metacarpals
+    # one smooth shell over the back of the hand
     def dorsal(u, v):
         # u: wrist -> knuckles, v: thumb side -> ulnar side
         xa = lerp(xa_w, xa_k, u)
         xb = lerp(xb_w, xb_k, u)
         xc = (xa + xb) / 2
         a = (xb - xa) / 2
-        ang = math.pi + 0.22 - (math.pi + 0.44) * v
+        # wrapped well down the sides, so the back of the hand reads as a solid form
+        # (deepest toward the wrist on the little-finger side; lifted at the knuckles to
+        # clear the MCP barrels, and on the thumb side to show the glass window below)
+        ext_u = lerp(1.05, 0.42, u ** 1.5)
+        ext_t = lerp(0.18, 0.42, u)
+        ang = math.pi + ext_t - (math.pi + ext_t + ext_u) * v
         c, s = math.cos(ang), math.sin(ang)
-        n = 2.5
-        x = xc + a * math.copysign(abs(c) ** (2 / n), c)
-        dome = lerp(0.0112, 0.0104, u)
-        y = 0.0012 + dome * math.copysign(abs(s) ** (2 / n), s)
+        n = 2.6
+        x = xc + 1.04 * a * math.copysign(abs(c) ** (2 / n), c)
+        dome = lerp(0.0128, 0.0118, u)
+        y = 0.0004 + dome * math.copysign(abs(s) ** (2 / n), s)
         # the panel ends follow the knuckle arc, scalloped over each knuckle
         zend = zk(x) + 0.0042
         sc = 0.0
@@ -220,16 +211,37 @@ def build_palm(parent):
         from common import thick_patch
         thick_patch(shells, surf, 30, nv, 0.0013, "shell", "shell_inner")
 
-    patch(0.0, 0.285, 10)
-    patch(0.295, 0.705, 16)
-    patch(0.715, 1.0, 10)
+    patch(0.0, 1.0, 40)
+
+    # the emblem: a thin ring of light set into the shell, over the middle metacarpal
+    def on_shell(x, z):
+        u, v = 0.55, 0.5
+        for _ in range(12):
+            p = dorsal(u, v)
+            e = 1e-4
+            pu = (dorsal(u + e, v) - p) / e
+            pv = (dorsal(u, v + e) - p) / e
+            # solve [pu pv] (du dv) = (dx dz) in the x-z plane
+            det = pu.x * pv.z - pv.x * pu.z
+            dx, dz = x - p.x, z - p.z
+            u += (dx * pv.z - pv.x * dz) / det
+            v += (pu.x * dz - dx * pu.z) / det
+        p = dorsal(u, v)
+        e = 1e-4
+        nrm = ((dorsal(u, v + e) - p).cross(dorsal(u + e, v) - p)).normalized()
+        if nrm.y < 0:
+            nrm = -nrm
+        return p + nrm * 0.0001
+    ec = (0.0035, -0.047)
+    ring = [on_shell(ec[0] + 0.0105 * math.cos(TAU * i / 72), ec[1] + 0.0105 * math.sin(TAU * i / 72)) for i in range(73)]
+    tube(glow, ring, 0.00028, "glow", 6)
 
     # graphite body under the panels
     pill(core, "graphite", -0.004, -0.088, lambda u: lerp(0.058, 0.080, u), 0.024, n=3.4, e0=0.06, e1=0.08,
          yoff=-0.0025, xoff=lambda u: lerp(0.0025, 0.0035, u), nu=18, nv=28)
     # palmar plate
     pill(pad, "shell", -0.020, -0.084, lambda u: lerp(0.062, 0.078, u), 0.036, n=2.6, e0=0.18, e1=0.25,
-         th=(math.pi + 0.55, TAU - 0.55), yoff=0.0, xoff=0.004, nu=24, nv=18)
+         th=(math.pi + 0.3, TAU - 0.3), yoff=0.0, xoff=0.004, nu=24, nv=22)
     # tendon guides fanning from the wrist to each finger
     for f in FINGERS:
         m = f["mcp"]
@@ -238,18 +250,25 @@ def build_palm(parent):
     # knuckle bar behind the MCP joints
     xs = [xa_k + 0.003 + (xb_k - xa_k - 0.006) * i / 24 for i in range(25)]
     tube(hw, [V(x, 0.0006, zk(x) + 0.0068) for x in xs], 0.0042, "steel", 16)
-    # thumb-side socket for the CMC, and a thenar fairing that carries the
-    # palm's surface down toward the thumb
+    # thumb-side socket for the CMC, and a glass thenar fairing that carries
+    # the palm's surface down toward the thumb, the thumb's drive lit inside it
     tc = THUMB["cmc"]
     sphere(hw, 0.0112, "graphite", 24, 12, center=tuple(tc))
-    pill(thenar, "shell", -0.004, -0.050, lambda u: lerp(0.020, 0.016, u), lambda u: lerp(0.026, 0.018, u), n=2.4,
+    pill(thenar, "glass", -0.004, -0.050, lambda u: lerp(0.020, 0.016, u), lambda u: lerp(0.026, 0.018, u), n=2.4,
          e0=0.25, e1=0.35, th=(math.pi * 0.55, math.pi * 1.6), xoff=lambda u: lerp(-0.0215, -0.030, u),
          yoff=lambda u: lerp(-0.004, -0.004, u), nu=24, nv=20)
-    # wrist collar
-    pill(collar, "shell", 0.0035, -0.022, lambda u: lerp(0.058, 0.064, u), lambda u: lerp(0.036, 0.034, u), n=2.6,
+    side = tr(-0.0262, -0.0068, -0.0155) @ rot_y(math.pi / 2)  # local +z points into the palm
+    torus_z(glow, 0.0050, 0.0006, "glow", 48, 8, side)
+    torus_z(hw, 0.0050, 0.0010, "chrome", 48, 8, side @ tr(0, 0, 0.0015))
+    cyl_z(hw, 0.0040, 0.0010, 0.0024, "graphite", 32, xf=side)
+    cyl_z(hw, 0.0026, -0.006, -0.034, "chrome", 20, center=(-0.0225, -0.006), chamfer=0.0005)
+    cyl_z(hw, 0.0034, -0.004, -0.012, "graphite", 20, center=(-0.0225, -0.006))
+    # a glass cowl over the wrist joint
+    pill(collar, "glass", 0.0035, -0.022, lambda u: lerp(0.058, 0.064, u), lambda u: lerp(0.036, 0.034, u), n=2.6,
          e0=0, e1=0, xoff=0.0025, yoff=-0.002, nu=8, nv=40, th=(0, TAU))
     parts = [(shells, {"bevel": 0.00045, "bseg": 2, "recalc": False}), (core, {}), (pad, {"solid": 0.0012, "bevel": 0.0004}),
-             (rods, {}), (hw, {}), (thenar, {"solid": 0.0014, "bevel": 0.0004}), (collar, {"solid": 0.0016, "bevel": 0.0005})]
+             (rods, {}), (hw, {}), (thenar, {"solid": 0.0009, "bevel": 0.0003}), (collar, {"solid": 0.0010, "bevel": 0.0004}),
+             (glow, {})]
     return node("Palm", parts, V(0, 0, 0), parent)
 
 
@@ -274,7 +293,7 @@ def build_wrist(parent):
     rings = []
     for i, z in enumerate((0.0135, 0.0215)):
         band = MB()
-        pill(band, "steel", z + 0.0032, z - 0.0032, 0.056 + 0.004 * i, 0.035 + 0.003 * i, n=2.4, e0=0, e1=0,
+        pill(band, "chrome", z + 0.0032, z - 0.0032, 0.056 + 0.004 * i, 0.035 + 0.003 * i, n=2.4, e0=0, e1=0,
              xoff=0.0025, yoff=-0.002, nu=4, nv=48)
         edge = MB()
         for zz in (z + 0.0033, z - 0.0033):
@@ -291,16 +310,14 @@ def build_forearm(parent):
     a1, b1 = fa["elbowRadius"]
     wf = lambda u: 2 * lerp(a0, a1, u ** 0.8)
     hf = lambda u: 2 * lerp(b0, b1, u ** 0.8)
-    dorsal, side, ventral, core, hw, glow = MB(), MB(), MB(), MB(), MB(), MB()
+    dorsal, ventral, core, hw, glow = MB(), MB(), MB(), MB(), MB()
     X = lambda u: 0.0025
     Y = lambda u: -0.002 + 0.004 * u
     # note: pill runs along -Z; build along -Z then mirror z -> -z
     def P(mb, mat, th, scale=1.0, e0=0.05, nv=24):
         pill(mb, mat, -z0, -z1, lambda u: wf(u) * scale, lambda u: hf(u) * scale, n=2.4, e0=e0, e1=0, th=th,
              xoff=X, yoff=Y, nu=40, nv=nv)
-    P(dorsal, "shell", (0.42, math.pi - 0.42), nv=28)
-    P(side, "shell", (-0.62, 0.36), nv=14)
-    P(side, "shell", (math.pi - 0.36, math.pi + 0.62), nv=14)
+    P(dorsal, "shell", (-0.62, math.pi + 0.62), nv=64)
     P(ventral, "graphite", (math.pi + 0.7, TAU - 0.7), 0.985, nv=16)
     P(core, "graphite", (0, TAU), 0.9, e0=0.02, nv=28)
     # pistons and cables underneath
@@ -309,13 +326,18 @@ def build_forearm(parent):
         cyl_z(hw, 0.0052, -0.045, -0.07, "graphite", 20, center=(0.0025 + s * 0.012, -0.002 - b0 * 0.92))
         tube(hw, [V(0.0025 + s * 0.021, -0.002 - b0 * 0.7 - 0.003 * k, -0.04 - 0.27 * k / 8) for k in range(9)], 0.0011,
              "steel", 8)
-    # wrist collar and a thin seam of light along the outer side
-    ellipse_torus(hw, 0.0025, -0.002, -0.0275, 0.0305, 0.0222, 0.0021, "chrome", 64, 10)
-    tube(glow, [V(0.0025 + lerp(a0, a1, (k / 20) ** 0.8) * 0.985 * math.cos(0.39), -0.002 + lerp(b0, b1, (k / 20) ** 0.8) * 0.985 * math.sin(0.39) ** (2 / 2.4),
-                  -(0.07 + 0.2 * k / 20)) for k in range(21)], 0.0006, "glow", 6)
+    # chrome wrist collar and a fine line of light along the outer side
+    ellipse_torus(hw, 0.0025, -0.002, -0.0275, 0.0305, 0.0222, 0.0026, "chrome", 64, 12)
+
+    def on_arm(u, ang):
+        a = lerp(a0, a1, u ** 0.8) * 1.001
+        b = lerp(b0, b1, u ** 0.8) * 1.001
+        x, y = superellipse(ang, a, b, 2.4)
+        return V(0.0025 + x, -0.002 + 0.004 * u + y, -lerp(z0, z1, u))
+    tube(glow, [on_arm(0.12 + 0.6 * k / 30, 0.62) for k in range(31)], 0.00035, "glow", 6)
     parts = []
-    for mb, o in ((dorsal, {"solid": 0.0018, "bevel": 0.0005}), (side, {"solid": 0.0018, "bevel": 0.0005}),
-                  (ventral, {"solid": 0.0015}), (core, {}), (hw, {}), (glow, {})):
+    for mb, o in ((dorsal, {"solid": 0.0018, "bevel": 0.0005}), (ventral, {"solid": 0.0015}), (core, {}), (hw, {}),
+                  (glow, {})):
         # flip z: the forearm extends toward +Z (back toward the elbow)
         flipped = MB()
         for p in mb.v:

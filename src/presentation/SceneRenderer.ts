@@ -12,6 +12,7 @@ import { HandRig } from './HandRig';
 import { applyPalette, createPalette, type Palette } from './materials';
 import { PianoModel } from './PianoModel';
 import { PostPipeline, type PostParams, type Quality } from './PostPipeline';
+import { createSheetMusic } from './SheetMusic';
 import { SHARED_UNIFORMS } from './shaderPatch';
 
 export interface Look {
@@ -73,6 +74,7 @@ export class SceneRenderer {
     this.palette = createPalette();
     this.env = new Environment();
     this.scene.add(this.env.root);
+    this.scene.add(createSheetMusic());
     this.scene.background = new THREE.Color(0x020202);
     this.scene.fog = new THREE.FogExp2(0x060403, 0.12);
     this.post = new PostPipeline(this.renderer);
@@ -204,13 +206,15 @@ export class SceneRenderer {
       bloomStrength: 0.3 * L.bloom,
       bloomRadius: 0.5,
       bloomThreshold: 1.6,
-      saturation: 0.96,
-      contrast: 1.1,
-      lift: [0.004, 0.003, 0.006],
-      gamma: [1.0, 0.99, 0.97],
-      gain: [1.03, 1.0, 0.95],
-      shadowTint: [0.93, 0.98, 1.06],
-      highlightTint: [1.05, 1.0, 0.93],
+      // a dark, warm, sepia-leaning grade: deep blacks, amber highlights,
+      // shadows left nearly neutral so the cyan joints still read
+      saturation: 0.9,
+      contrast: 1.18,
+      lift: [0.0, -0.001, -0.002],
+      gamma: [0.98, 0.96, 0.92],
+      gain: [1.05, 1.0, 0.9],
+      shadowTint: [0.97, 0.97, 1.0],
+      highlightTint: [1.07, 1.0, 0.86],
       temperature: 0.12,
       vignette: 0.55 * L.vignette,
       grain: 0.028 * L.grain,

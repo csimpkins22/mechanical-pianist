@@ -1,4 +1,5 @@
-// The material palette: porcelain, chrome, steel and graphite for the hands;
+// The material palette: porcelain, chrome, steel, graphite, iridescent glass
+// and matte fingertip pads for the hands;
 // lacquered walnut, ivory, ebony, felt and brass for the piano. Glow is kept
 // quiet (bloom picks it up, it does not flood the frame).
 import * as THREE from 'three';
@@ -20,6 +21,8 @@ export interface Palette {
   graphite: THREE.MeshPhysicalMaterial;
   rubber: THREE.MeshStandardMaterial;
   glow: THREE.MeshStandardMaterial;
+  pad: THREE.MeshPhysicalMaterial;
+  glass: THREE.MeshPhysicalMaterial;
   lacquer: THREE.MeshPhysicalMaterial;
   felt: THREE.MeshPhysicalMaterial;
   brass: THREE.MeshPhysicalMaterial;
@@ -79,6 +82,33 @@ export function createPalette(): Palette {
     emissive: new THREE.Color(0x5ef0ff),
     emissiveIntensity: 2.4,
     roughness: 0.25,
+  });
+
+  // fingertip pads: a pale, slightly warm elastomer, matte with a soft sheen
+  const pad = patch(
+    new THREE.MeshPhysicalMaterial({ color: 0xd8d2c8, roughness: 0.62, sheen: 0.5, sheenRoughness: 0.7, sheenColor: new THREE.Color(0xf2ece2) }),
+    {
+      masks: true,
+      afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpNoise(vOPos * 2600.0) - 0.5) * 0.12, 0.35, 0.9);`,
+      afterAO: MASK_AO(0.85),
+    },
+  );
+  // thin iridescent glass over the lit mechanics: mostly reflection, teal to
+  // violet with the viewing angle; drawn after the opaque parts, casts no shadow
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0x9fd6da,
+    metalness: 0,
+    roughness: 0.05,
+    transparent: true,
+    opacity: 0.26,
+    depthWrite: false,
+    specularIntensity: 1,
+    iridescence: 1,
+    iridescenceIOR: 1.6,
+    iridescenceThicknessRange: [280, 620],
+    clearcoat: 1,
+    clearcoatRoughness: 0.04,
+    envMapIntensity: 1.6,
   });
 
   // --- piano -----------------------------------------------------------
@@ -177,6 +207,8 @@ export function createPalette(): Palette {
     graphite,
     rubber,
     glow,
+    pad,
+    glass,
     lacquer,
     walnut: lacquer,
     felt,
@@ -184,7 +216,7 @@ export function createPalette(): Palette {
     gold_leaf: gold,
     cloth,
   };
-  return { shell, shellInner, chrome, steel, graphite, rubber, glow, lacquer, felt, brass, gold, cloth, ivory, ebony, glowUniform, byName };
+  return { shell, shellInner, chrome, steel, graphite, rubber, glow, pad, glass, lacquer, felt, brass, gold, cloth, ivory, ebony, glowUniform, byName };
 }
 
 /** Replace glTF materials (by their Blender names) with the palette's. Multi-material meshes are groups of primitives. */
@@ -195,7 +227,7 @@ export function applyPalette(root: THREE.Object3D, palette: Palette) {
     const name = (m.material as THREE.Material).name.replace(/\.\d+$/, '');
     const mat = palette.byName[name];
     if (mat) m.material = mat;
-    m.castShadow = name !== 'glow';
+    m.castShadow = name !== 'glow' && name !== 'glass';
     m.receiveShadow = true;
   });
 }

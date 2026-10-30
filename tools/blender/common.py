@@ -65,6 +65,8 @@ MATS = {
     "steel": ((0.72, 0.74, 0.77), 1.0, 0.3, None),
     "graphite": ((0.09, 0.095, 0.105), 0.7, 0.45, None),
     "rubber": ((0.12, 0.125, 0.13), 0.0, 0.7, None),
+    "pad": ((0.78, 0.76, 0.73), 0.0, 0.6, None),
+    "glass": ((0.6, 0.85, 0.85), 0.5, 0.05, None),
     "glow": ((0.3, 0.95, 1.0), 0.0, 0.3, (0.3, 0.95, 1.0)),
     "lacquer": ((0.03, 0.02, 0.015), 0.0, 0.15, None),
     "walnut": ((0.12, 0.06, 0.03), 0.0, 0.35, None),
@@ -92,6 +94,9 @@ def get_mat(name):
     if name == "shell":
         bsdf.inputs["Coat Weight"].default_value = 0.6
         bsdf.inputs["Coat Roughness"].default_value = 0.1
+    if name == "glass":
+        bsdf.inputs["Transmission Weight"].default_value = 0.85
+        bsdf.inputs["Thin Film Thickness"].default_value = 420.0
     return m
 
 
