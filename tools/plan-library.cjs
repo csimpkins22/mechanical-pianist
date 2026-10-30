@@ -1,7 +1,8 @@
 // Prepare the library's performances at build time, so that visitors
 // download a finished plan instead of computing one (which takes 10 to 40
-// seconds a piece). Writes public/plans/<id>.bin (gzipped, see
-// src/app/planCodec.ts) and public/plans/manifest.json. A plan is redone only
+// seconds a piece). Writes public/plans/<id>.txt (gzipped, see
+// src/app/planCodec.ts, then base64: the artifact host serves text, not
+// arbitrary binary files) and public/plans/manifest.json. A plan is redone only
 // when the planner's code (its version hash) or the piece's MIDI changes;
 // pieces are planned in parallel, one process per core.
 //
@@ -46,7 +47,7 @@ if (process.argv[2] === '--one') {
   const [, , , id, file] = process.argv;
   const t = Date.now();
   const bytes = require(bundle).plan(id);
-  fs.writeFileSync(file, zlib.gzipSync(bytes, { level: 9 }));
+  fs.writeFileSync(file, zlib.gzipSync(bytes, { level: 9 }).toString('base64'));
   process.send({ id, ms: Date.now() - t });
   return;
 }
@@ -66,14 +67,14 @@ if (process.argv[2] === '--one') {
   const manifest = { version, plans: {} };
   const todo = [];
   for (const p of pieces) {
-    const file = `${p.id}.bin`;
+    const file = `${p.id}.txt`;
     const prev = old?.version === version ? old.plans[p.id] : null;
     const fresh = !force && prev && prev.midi === p.midi && fs.existsSync(path.join(outDir, file));
     manifest.plans[p.id] = { file, midi: p.midi, tracks: p.tracks };
     if (!fresh) todo.push(p);
   }
   // remove plans of pieces no longer in the library
-  for (const f of fs.readdirSync(outDir)) if (f.endsWith('.bin') && !pieces.some((p) => `${p.id}.bin` === f)) fs.rmSync(path.join(outDir, f));
+  for (const f of fs.readdirSync(outDir)) if (f !== 'manifest.json' && !pieces.some((p) => `${p.id}.txt` === f)) fs.rmSync(path.join(outDir, f));
   if (!todo.length) {
     fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 1));
     console.log(`plans: all ${pieces.length} library pieces up to date (planner ${version})`);
@@ -87,7 +88,7 @@ if (process.argv[2] === '--one') {
     Array.from({ length: workers }, async () => {
       while (queue.length && !failed) {
         const p = queue.shift();
-        const file = path.join(outDir, `${p.id}.bin`);
+        const file = path.join(outDir, `${p.id}.txt`);
         await new Promise((resolve) => {
           const child = fork(__filename, ['--one', p.id, file], { execArgv: ['--max-old-space-size=3072'] });
           child.on('message', (m) => console.log(`  ${m.id}: ${(m.ms / 1000).toFixed(1)} s, ${(fs.statSync(file).size / 1e6).toFixed(2)} MB`));

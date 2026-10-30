@@ -106,13 +106,15 @@ function revive(data: { perf: Performance; timeline: PerformanceTimeline }): Pla
   return { perf: data.perf, timeline: tl };
 }
 
-/** a plan prepared at build time: gzipped (unless the server already unpacked it), see planCodec.ts */
+/** a plan prepared at build time: gzipped, as base64 text (see tools/plan-library.cjs and planCodec.ts) */
 async function fetchPrebuilt(url: string): Promise<{ perf: Performance; timeline: PerformanceTimeline }> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
-  let buf = await r.arrayBuffer();
-  const head = new Uint8Array(buf, 0, 2);
-  if (head[0] === 0x1f && head[1] === 0x8b) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const raw = atob((await r.text()).trim());
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  let buf: ArrayBuffer = bytes.buffer;
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
   return decodePlan(buf) as { perf: Performance; timeline: PerformanceTimeline };
 }
 
