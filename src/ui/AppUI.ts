@@ -9,6 +9,7 @@ import { DEFAULT_LOOK } from '../presentation/SceneRenderer';
 import { DEFAULT_LIGHTS } from '../presentation/Environment';
 import { DEFAULT_FRAMING } from '../presentation/CinematicCamera';
 import { ROOMS, type RoomId } from '../audio/AudioEngine';
+import { DEFAULT_SOUND } from '../app/settings';
 
 const ICON = {
   play: '<path d="M8 5.5v13l11-6.5z"/>',
@@ -49,7 +50,7 @@ export class AppUI {
   private title!: HTMLDivElement;
   private drawer!: HTMLDivElement;
   private drawerBody!: HTMLDivElement;
-  private tab: 'fingering' | 'look' | 'sound' | 'debug' = 'fingering';
+  private tab: 'fingering' | 'light' | 'camera' | 'sound' | 'debug' = 'fingering';
   private camBtns: Record<CameraMode, HTMLButtonElement> = {} as never;
   private volBtn!: HTMLButtonElement;
   private loopBtn!: HTMLButtonElement;
@@ -109,6 +110,7 @@ export class AppUI {
     });
     this.volBtn = this.btn(ICON.vol, 'Mute (M)', () => {
       this.app.audio.setMuted(!this.app.audio.muted);
+      this.app.settingsChanged();
       this.sync();
     });
     const vol = el('input', 'vol') as HTMLInputElement;
@@ -118,7 +120,10 @@ export class AppUI {
     vol.step = '0.01';
     vol.value = String(this.app.audio.volume);
     vol.title = 'Volume';
-    vol.oninput = () => this.app.audio.setVolume(parseFloat(vol.value));
+    vol.oninput = () => {
+      this.app.audio.setVolume(parseFloat(vol.value));
+      this.app.settingsChanged();
+    };
     const open = this.btn(ICON.open, 'Open a MIDI file (or drop one anywhere)', () => this.pickFile());
     this.demoSel = el('select', 'demo');
     this.demoSel.title = 'Built-in pieces';
@@ -127,7 +132,7 @@ export class AppUI {
       if (this.demoSel.value === 'file') this.pickFile();
       else this.app.loadDemo(this.demoSel.value as DemoId);
     };
-    const gear = this.btn(ICON.gear, 'Fingering, look, sound and debug (A)', () => this.toggleDrawer());
+    const gear = this.btn(ICON.gear, 'Fingering, light, camera, sound and debug (A)', () => this.toggleDrawer());
     right.append(this.speedSel, this.loopBtn, this.volBtn, vol, open, this.demoSel, gear);
     row.append(left, mid, right);
     this.bar.append(scrub, row);
@@ -139,7 +144,8 @@ export class AppUI {
     const tabs = el('div', 'tabs');
     for (const [id, label] of [
       ['fingering', 'Fingering'],
-      ['look', 'Look'],
+      ['light', 'Light'],
+      ['camera', 'Camera'],
       ['sound', 'Sound'],
       ['debug', 'Debug'],
     ] as const) {
@@ -226,7 +232,7 @@ export class AppUI {
     if (this.drawer.classList.contains('open')) {
       // refresh the fingering list as the playhead moves on (not every frame)
       const bucket = Math.floor(a.t * 2);
-      if (this.tab !== 'look' && bucket !== this.lastFingerRefresh) {
+      if (this.tab === 'fingering' && bucket !== this.lastFingerRefresh) {
         this.lastFingerRefresh = bucket;
         this.renderDrawer();
       }
@@ -467,7 +473,8 @@ export class AppUI {
     const body = this.drawerBody;
     body.innerHTML = '';
     if (this.tab === 'fingering') this.renderFingering(body);
-    else if (this.tab === 'look') this.renderLook(body);
+    else if (this.tab === 'light') this.renderLight(body);
+    else if (this.tab === 'camera') this.renderCamera(body);
     else if (this.tab === 'sound') this.renderSound(body);
     else this.renderDebugTab(body);
   }
@@ -481,7 +488,8 @@ export class AppUI {
     head.innerHTML = `<div>Fingering is inferred for the whole piece. Change a hand or finger here and the performance is re-planned around it.</div>
       <div class="stats">${p.perf.notes.length} notes · ${p.overrides.size} override${p.overrides.size === 1 ? '' : 's'} · ${s.approximated} approximated · planned in ${s.planningMs.toFixed(0)} ms</div>`;
     const acts = el('div', 'actions small');
-    const clear = el('button', '', 'Clear overrides');
+    const clear = el('button', '', 'Reset to defaults');
+    clear.title = 'Clear every hand and finger override';
     clear.disabled = !p.overrides.size;
     clear.onclick = () => this.app.clearOverrides();
     const exp = el('button', '', 'Export');
@@ -561,58 +569,150 @@ export class AppUI {
     inp.oninput = () => {
       set(parseFloat(inp.value));
       val.textContent = fmt(parseFloat(inp.value));
-      this.app.renderNow();
+      this.app.settingsChanged();
     };
     row.append(lab, inp, val);
     body.appendChild(row);
+    return row;
+  }
+
+  /** a section title with an on/off switch; the rows after it dim while it is off */
+  private sectionToggle(body: HTMLElement, title: string, get: () => boolean, set: (v: boolean) => void): (rows: HTMLElement[]) => void {
+    const head = el('label', 'sec sec-toggle');
+    const cb = el('input') as HTMLInputElement;
+    cb.type = 'checkbox';
+    cb.className = 'switch';
+    cb.checked = get();
+    cb.setAttribute('aria-label', `${title} on or off`);
+    head.append(el('span', '', title), cb);
+    body.appendChild(head);
+    let rows: HTMLElement[] = [];
+    const dim = () => rows.forEach((r) => r.classList.toggle('off', !cb.checked));
+    cb.onchange = () => {
+      set(cb.checked);
+      dim();
+      this.app.settingsChanged();
+    };
+    return (r) => {
+      rows = r;
+      dim();
+    };
+  }
+
+  private resetButton(body: HTMLElement, reset: () => void, extra?: HTMLElement) {
+    const acts = el('div', 'actions small');
+    const b = el('button', '', 'Reset to defaults');
+    b.onclick = () => {
+      reset();
+      this.app.settingsChanged();
+      this.renderDrawer();
+    };
+    acts.append(b);
+    if (extra) acts.append(extra);
+    body.appendChild(acts);
   }
 
   private renderSound(body: HTMLElement) {
-    const audio = this.app.audio;
+    const a = this.app;
+    const audio = a.audio;
     body.appendChild(el('div', 'sec', 'Room'));
     const room = el('select') as HTMLSelectElement;
     for (const [id, r] of Object.entries(ROOMS)) room.appendChild(new Option(r.label, id, id === audio.room, id === audio.room));
-    room.onchange = () => audio.setReverb(audio.reverb, room.value as RoomId);
+    room.onchange = () => {
+      audio.setReverb(audio.reverb, room.value as RoomId);
+      a.settingsChanged();
+    };
     const row = el('label', 'slider');
     row.append(el('span', '', 'Acoustics'), room);
     body.appendChild(row);
     this.slider(body, 'Reverb', 0, 1, 0.01, () => audio.reverb, (v) => audio.setReverb(v), (v) => `${Math.round(v * 100)}%`);
+    body.appendChild(el('div', 'sec', 'Output'));
+    this.slider(body, 'Volume', 0, 1, 0.01, () => audio.volume, (v) => audio.setVolume(v), (v) => `${Math.round(v * 100)}%`);
     body.appendChild(
       el('p', 'note', 'The piano is FreePats\' Upright Piano KW, recorded in a living room, so a little of that room is always there. The reverb adds the chosen space on top.'),
     );
+    this.resetButton(body, () => a.applySound(DEFAULT_SOUND));
   }
 
-  private renderLook(body: HTMLElement) {
+  private renderLight(body: HTMLElement) {
     const a = this.app;
     const look = a.view.look;
-    const sec = (title: string) => body.appendChild(el('div', 'sec', title));
-    const slider = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void) =>
-      this.slider(body, label, min, max, step, get, set);
-    sec('Light');
-    slider('Window sun', 0, 1.8, 0.01, () => a.lights.sun, (v) => a.setLights({ sun: v }));
-    slider('Warmth', 0, 1, 0.01, () => a.lights.warmth, (v) => a.setLights({ warmth: v }));
-    slider('Room fill', 0, 2.5, 0.01, () => a.lights.fill, (v) => a.setLights({ fill: v }));
-    slider('Cool rim', 0, 2.5, 0.01, () => a.lights.rim, (v) => a.setLights({ rim: v }));
-    slider('Exposure', 0.4, 1.8, 0.01, () => look.exposure, (v) => (look.exposure = v));
-    slider('Joint glow', 0, 2, 0.01, () => look.glow, (v) => (look.glow = v));
-    sec('Lens');
-    slider('Depth of field', 0, 2, 0.01, () => look.dofScale, (v) => (look.dofScale = v));
-    slider('Bloom', 0, 2, 0.01, () => look.bloom, (v) => (look.bloom = v));
-    slider('Grain', 0, 2, 0.01, () => look.grain, (v) => (look.grain = v));
-    slider('Vignette', 0, 2, 0.01, () => look.vignette, (v) => (look.vignette = v));
-    sec('Framing');
-    slider('Distance', 0.6, 1.8, 0.01, () => a.framing.distance, (v) => (a.framing.distance = v));
-    slider('Height', -0.08, 0.25, 0.005, () => a.framing.height, (v) => (a.framing.height = v));
-    slider('Orbit', -0.6, 0.6, 0.01, () => a.framing.angle, (v) => (a.framing.angle = v));
-    slider('Lens length', 0.6, 1.6, 0.01, () => a.framing.focalScale, (v) => (a.framing.focalScale = v));
-    const acts = el('div', 'actions small');
-    const reset = el('button', '', 'Reset look');
-    reset.onclick = () => {
-      Object.assign(a.view.look, DEFAULT_LOOK);
-      a.framing = { ...DEFAULT_FRAMING };
+    const L = () => a.lights;
+    const sl = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt?: (v: number) => string) =>
+      this.slider(body, label, min, max, step, get, set, fmt);
+    body.appendChild(el('div', 'sec', 'Light'));
+    sl('Window sun', 0, 1.8, 0.01, () => L().sun, (v) => a.setLights({ sun: v }));
+    sl('Sun warmth', 0, 1, 0.01, () => L().warmth, (v) => a.setLights({ warmth: v }));
+    sl('Room fill', 0, 2.5, 0.01, () => L().fill, (v) => a.setLights({ fill: v }));
+    sl('Cool rim', 0, 2.5, 0.01, () => L().rim, (v) => a.setLights({ rim: v }));
+    sl('Joint glow', 0, 2, 0.01, () => look.glow, (v) => (look.glow = v));
+
+    const shafts = this.sectionToggle(body, 'Light shafts', () => L().shaftsOn, (v) => a.setLights({ shaftsOn: v }));
+    shafts([sl('Intensity', 0, 2, 0.01, () => L().shafts, (v) => a.setLights({ shafts: v }))]);
+
+    const rake = this.sectionToggle(body, 'Raking light', () => L().rakeOn, (v) => a.setLights({ rakeOn: v }));
+    rake([
+      sl('Intensity', 0, 2, 0.01, () => L().rake, (v) => a.setLights({ rake: v })),
+      sl('Angle', 2, 35, 0.5, () => L().rakeAngle, (v) => a.setLights({ rakeAngle: v }), (v) => `${v.toFixed(1)}°`),
+      sl('Direction', -80, 80, 1, () => L().rakeDir, (v) => a.setLights({ rakeDir: v }), (v) => `${v.toFixed(0)}°`),
+    ]);
+
+    body.appendChild(el('div', 'sec', 'Grade'));
+    sl('Exposure', 0.4, 1.8, 0.01, () => look.exposure, (v) => (look.exposure = v));
+    sl('Contrast', 0.8, 1.7, 0.01, () => look.contrast, (v) => (look.contrast = v));
+    sl('Saturation', 0, 1.4, 0.01, () => look.saturation, (v) => (look.saturation = v));
+    sl('Warmth', -1, 1, 0.01, () => look.warmth, (v) => (look.warmth = v));
+    sl('Highlight roll-off', 0, 2, 0.01, () => look.rolloff, (v) => (look.rolloff = v));
+
+    this.resetButton(body, () => {
       a.setLights({ ...DEFAULT_LIGHTS });
-      this.renderDrawer();
+      for (const k of ['exposure', 'glow', 'contrast', 'saturation', 'warmth', 'rolloff'] as const) look[k] = DEFAULT_LOOK[k];
+    });
+  }
+
+  private renderCamera(body: HTMLElement) {
+    const a = this.app;
+    const look = a.view.look;
+    const f = () => a.framing;
+    const sl = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt?: (v: number) => string) =>
+      this.slider(body, label, min, max, step, get, set, fmt);
+
+    const drama = this.sectionToggle(body, 'Camera drama', () => f().dramaOn, (v) => (a.framing.dramaOn = v));
+    drama([sl('Amount', 0, 1, 0.01, () => f().drama, (v) => (a.framing.drama = v), (v) => `${Math.round(v * 100)}%`)]);
+    body.appendChild(el('p', 'note', 'Slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));
+
+    body.appendChild(el('div', 'sec', 'Lens'));
+    sl('Depth of field', 0, 2, 0.01, () => look.dofScale, (v) => (look.dofScale = v));
+    sl('Bloom', 0, 2, 0.01, () => look.bloom, (v) => (look.bloom = v));
+    sl('Grain', 0, 2, 0.01, () => look.grain, (v) => (look.grain = v));
+    sl('Vignette', 0, 2, 0.01, () => look.vignette, (v) => (look.vignette = v));
+
+    const streaks = this.sectionToggle(body, 'Anamorphic streaks', () => look.streaksOn, (v) => (look.streaksOn = v));
+    streaks([sl('Strength', 0, 2, 0.01, () => look.streaks, (v) => (look.streaks = v))]);
+
+    const lb = this.sectionToggle(body, 'Letterbox', () => look.letterboxOn, (v) => (look.letterboxOn = v));
+    const ar = el('select') as HTMLSelectElement;
+    for (const [v, label] of [
+      [2.39, '2.39 : 1 (scope)'],
+      [2.0, '2 : 1'],
+      [1.85, '1.85 : 1 (flat)'],
+    ] as const)
+      ar.appendChild(new Option(label, String(v), v === look.letterbox, v === look.letterbox));
+    ar.onchange = () => {
+      look.letterbox = parseFloat(ar.value);
+      a.settingsChanged();
     };
+    const arRow = el('label', 'slider');
+    arRow.append(el('span', '', 'Aspect'), ar);
+    body.appendChild(arRow);
+    lb([arRow]);
+
+    body.appendChild(el('div', 'sec', 'Framing'));
+    sl('Distance', 0.6, 1.8, 0.01, () => f().distance, (v) => (a.framing.distance = v));
+    sl('Height', -0.08, 0.25, 0.005, () => f().height, (v) => (a.framing.height = v));
+    sl('Orbit', -0.6, 0.6, 0.01, () => f().angle, (v) => (a.framing.angle = v));
+    sl('Lens length', 0.6, 1.6, 0.01, () => f().focalScale, (v) => (a.framing.focalScale = v));
+
     const q = el('select') as HTMLSelectElement;
     for (const v of ['high', 'medium', 'low']) q.appendChild(new Option(`Quality: ${v}`, v, v === a.view.post.quality, v === a.view.post.quality));
     q.onchange = () => {
@@ -620,8 +720,15 @@ export class AppUI {
       a.view.setQuality(q.value as 'high');
       a.renderNow();
     };
-    acts.append(reset, q);
-    body.appendChild(acts);
+    this.resetButton(
+      body,
+      () => {
+        a.framing = { ...DEFAULT_FRAMING };
+        for (const k of ['dof', 'dofScale', 'bloom', 'grain', 'vignette', 'streaksOn', 'streaks', 'letterboxOn', 'letterbox'] as const)
+          (look as unknown as Record<string, unknown>)[k] = DEFAULT_LOOK[k];
+      },
+      q,
+    );
   }
 
   private renderDebugTab(body: HTMLElement) {
@@ -646,6 +753,7 @@ export class AppUI {
       w.innerHTML = p.perf.warnings.length ? p.perf.warnings.map(escapeHtml).join('<br>') : 'No approximations: every note is within the hands’ reach.';
       body.appendChild(w);
     }
+    this.resetButton(body, () => a.setDebug(false));
   }
 
   private renderDebugInfo() {

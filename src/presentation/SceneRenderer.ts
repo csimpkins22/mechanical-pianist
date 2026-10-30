@@ -7,7 +7,7 @@ import { TIP_RADIUS } from '../core/handGeometry';
 import type { Hand } from '../core/types';
 import type { FrameState } from '../performance/PerformanceTimeline';
 import type { CameraState } from './CinematicCamera';
-import { Environment, DEFAULT_LIGHTS, type LightSettings } from './Environment';
+import { Environment, DEFAULT_LIGHTS, WINDOW, WINDOW_BARS, type LightSettings } from './Environment';
 import { HandRig } from './HandRig';
 import { applyPalette, createPalette, type Palette } from './materials';
 import { PianoModel } from './PianoModel';
@@ -23,9 +23,36 @@ export interface Look {
   glow: number;
   grain: number;
   vignette: number;
+  /** grade */
+  contrast: number;
+  saturation: number;
+  warmth: number; // -1 cool .. 1 warm
+  rolloff: number; // highlight roll-off
+  /** anamorphic streaks on glints and the cyan rings */
+  streaksOn: boolean;
+  streaks: number;
+  /** letterbox bars */
+  letterboxOn: boolean;
+  letterbox: number; // aspect, e.g. 2.39
 }
 
-export const DEFAULT_LOOK: Look = { exposure: 1.0, dof: true, dofScale: 1, bloom: 1, glow: 1, grain: 1, vignette: 1 };
+export const DEFAULT_LOOK: Look = {
+  exposure: 1.0,
+  dof: true,
+  dofScale: 1,
+  bloom: 1,
+  glow: 1,
+  grain: 1,
+  vignette: 1,
+  contrast: 1.26,
+  saturation: 0.82,
+  warmth: 0.5,
+  rolloff: 0.7,
+  streaksOn: true,
+  streaks: 0.5,
+  letterboxOn: false,
+  letterbox: 2.39,
+};
 
 /** Pack glTF JSON and its binary buffer into a GLB container. */
 function packGlb(json: object, bin: Uint8Array): ArrayBuffer {
@@ -150,7 +177,10 @@ export class SceneRenderer {
     }
   }
 
+  private lightSettings: LightSettings = DEFAULT_LIGHTS;
+
   setLights(s: LightSettings = DEFAULT_LIGHTS) {
+    this.lightSettings = s;
     this.env.applySettings(s);
   }
 
@@ -160,6 +190,10 @@ export class SceneRenderer {
     this.env.lights.sun.shadow.mapSize.set(q === 'high' ? 4096 : 2048, q === 'high' ? 4096 : 2048);
     this.env.lights.sun.shadow.map?.dispose();
     this.env.lights.sun.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+    const rake = this.env.lights.rake.shadow;
+    rake.mapSize.set(q === 'high' ? 2048 : 1024, q === 'high' ? 2048 : 1024);
+    rake.map?.dispose();
+    rake.map = null as unknown as THREE.WebGLRenderTarget;
   }
 
   setSize(w: number, h: number) {
@@ -197,6 +231,11 @@ export class SceneRenderer {
     this.camera.updateProjectionMatrix();
     this.palette.glow.emissiveIntensity = 2.4 * this.look.glow;
     const L = this.look;
+    const ls = this.lightSettings;
+    // warmth moves white balance, highlights, mid-tones and blacks together
+    const w = L.warmth;
+    const sun = this.env.lights.sun;
+    const sunShadow = sun.shadow.map?.depthTexture;
     const params: PostParams = {
       focalLength: cam.focalLength,
       fstop: cam.fstop / Math.max(0.05, L.dofScale),
@@ -206,20 +245,36 @@ export class SceneRenderer {
       bloomStrength: 0.3 * L.bloom,
       bloomRadius: 0.5,
       bloomThreshold: 1.6,
-      // a dark, warm, sepia-leaning grade: deep blacks, amber highlights,
-      // shadows left nearly neutral so the cyan joints still read
-      saturation: 0.9,
-      contrast: 1.18,
+      // a dark, warm, sepia-leaning grade: deep, warm blacks, rolled-off amber
+      // highlights, shadows left nearly neutral so the cyan joints still read
+      saturation: L.saturation,
+      contrast: L.contrast,
       lift: [0.0, -0.001, -0.002],
-      gamma: [0.98, 0.96, 0.92],
-      gain: [1.05, 1.0, 0.9],
+      gamma: [1 - 0.04 * w, 1 - 0.08 * w, 1 - 0.16 * w],
+      gain: [1 + 0.1 * w, 1.0, 1 - 0.2 * w],
       shadowTint: [0.97, 0.97, 1.0],
-      highlightTint: [1.07, 1.0, 0.86],
-      temperature: 0.12,
+      highlightTint: [1 + 0.14 * w, 1.0, 1 - 0.28 * w],
+      temperature: 0.24 * w,
       vignette: 0.55 * L.vignette,
       grain: 0.028 * L.grain,
       aberration: 0.0018,
       frame: Math.floor(t * 24) % 997,
+      rolloff: L.rolloff,
+      blackTint: w >= 0 ? [0.03 * w, 0.015 * w, 0] : [0, 0.008 * -w, 0.028 * -w],
+      streaks: L.streaksOn ? 0.18 * L.streaks : 0,
+      letterbox: L.letterboxOn ? L.letterbox : 0,
+      shafts:
+        ls.shaftsOn && ls.shafts > 0.001
+          ? {
+              strength: ls.shafts * ls.sun,
+              color: this.env.shaftColor,
+              sunDir: this.env.sunDir,
+              window: WINDOW,
+              bars: WINDOW_BARS,
+              shadow: sunShadow ? { map: sunShadow, matrix: sun.shadow.matrix } : null,
+              time: t,
+            }
+          : null,
     };
     this.post.render(this.scene, this.camera, params);
   }

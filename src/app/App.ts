@@ -5,6 +5,7 @@ import { AudioEngine } from '../audio/AudioEngine';
 import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '../interpretation/MidiEngine';
 import { composeEtudes, composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
 import { planChecked } from './plan';
+import { DEFAULT_SOUND, loadSettings, saveSettings, type SoundSettings } from './settings';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
 import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
@@ -61,6 +62,33 @@ export class App {
     this.view = new SceneRenderer(canvas);
     this.audio = new AudioEngine(import.meta.env.BASE_URL);
     this.audio.onStatus = () => this.emit('audio');
+    // the viewer's own settings from last time (ignored with ?settings=default, for tools)
+    if (this.params.get('settings') !== 'default') {
+      const s = loadSettings();
+      this.view.look = s.look;
+      this.lights = s.lights;
+      this.framing = s.framing;
+      this.applySound(s.sound);
+    }
+  }
+
+  private saveTimer = 0;
+
+  /** something in the settings panel changed: redraw now, remember it shortly */
+  settingsChanged() {
+    this.renderNow();
+    clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => saveSettings({ look: this.view.look, lights: this.lights, framing: this.framing, sound: this.sound }), 250);
+  }
+
+  get sound(): SoundSettings {
+    return { reverb: this.audio.reverb, room: this.audio.room, volume: this.audio.volume, muted: this.audio.muted };
+  }
+
+  applySound(s: SoundSettings = DEFAULT_SOUND) {
+    this.audio.setReverb(s.reverb, s.room);
+    this.audio.setVolume(s.volume);
+    this.audio.setMuted(s.muted);
   }
 
   on(fn: Listener) {
@@ -284,7 +312,7 @@ export class App {
   setLights(l: Partial<LightSettings>) {
     this.lights = { ...this.lights, ...l };
     this.view.setLights(this.lights);
-    this.renderNow();
+    this.settingsChanged();
   }
 
   cameraAt(t: number): CameraState {

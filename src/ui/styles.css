@@ -119,6 +119,13 @@ input.vol { width: 72px; accent-color: var(--accent); }
 .slider input { accent-color: var(--accent); width: 100%; }
 .slider .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-faint); font-size: 11px; }
 .slider select { grid-column: 2 / 4; width: 100%; }
+.sec-toggle { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.switch { appearance: none; width: 28px; height: 16px; border-radius: 8px; background: rgba(255, 255, 255, 0.14); position: relative; cursor: pointer; transition: background 0.15s; margin: 0; }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink-dim); transition: transform 0.15s, background 0.15s; }
+.switch:checked { background: var(--accent); }
+.switch:checked::after { transform: translateX(12px); background: #1b140e; }
+.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.slider.off { opacity: 0.38; }
 .drawer-body p.note { color: var(--ink-faint); font-size: 11.5px; line-height: 1.5; margin: 12px 0 0; }
 .check { display: flex; gap: 8px; align-items: center; color: var(--ink); padding: 4px 0 10px; }
 .legend { color: var(--ink-dim); font-size: 12px; display: grid; gap: 4px; }

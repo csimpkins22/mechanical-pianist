@@ -1,10 +1,15 @@
-// Post-processing: HDR scene (MSAA, depth) -> physical thin-lens depth of
-// field (bokeh gather at half resolution) -> bloom -> filmic grade (ACES,
-// lift/gamma/gain, split toning, vignette, gentle chromatic aberration,
-// frame-seeded grain). Every parameter arrives per frame in `PostParams`.
+// Post-processing: HDR scene (MSAA, depth) -> volumetric light shafts from
+// the window (raymarched at half resolution against the scene depth and the
+// sun's shadow map) -> physical thin-lens depth of field (bokeh gather at
+// half resolution) -> bloom -> anamorphic streaks (bright parts smeared
+// horizontally) -> filmic grade (highlight roll-off, ACES, lift/gamma/gain,
+// split toning, warm blacks, vignette, gentle chromatic aberration,
+// frame-seeded grain, letterbox). Every parameter arrives per frame in
+// `PostParams`; everything is a pure function of them and the scene.
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { NOISE_GLSL } from './shaderPatch';
 
 export const SENSOR_W = 0.036; // metres, full-frame horizontal
 
@@ -29,6 +34,26 @@ export interface PostParams {
   grain: number;
   aberration: number;
   frame: number;
+  /** highlight roll-off before the tone curve (0 = none) */
+  rolloff: number;
+  /** added to the blacks after the contrast curve (warm or cool) */
+  blackTint: [number, number, number];
+  /** anamorphic streak strength (0 = off) */
+  streaks: number;
+  /** letterbox aspect ratio (0 = off) */
+  letterbox: number;
+  shafts: Shafts | null;
+}
+
+export interface Shafts {
+  strength: number;
+  color: THREE.Color;
+  sunDir: THREE.Vector3; // direction the light travels
+  window: { x: number; y: number; z: number; w: number; h: number };
+  /** z of the two vertical glazing bars, y of the two horizontal ones; their half width */
+  bars: { vertical: number[]; horizontal: number[]; half: number };
+  shadow: { map: THREE.Texture; matrix: THREE.Matrix4 } | null;
+  time: number;
 }
 
 const quadVS = /* glsl */ `
@@ -117,10 +142,130 @@ void main() {
 }
 `;
 
+const shaftsFS = /* glsl */ `
+uniform sampler2D tDepth;
+uniform sampler2DShadow tShadow;
+uniform float uHasShadow;
+uniform mat4 uShadowMatrix;
+uniform mat4 uInvProj;
+uniform mat4 uCamWorld;
+uniform vec3 uCamPos;
+uniform vec3 uSunDir;
+uniform vec3 uColor;
+uniform float uStrength;
+uniform float uTime;
+uniform float uSteps;
+uniform vec4 uWin;   // window centre x, y, z
+uniform vec2 uWinSize;
+uniform vec4 uBars;  // vertical bars z, z, horizontal bars y, y
+uniform float uBarHalf;
+varying vec2 vUv;
+${NOISE_GLSL}
+/** a soft-edged rectangular opening in the curtains (window-plane coordinates) */
+float aperture(vec2 p, vec2 c, vec2 h) {
+  vec2 a = abs(p - c) / h;
+  return (1.0 - smoothstep(0.7, 1.0, a.x)) * (1.0 - smoothstep(0.7, 1.0, a.y));
+}
+void main() {
+  float d = texture2D(tDepth, vUv).r;
+  vec4 vp = uInvProj * vec4(vUv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  vp /= vp.w;
+  vec3 wp = (uCamWorld * vec4(vp.xyz, 1.0)).xyz;
+  vec3 rd = wp - uCamPos;
+  float tMax = min(length(rd), 4.0);
+  rd = normalize(rd);
+  float dt = tMax / uSteps;
+  // a fixed per-pixel offset along the ray (interleaved gradient noise): banding becomes fine grain
+  float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  float acc = 0.0;
+  for (int i = 0; i < 48; i++) {
+    if (float(i) >= uSteps) break;
+    vec3 p = uCamPos + rd * ((float(i) + jitter) * dt);
+    // follow the sunlight back to the window: lit if it came through a pane
+    float s = (p.x - uWin.x) / uSunDir.x;
+    if (s <= 0.0) continue;
+    vec3 q = p - uSunDir * s;
+    vec2 a = abs(vec2(q.z - uWin.z, q.y - uWin.y)) / (0.5 * uWinSize);
+    float m = (1.0 - smoothstep(0.9, 1.0, a.x)) * (1.0 - smoothstep(0.9, 1.0, a.y));
+    m *= smoothstep(uBarHalf, uBarHalf * 1.4, abs(q.z - uBars.x)) * smoothstep(uBarHalf, uBarHalf * 1.4, abs(q.z - uBars.y));
+    m *= smoothstep(uBarHalf, uBarHalf * 1.4, abs(q.y - uBars.z)) * smoothstep(uBarHalf, uBarHalf * 1.4, abs(q.y - uBars.w));
+    // heavy curtains drawn almost closed: the sun gets through only a few
+    // small openings (where the panels part, a moth-eaten spot), so it
+    // crosses the room as distinct beams and the rest of the air stays dark;
+    // the openings sway a little with the fabric
+    vec2 o = vec2(q.z - uWin.z, q.y - uWin.y) + 0.008 * vec2(sin(uTime * 0.21 + q.y * 2.0), sin(uTime * 0.17));
+    float gap = 0.0;
+    gap += aperture(o, vec2(0.30, 0.20), vec2(0.032, 0.17));
+    gap += aperture(o, vec2(0.45, 0.04), vec2(0.022, 0.24));
+    gap += aperture(o, vec2(0.12, 0.34), vec2(0.036, 0.11));
+    gap += 0.8 * aperture(o, vec2(-0.24, -0.22), vec2(0.026, 0.28));
+    gap += 0.7 * aperture(o, vec2(0.38, 0.44), vec2(0.016, 0.09));
+    m *= min(gap, 1.0);
+    if (m < 0.001) continue;
+    // anything between the window and here (hands, the piano) shades the air too
+    float sh = 1.0;
+    if (uHasShadow > 0.5) {
+      vec4 sc = uShadowMatrix * vec4(p, 1.0);
+      sc.xyz /= sc.w;
+      if (sc.x > 0.0 && sc.x < 1.0 && sc.y > 0.0 && sc.y < 1.0 && sc.z < 1.0) sh = texture(tShadow, vec3(sc.xy, sc.z - 0.003));
+    }
+    // dusty air, drifting slowly, thicker in some places than others, and
+    // hanging over the instrument (the far room stays clear and dark)
+    float n = mpFbm(p * 2.6 + vec3(uTime * 0.03, uTime * 0.012, -uTime * 0.02));
+    vec3 dc = (p - vec3(-0.25, 0.25, -0.05)) / vec3(0.95, 0.45, 0.55);
+    float dens = (0.15 + 1.8 * n * n) * exp(-dot(dc, dc));
+    acc += m * sh * dens * dt;
+  }
+  // forward scattering (Henyey-Greenstein): brightest looking toward the sun
+  float c = dot(uSunDir, -rd);
+  float g = 0.55;
+  float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * c, 1.5);
+  gl_FragColor = vec4(uColor * acc * phase * uStrength * 7.0, 1.0);
+}
+`;
+
+/** bright parts only, for the anamorphic streaks */
+const streakExtractFS = /* glsl */ `
+uniform sampler2D tColor;
+uniform vec2 uTexel;
+uniform float uThreshold;
+varying vec2 vUv;
+void main() {
+  vec3 c = vec3(0.0);
+  for (int y = -1; y <= 1; y += 2)
+    for (int x = -1; x <= 1; x += 2) c += texture2D(tColor, vUv + vec2(float(x), float(y)) * uTexel).rgb;
+  c *= 0.25;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float w = max(l - uThreshold, 0.0) / max(l, 1e-4);
+  gl_FragColor = vec4(min(c * w, vec3(30.0)), 1.0);
+}
+`;
+
+/** a horizontal smear; run three times at growing spacing for a long, thin streak */
+const streakBlurFS = /* glsl */ `
+uniform sampler2D tSrc;
+uniform vec2 uStep;
+uniform vec3 uTint;
+varying vec2 vUv;
+void main() {
+  vec3 c = vec3(0.0);
+  float ws = 0.0;
+  for (int k = -6; k <= 6; k++) {
+    float w = exp(-0.28 * abs(float(k)));
+    c += texture2D(tSrc, vUv + uStep * float(k)).rgb * w;
+    ws += w;
+  }
+  gl_FragColor = vec4(c / ws * uTint, 1.0);
+}
+`;
+
 const compositeFS = /* glsl */ `
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
 uniform sampler2D tBlur;
+uniform sampler2D tShafts;
+uniform vec2 uHalfTexel;
+uniform float uShaftsOn;
 uniform float uExposure;
 uniform float uDofOn;
 varying vec2 vUv;
@@ -133,6 +278,13 @@ void main() {
     float coc = abs(cocOf(linearDepth(texture2D(tDepth, vUv).r)));
     float m = max(smoothstep(0.6, 2.2, coc), blur.a);
     outc = mix(sharp, blur.rgb, m);
+  }
+  // light in the air, after the lens blur (it is soft already, and it lives
+  // in front of the blurred background as much as in front of the hands)
+  if (uShaftsOn > 0.5) {
+    vec2 o = uHalfTexel * 0.75;
+    outc += 0.25 * (texture2D(tShafts, vUv + vec2(-o.x, -o.y)).rgb + texture2D(tShafts, vUv + vec2(o.x, -o.y)).rgb
+                  + texture2D(tShafts, vUv + vec2(-o.x, o.y)).rgb + texture2D(tShafts, vUv + vec2(o.x, o.y)).rgb);
   }
   gl_FragColor = vec4(outc * uExposure, 1.0);
 }
@@ -153,6 +305,11 @@ uniform float uVignette;
 uniform float uGrain;
 uniform float uFrame;
 uniform float uAberration;
+uniform float uRolloff;
+uniform vec3 uBlackTint;
+uniform sampler2D tStreak;
+uniform float uStreak;
+uniform float uLetterbox;
 varying vec2 vUv;
 vec3 RRTAndODTFit(vec3 v) {
   vec3 a = v * (v + 0.0245786) - 0.000090537;
@@ -184,7 +341,11 @@ void main() {
   c.r = texture2D(tColor, vUv - ca).r;
   c.g = texture2D(tColor, vUv).g;
   c.b = texture2D(tColor, vUv + ca).b;
+  if (uStreak > 0.0) c += texture2D(tStreak, vUv).rgb * uStreak;
   c *= vec3(1.0 + uTemperature * 0.12, 1.0 + uTemperature * 0.015, 1.0 - uTemperature * 0.12);
+  // heavier highlight roll-off: compress the top end before the tone curve
+  float hl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c *= 1.0 / (1.0 + uRolloff * max(hl - 0.35, 0.0));
   c = acesFitted(c);
   c = c * uGain + uLift * (1.0 - c);
   c = pow(max(c, 0.0), 1.0 / uGamma);
@@ -197,10 +358,18 @@ void main() {
   c *= mix(1.0, v, uVignette);
   vec3 s = toSRGB(clamp(c, 0.0, 1.0));
   s = clamp((s - 0.5) * uContrast + 0.5, 0.0, 1.0);
+  // warm (or cool) blacks: the deepest shadows keep a little colour
+  float sl = dot(s, vec3(0.333));
+  s += uBlackTint * pow(1.0 - sl, 5.0);
   float g = hash12(floor(vUv * uRes) + uFrame * 17.31) - 0.5;
   g += hash12(floor(vUv * uRes * 0.5) + uFrame * 3.7) - 0.5;
   float lum = dot(s, vec3(0.333));
   s += g * uGrain * (1.0 - lum * 0.6);
+  // letterbox: bars top and bottom when the screen is taller than the aspect
+  if (uLetterbox > 0.0) {
+    float bar = max(0.0, 0.5 * (1.0 - (uRes.x / uRes.y) / uLetterbox));
+    if (vUv.y < bar || vUv.y > 1.0 - bar) s = vec3(0.0);
+  }
   gl_FragColor = vec4(s, 1.0);
 }
 `;
@@ -215,6 +384,12 @@ export class PostPipeline {
   private rtHalfA: THREE.WebGLRenderTarget;
   private rtHalfB: THREE.WebGLRenderTarget;
   private rtFull: THREE.WebGLRenderTarget;
+  private rtShafts: THREE.WebGLRenderTarget;
+  private rtStreakA: THREE.WebGLRenderTarget;
+  private rtStreakB: THREE.WebGLRenderTarget;
+  private shaftsQ: FullScreenQuad;
+  private streakExtract: FullScreenQuad;
+  private streakBlur: FullScreenQuad;
   private prefilter: FullScreenQuad;
   private bokeh: FullScreenQuad;
   private composite: FullScreenQuad;
@@ -230,12 +405,45 @@ export class PostPipeline {
     this.rtHalfA = half();
     this.rtHalfB = half();
     this.rtFull = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.rtShafts = half();
+    this.rtStreakA = half();
+    this.rtStreakB = half();
     const depthU = () => ({ uNear: { value: 0.05 }, uFar: { value: 50 }, uCocScale: { value: 0 }, uFocus: { value: 1 }, uMaxCoc: { value: 20 } });
     const q = (fs: string, uniforms: Record<string, THREE.IUniform>) =>
       new FullScreenQuad(new THREE.ShaderMaterial({ uniforms, vertexShader: quadVS, fragmentShader: fs, depthTest: false, depthWrite: false }));
     this.prefilter = q(prefilterFS, { tColor: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() }, ...depthU() });
     this.bokeh = q(bokehFS, { tHalf: { value: null }, uHalfTexel: { value: new THREE.Vector2() }, uRadScale: { value: 0.9 }, ...depthU() });
-    this.composite = q(compositeFS, { tColor: { value: null }, tDepth: { value: null }, tBlur: { value: null }, uExposure: { value: 1 }, uDofOn: { value: 1 }, ...depthU() });
+    this.composite = q(compositeFS, {
+      tColor: { value: null },
+      tDepth: { value: null },
+      tBlur: { value: null },
+      tShafts: { value: null },
+      uHalfTexel: { value: new THREE.Vector2() },
+      uShaftsOn: { value: 0 },
+      uExposure: { value: 1 },
+      uDofOn: { value: 1 },
+      ...depthU(),
+    });
+    this.shaftsQ = q(shaftsFS, {
+      tDepth: { value: null },
+      tShadow: { value: null },
+      uHasShadow: { value: 0 },
+      uShadowMatrix: { value: new THREE.Matrix4() },
+      uInvProj: { value: new THREE.Matrix4() },
+      uCamWorld: { value: new THREE.Matrix4() },
+      uCamPos: { value: new THREE.Vector3() },
+      uSunDir: { value: new THREE.Vector3(1, -1, 0) },
+      uColor: { value: new THREE.Color() },
+      uStrength: { value: 0 },
+      uTime: { value: 0 },
+      uSteps: { value: 32 },
+      uWin: { value: new THREE.Vector4() },
+      uWinSize: { value: new THREE.Vector2() },
+      uBars: { value: new THREE.Vector4() },
+      uBarHalf: { value: 0.03 },
+    });
+    this.streakExtract = q(streakExtractFS, { tColor: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 1.1 } });
+    this.streakBlur = q(streakBlurFS, { tSrc: { value: null }, uStep: { value: new THREE.Vector2() }, uTint: { value: new THREE.Vector3(1, 1, 1) } });
     this.grade = q(gradeFS, {
       tColor: { value: null },
       uRes: { value: new THREE.Vector2() },
@@ -251,6 +459,11 @@ export class PostPipeline {
       uGrain: { value: 0.03 },
       uFrame: { value: 0 },
       uAberration: { value: 0.002 },
+      uRolloff: { value: 0 },
+      uBlackTint: { value: new THREE.Vector3() },
+      tStreak: { value: null },
+      uStreak: { value: 0 },
+      uLetterbox: { value: 0 },
     });
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.6, 0.9);
   }
@@ -273,6 +486,13 @@ export class PostPipeline {
     this.rtHalfA.setSize(hw, hh);
     this.rtHalfB.setSize(hw, hh);
     this.rtFull.setSize(w, h);
+    this.rtShafts.setSize(hw, hh);
+    // streaks: a quarter across, half down, so they stay thin
+    const sw = Math.max(1, Math.floor(w / 4));
+    this.rtStreakA.setSize(sw, hh);
+    this.rtStreakB.setSize(sw, hh);
+    (this.streakExtract.material as THREE.ShaderMaterial).uniforms.uTexel.value.set(1 / w, 1 / h);
+    (this.composite.material as THREE.ShaderMaterial).uniforms.uHalfTexel.value.set(1 / hw, 1 / hh);
     this.bloom.setSize(w, h);
     (this.prefilter.material as THREE.ShaderMaterial).uniforms.uTexel.value.set(1 / w, 1 / h);
     (this.bokeh.material as THREE.ShaderMaterial).uniforms.uHalfTexel.value.set(1 / hw, 1 / hh);
@@ -314,7 +534,31 @@ export class PostPipeline {
       r.setRenderTarget(this.rtHalfB);
       this.bokeh.render(r);
     }
+    const sh = p.shafts;
+    if (sh && sh.strength > 0.001) {
+      const su = U(this.shaftsQ);
+      su.tDepth.value = this.rtScene.depthTexture;
+      su.tShadow.value = sh.shadow?.map ?? null;
+      su.uHasShadow.value = sh.shadow ? 1 : 0;
+      if (sh.shadow) su.uShadowMatrix.value.copy(sh.shadow.matrix);
+      su.uInvProj.value.copy(camera.projectionMatrixInverse);
+      su.uCamWorld.value.copy(camera.matrixWorld);
+      su.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
+      su.uSunDir.value.copy(sh.sunDir);
+      su.uColor.value.copy(sh.color);
+      su.uStrength.value = sh.strength;
+      su.uTime.value = sh.time;
+      su.uSteps.value = this.quality === 'high' ? 48 : this.quality === 'medium' ? 28 : 14;
+      su.uWin.value.set(sh.window.x, sh.window.y, sh.window.z, 0);
+      su.uWinSize.value.set(sh.window.w, sh.window.h);
+      su.uBars.value.set(sh.bars.vertical[0], sh.bars.vertical[1], sh.bars.horizontal[0], sh.bars.horizontal[1]);
+      su.uBarHalf.value = sh.bars.half;
+      r.setRenderTarget(this.rtShafts);
+      this.shaftsQ.render(r);
+    }
     const cu = U(this.composite);
+    cu.tShafts.value = this.rtShafts.texture;
+    cu.uShaftsOn.value = sh && sh.strength > 0.001 ? 1 : 0;
     cu.tColor.value = this.rtScene.texture;
     cu.tDepth.value = this.rtScene.depthTexture;
     cu.tBlur.value = this.rtHalfB.texture;
@@ -328,7 +572,31 @@ export class PostPipeline {
       this.bloom.threshold = p.bloomThreshold;
       this.bloom.render(r, null as unknown as THREE.WebGLRenderTarget, this.rtFull, 0, false);
     }
+    if (p.streaks > 0.001) {
+      const eu = U(this.streakExtract);
+      eu.tColor.value = this.rtFull.texture;
+      r.setRenderTarget(this.rtStreakA);
+      this.streakExtract.render(r);
+      const bu = U(this.streakBlur);
+      const tw = 1 / this.rtStreakA.width;
+      let src = this.rtStreakA;
+      let dst = this.rtStreakB;
+      for (const [i, spread] of [1, 4, 14].entries()) {
+        bu.tSrc.value = src.texture;
+        bu.uStep.value.set(tw * spread, 0);
+        // the classic anamorphic blue, applied once
+        bu.uTint.value.set(...((i === 2 ? [0.62, 0.84, 1.25] : [1, 1, 1]) as [number, number, number]));
+        r.setRenderTarget(dst);
+        this.streakBlur.render(r);
+        [src, dst] = [dst, src];
+      }
+      U(this.grade).tStreak.value = src.texture;
+    }
     const g = U(this.grade);
+    g.uStreak.value = p.streaks;
+    g.uRolloff.value = p.rolloff;
+    g.uBlackTint.value.fromArray(p.blackTint);
+    g.uLetterbox.value = p.letterbox;
     g.tColor.value = this.rtFull.texture;
     g.uSaturation.value = p.saturation;
     g.uContrast.value = p.contrast;

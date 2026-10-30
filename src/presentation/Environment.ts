@@ -1,19 +1,25 @@
 // The music room and its light: a window off to the bass side lets low, warm
-// late-afternoon sun rake across the keyboard; the room falls away into
-// shadow. Dust drifts through the beam. Everything that moves is a pure
+// late-afternoon sun fall across the keyboard; the room falls away into
+// shadow. Dust drifts through the shafts of light (the shafts themselves are
+// a volumetric pass in PostPipeline). An optional hard, very low "raking"
+// source throws long shadows across the keys. Everything that moves is a pure
 // function of the performance time.
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { NOISE_GLSL, patch } from './shaderPatch';
 
 export const FLOOR_Y = -0.72;
-const WINDOW = { x: -2.0, y: 0.75, z: 0.55, w: 1.1, h: 1.5 };
+// tall and high in the wall, so the sun through it falls on the keys and the shafts cross the air above them
+export const WINDOW = { x: -2.0, y: 1.38, z: 0.55, w: 1.1, h: 1.6 };
+/** the window's glazing bars (old, heavy mullions: they cut the sunlight into separate blades) */
+export const WINDOW_BARS = { vertical: [WINDOW.z - 0.19, WINDOW.z + 0.19], horizontal: [WINDOW.y + 0.27, WINDOW.y - 0.27], half: 0.035 };
 
 export interface LightRig {
   sun: THREE.DirectionalLight;
   window: THREE.RectAreaLight;
   fill: THREE.HemisphereLight;
   rim: THREE.DirectionalLight;
+  rake: THREE.DirectionalLight;
 }
 
 export interface LightSettings {
@@ -21,9 +27,28 @@ export interface LightSettings {
   warmth: number; // 0 = neutral, 1 = deep amber
   fill: number;
   rim: number;
+  /** visible shafts of window light, with dust drifting in them */
+  shaftsOn: boolean;
+  shafts: number;
+  /** a hard, very low source raking across the keys */
+  rakeOn: boolean;
+  rake: number;
+  rakeAngle: number; // degrees above the keys
+  rakeDir: number; // degrees: 0 = along the keyboard from the bass end, positive = more from the player's side
 }
 
-export const DEFAULT_LIGHTS: LightSettings = { sun: 1, warmth: 0.65, fill: 0.7, rim: 1 };
+export const DEFAULT_LIGHTS: LightSettings = {
+  sun: 1,
+  warmth: 0.65,
+  fill: 0.7,
+  rim: 1,
+  shaftsOn: true,
+  shafts: 0.6,
+  rakeOn: true,
+  rake: 0.8,
+  rakeAngle: 9,
+  rakeDir: 25,
+};
 
 export class Environment {
   readonly root = new THREE.Group();
@@ -31,8 +56,10 @@ export class Environment {
   readonly sunDir = new THREE.Vector3();
   private dust: THREE.Points;
   private dustMat: THREE.ShaderMaterial;
-  private beam: THREE.Mesh;
   private soft!: THREE.DirectionalLight;
+  private rakeKey = '';
+  /** colour of the sunlight in the shafts */
+  readonly shaftColor = new THREE.Color(0xffd2a0);
 
   constructor() {
     RectAreaLightUniformsLib.init();
@@ -52,7 +79,7 @@ export class Environment {
     sc.right = 0.95;
     sc.top = 0.62;
     sc.bottom = -0.62;
-    sc.near = 1.2;
+    sc.near = 0.05; // from the window on: its bars throw their shadows across the keys
     sc.far = 5.5;
     sun.shadow.bias = -0.00012;
     sun.shadow.normalBias = 0.0012;
@@ -77,10 +104,17 @@ export class Environment {
     const rim = new THREE.DirectionalLight(0x9ab4ff, 0.7);
     rim.position.set(1.4, 1.2, -1.6);
     this.root.add(rim);
-    this.lights = { sun, window: win, fill, rim };
+    // the raking light: hard, a few degrees above the keys, its shadow map
+    // fitted tightly around the keyboard and the hands over it
+    const rake = new THREE.DirectionalLight(0xffdcb2, 2.2);
+    rake.castShadow = true;
+    rake.shadow.mapSize.set(2048, 2048);
+    rake.shadow.bias = -0.00025;
+    rake.shadow.normalBias = 0.0008;
+    rake.shadow.radius = 1;
+    this.root.add(rake, rake.target);
+    this.lights = { sun, window: win, fill, rim, rake };
 
-    this.beam = this.buildBeam(target);
-    this.root.add(this.beam);
     const d = this.buildDust();
     this.dust = d.points;
     this.dustMat = d.mat;
@@ -93,10 +127,17 @@ export class Environment {
     this.lights.sun.intensity = 3.6 * s.sun;
     this.lights.window.intensity = 2.6 * s.sun;
     this.lights.window.color.copy(warm).lerp(new THREE.Color(0xffffff), 0.35);
+    this.dustMat.uniforms.uStrength.value = s.shaftsOn ? s.shafts / 0.6 : 0;
+    this.dust.visible = s.shaftsOn && s.shafts > 0.001;
+    const rake = this.lights.rake;
+    rake.visible = s.rakeOn && s.rake > 0.001;
+    rake.intensity = 2.2 * s.rake;
+    rake.color.copy(new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xffc488), s.warmth));
+    this.aimRake(s.rakeAngle, s.rakeDir);
     this.lights.fill.intensity = 0.45 * s.fill;
     this.soft.intensity = 1.35 * s.fill;
     this.lights.rim.intensity = 0.7 * s.rim;
-    (this.beam.material as THREE.ShaderMaterial).uniforms.uColor.value.copy(warm);
+    this.shaftColor.copy(warm);
     this.dustMat.uniforms.uColor.value.copy(warm);
   }
 
@@ -164,44 +205,51 @@ export class Environment {
       b.castShadow = true;
       this.root.add(b);
     };
-    bar(0.04, WINDOW.h, WINDOW.y, WINDOW.z);
-    bar(WINDOW.w, 0.04, WINDOW.y + 0.2, WINDOW.z);
-    bar(WINDOW.w, 0.04, WINDOW.y - 0.35, WINDOW.z);
+    const bw = WINDOW_BARS.half * 2;
+    for (const z of WINDOW_BARS.vertical) bar(bw, WINDOW.h, WINDOW.y, z);
+    for (const y of WINDOW_BARS.horizontal) bar(WINDOW.w, bw, y, WINDOW.z);
   }
 
-  /** a faint shaft of sunlight through the dusty air, aimed at the keys */
-  private buildBeam(target: THREE.Vector3): THREE.Mesh {
-    const len = 3.2;
-    const geo = new THREE.CylinderGeometry(0.42, 0.62, len, 32, 1, true);
-    geo.translate(0, -len / 2, 0);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color(0xffd2a0) }, uTime: { value: 0 } },
-      vertexShader: /* glsl */ `
-        varying vec3 vP; varying vec3 vN; varying vec3 vW;
-        void main() { vP = position; vN = normalize(normalMatrix * normal); vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz;
-          gl_Position = projectionMatrix * viewMatrix * w; }`,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uColor; uniform float uTime;
-        varying vec3 vP; varying vec3 vN; varying vec3 vW;
-        ${NOISE_GLSL}
-        void main() {
-          float along = clamp(-vP.y / 3.2, 0.0, 1.0);
-          float edge = pow(abs(dot(normalize(vN), vec3(0.0, 0.0, 1.0))), 1.6);
-          float n = mpFbm(vW * 2.2 + vec3(uTime * 0.03, 0.0, uTime * 0.02));
-          float a = edge * (0.5 + 0.8 * n) * smoothstep(0.0, 0.35, along) * (1.0 - smoothstep(0.75, 1.0, along));
-          gl_FragColor = vec4(uColor * a * 0.008, 1.0);
-        }`,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    const m = new THREE.Mesh(geo, mat);
-    m.position.copy(target).addScaledVector(this.sunDir, -2.9);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), this.sunDir);
-    m.renderOrder = 10;
-    m.frustumCulled = false;
-    return m;
+  /** the direction light travels from the raking source (unit) */
+  static rakeDirection(angleDeg: number, dirDeg: number): THREE.Vector3 {
+    const el = THREE.MathUtils.degToRad(angleDeg);
+    const az = THREE.MathUtils.degToRad(dirDeg);
+    return new THREE.Vector3(Math.cos(el) * Math.cos(az), -Math.sin(el), -Math.cos(el) * Math.sin(az)).normalize();
+  }
+
+  /** point the raking light and fit its shadow camera around the keyboard and the hands above it */
+  private aimRake(angleDeg: number, dirDeg: number) {
+    const key = `${angleDeg.toFixed(2)}:${dirDeg.toFixed(2)}`;
+    if (key === this.rakeKey) return;
+    this.rakeKey = key;
+    const rake = this.lights.rake;
+    const dir = Environment.rakeDirection(angleDeg, dirDeg);
+    const target = new THREE.Vector3(0, 0, -0.04);
+    rake.target.position.copy(target);
+    rake.position.copy(target).addScaledVector(dir, -4);
+    rake.updateMatrixWorld();
+    rake.target.updateMatrixWorld();
+    // the region whose shadows matter: keys, fallboard edge, hands and forearms
+    const view = new THREE.Matrix4().lookAt(rake.position, target, Math.abs(dir.y) > 0.99 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0));
+    const inv = view.clone().invert();
+    const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    for (const x of [-0.72, 0.72])
+      for (const y of [-0.03, 0.24])
+        for (const z of [-0.2, 0.5]) {
+          const p = new THREE.Vector3(x, y, z).applyMatrix4(inv);
+          lo.min(p);
+          hi.max(p);
+        }
+    const cam = rake.shadow.camera;
+    cam.left = lo.x - 0.02;
+    cam.right = hi.x + 0.02;
+    cam.bottom = lo.y - 0.02;
+    cam.top = hi.y + 0.02;
+    cam.near = Math.max(0.05, -hi.z - 0.1);
+    cam.far = -lo.z + 0.1;
+    cam.updateProjectionMatrix();
+    rake.shadow.needsUpdate = true;
   }
 
   private buildDust(): { points: THREE.Points; mat: THREE.ShaderMaterial } {
@@ -223,12 +271,14 @@ export class Environment {
         uTime: { value: 0 },
         uColor: { value: new THREE.Color(0xffd2a0) },
         uSunDir: { value: this.sunDir },
-        uBeamOrigin: { value: new THREE.Vector3(0.05, -0.02, -0.06) },
+        uWindow: { value: new THREE.Vector4(WINDOW.x, WINDOW.y, WINDOW.z, 0) },
+        uWindowSize: { value: new THREE.Vector2(WINDOW.w, WINDOW.h) },
         uPixel: { value: 600 },
+        uStrength: { value: 1 },
       },
       vertexShader: /* glsl */ `
         attribute vec4 seed;
-        uniform float uTime; uniform vec3 uSunDir; uniform vec3 uBeamOrigin; uniform float uPixel;
+        uniform float uTime; uniform vec3 uSunDir; uniform vec4 uWindow; uniform vec2 uWindowSize; uniform float uPixel;
         varying float vLit; varying float vTw;
         void main() {
           vec3 box = vec3(2.2, 1.3, 1.6);
@@ -236,22 +286,23 @@ export class Environment {
           float t = uTime;
           p += vec3(sin(t * 0.11 + seed.w * 40.0), sin(t * 0.07 + seed.x * 30.0), cos(t * 0.09 + seed.y * 50.0)) * 0.05;
           p.y = mod(p.y - t * 0.004 * (0.5 + seed.w) - 0.0, 1.3) - 0.2;
-          // inside the sunbeam?
-          vec3 rel = p - uBeamOrigin;
-          float along = dot(rel, uSunDir);
-          float dist = length(rel - along * uSunDir);
-          vLit = smoothstep(0.55, 0.2, dist) * smoothstep(-3.0, -0.6, along);
+          // inside a shaft? follow the sun back to the window's plane
+          float s = (p.x - uWindow.x) / uSunDir.x;
+          vec3 q = p - uSunDir * s;
+          vec2 off = abs(vec2(q.z - uWindow.z, q.y - uWindow.y)) / (0.5 * uWindowSize);
+          float inside = (1.0 - smoothstep(0.85, 1.0, off.x)) * (1.0 - smoothstep(0.85, 1.0, off.y));
+          vLit = s > 0.0 ? inside : 0.0;
           vTw = 0.6 + 0.4 * sin(t * (1.0 + seed.z * 3.0) + seed.w * 100.0);
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * mv;
           gl_PointSize = uPixel * (0.0007 + 0.0009 * seed.z) / -mv.z;
         }`,
       fragmentShader: /* glsl */ `
-        uniform vec3 uColor; varying float vLit; varying float vTw;
+        uniform vec3 uColor; uniform float uStrength; varying float vLit; varying float vTw;
         void main() {
           vec2 c = gl_PointCoord - 0.5;
           float a = smoothstep(0.5, 0.0, length(c));
-          gl_FragColor = vec4(uColor * a * vLit * vTw * 0.9, 1.0);
+          gl_FragColor = vec4(uColor * a * vLit * vTw * 0.9 * uStrength, 1.0);
         }`,
       transparent: true,
       blending: THREE.AdditiveBlending,
@@ -266,7 +317,6 @@ export class Environment {
   update(t: number, pixelScale: number) {
     this.dustMat.uniforms.uTime.value = t;
     this.dustMat.uniforms.uPixel.value = pixelScale;
-    (this.beam.material as THREE.ShaderMaterial).uniforms.uTime.value = t;
   }
 
   /** a small environment for reflections: dark room, bright window, dim ceiling */
@@ -276,7 +326,7 @@ export class Environment {
     room.position.y = 1.2;
     s.add(room);
     const win = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.6), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffe0b8).multiplyScalar(14) }));
-    win.position.set(-2.9, 0.8, 0.6);
+    win.position.set(-2.9, WINDOW.y + 0.05, 0.6);
     win.rotation.y = Math.PI / 2;
     s.add(win);
     const sky = new THREE.Mesh(new THREE.PlaneGeometry(3, 3), new THREE.MeshBasicMaterial({ color: new THREE.Color(0x6f86a8).multiplyScalar(0.25) }));
