@@ -25,7 +25,9 @@ npm run build        # static site in dist/ (open with `npm run preview`)
 npm test             # interpretation + kinematics tests (vitest)
 ```
 
-`npm run dev` and `npm run build` first copy the piano samples from `node_modules` into `public/samples` (they are not checked in). If they are missing the app falls back to a synthesized piano.
+The piano samples are checked in under `public/piano`. `npm run dev` and `npm run build` also copy the key-release noises from `node_modules` into `public/samples`, since those are not checked in. If the piano samples cannot load, the app falls back to a synthesized piano.
+
+To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.sf2> public/piano`. It needs numpy and ffmpeg.
 
 Open a `.mid` file with the folder button or by dropping it on the window. Files with several parts ask which tracks to perform; piano parts are preselected.
 
@@ -94,7 +96,7 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
 
 ### Audio
 
-`AudioEngine` uses the Salamander Grand Piano (three velocity layers, every minor third, pitch-shifted between). Brightness follows velocity, dampers follow the sustain pedal, and the top octaves are undamped. It adds quiet key-release noises and a small synthesized room. Notes are scheduled ahead against the master timeline. While sound plays, the picture reads its time from the audio clock, so they cannot drift. Seeking fades everything out and restarts the notes already sounding at the new time part-way through their samples, so nothing gets stuck. If samples cannot load, `synthPiano.ts` renders an additive, inharmonic, two-stage-decay piano instead.
+`AudioEngine` plays FreePats' Upright Piano KW, a Kawai upright recorded in a living room. It has two velocity layers, crossfaded by velocity, with a sample every two or three semitones and the notes in between pitch-shifted. `tools/sf2-to-samples.py` converts the SoundFont into one stereo MP3 per sample. Because the SoundFont normalises every sample, the converter evens out levels along the keyboard and sets the two layers 6 dB apart. It also unrolls the sustain loops in the bass and middle into decaying tails, since MP3 padding would make runtime loops click. Brightness follows velocity, dampers follow the sustain pedal, and the top octaves are undamped. It adds quiet key-release noises and a small synthesized room. Notes are scheduled ahead against the master timeline. While sound plays, the picture reads its time from the audio clock, so they cannot drift. Seeking fades everything out and restarts the notes already sounding at the new time part-way through their samples, so nothing gets stuck. If samples cannot load, `synthPiano.ts` renders an additive, inharmonic, two-stage-decay piano instead.
 
 ## Determinism
 
@@ -137,13 +139,14 @@ src/
   audio/           AudioEngine, synthPiano
   ui/              AppUI, styles
   app/App.ts       master clock, transport, re-planning on overrides
-tools/             Blender builds, sample copy, screenshots, video, determinism test
+tools/             Blender builds, SoundFont conversion, sample copy, screenshots, video, determinism test
 tests/             vitest suites
 ```
 
 ## Credits
 
-* Piano samples: [Salamander Grand Piano V3](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm, CC BY 3.0, via `@audio-samples/piano-mp3-*`.
+* Piano: [Upright Piano KW](http://freepats.zenvoid.org/Piano/acoustic-grand-piano.html#UprightKW) from the FreePats project, recorded by Gonzalo and Roberto from Inma Martínez de Miguel's Kawai upright, CC0.
+* Key-release noises: [Salamander Grand Piano V3](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm, CC BY 3.0, via `@audio-samples/piano-mp3-release`.
 * [three.js](https://threejs.org), [@tonejs/midi](https://github.com/Tonejs/Midi).
 * Fingering rules after R. Parncutt, J. A. Sloboda, E. F. Clarke, M. Raekallio and P. Desain, "An ergonomic model of keyboard fingering for melodic fragments", *Music Perception* 14 (1997).
 * "Halloran & Vey" on the nameboard is an invented maker.

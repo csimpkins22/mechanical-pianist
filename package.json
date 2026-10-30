@@ -18,9 +18,6 @@
   },
   "dependencies": {
     "@audio-samples/piano-mp3-release": "1.0.5",
-    "@audio-samples/piano-mp3-velocity15": "1.0.5",
-    "@audio-samples/piano-mp3-velocity4": "1.0.5",
-    "@audio-samples/piano-mp3-velocity9": "1.0.5",
     "@tonejs/midi": "2.0.28",
     "three": "0.186.1"
   },

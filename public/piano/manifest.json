@@ -1,0 +1,686 @@
+{
+ "name": "Upright Piano KW",
+ "source": "http://freepats.zenvoid.org/Piano/acoustic-grand-piano.html#UprightKW",
+ "release": 0.6,
+ "gain": 1.8,
+ "layers": [
+  {
+   "velocity": [
+    0.0,
+    0.6299212598425197
+   ],
+   "centre": 0.315,
+   "samples": [
+    {
+     "root": 21,
+     "file": "v1/A0.mp3",
+     "cents": 0,
+     "keys": [
+      21,
+      22
+     ],
+     "seconds": 13.57
+    },
+    {
+     "root": 24,
+     "file": "v1/C1.mp3",
+     "cents": 0,
+     "keys": [
+      23,
+      25
+     ],
+     "seconds": 16.68
+    },
+    {
+     "root": 27,
+     "file": "v1/Ds1.mp3",
+     "cents": 0,
+     "keys": [
+      26,
+      28
+     ],
+     "seconds": 18.84
+    },
+    {
+     "root": 30,
+     "file": "v1/Fs1.mp3",
+     "cents": 0,
+     "keys": [
+      29,
+      31
+     ],
+     "seconds": 17.04
+    },
+    {
+     "root": 33,
+     "file": "v1/A1.mp3",
+     "cents": 0,
+     "keys": [
+      32,
+      34
+     ],
+     "seconds": 17.88
+    },
+    {
+     "root": 36,
+     "file": "v1/C2.mp3",
+     "cents": 0,
+     "keys": [
+      35,
+      37
+     ],
+     "seconds": 17.57
+    },
+    {
+     "root": 39,
+     "file": "v1/Ds2.mp3",
+     "cents": 0,
+     "keys": [
+      38,
+      40
+     ],
+     "seconds": 19.26
+    },
+    {
+     "root": 42,
+     "file": "v1/Fs2.mp3",
+     "cents": 0,
+     "keys": [
+      41,
+      43
+     ],
+     "seconds": 15.94
+    },
+    {
+     "root": 45,
+     "file": "v1/A2.mp3",
+     "cents": 0,
+     "keys": [
+      44,
+      46
+     ],
+     "seconds": 14.19
+    },
+    {
+     "root": 48,
+     "file": "v1/C3.mp3",
+     "cents": 0,
+     "keys": [
+      47,
+      49
+     ],
+     "seconds": 10.82
+    },
+    {
+     "root": 51,
+     "file": "v1/Ds3.mp3",
+     "cents": 0,
+     "keys": [
+      50,
+      52
+     ],
+     "seconds": 11.8
+    },
+    {
+     "root": 54,
+     "file": "v1/Fs3.mp3",
+     "cents": 0,
+     "keys": [
+      53,
+      55
+     ],
+     "seconds": 10.85
+    },
+    {
+     "root": 57,
+     "file": "v1/A3.mp3",
+     "cents": 0,
+     "keys": [
+      56,
+      58
+     ],
+     "seconds": 12.43
+    },
+    {
+     "root": 60,
+     "file": "v1/C4.mp3",
+     "cents": 0,
+     "keys": [
+      59,
+      61
+     ],
+     "seconds": 14.03
+    },
+    {
+     "root": 63,
+     "file": "v1/Ds4.mp3",
+     "cents": 0,
+     "keys": [
+      62,
+      64
+     ],
+     "seconds": 10.19
+    },
+    {
+     "root": 66,
+     "file": "v1/Fs4.mp3",
+     "cents": 0,
+     "keys": [
+      65,
+      67
+     ],
+     "seconds": 11.79
+    },
+    {
+     "root": 69,
+     "file": "v1/A4.mp3",
+     "cents": 0,
+     "keys": [
+      68,
+      70
+     ],
+     "seconds": 2.14
+    },
+    {
+     "root": 72,
+     "file": "v1/C5.mp3",
+     "cents": 0,
+     "keys": [
+      71,
+      73
+     ],
+     "seconds": 5.48
+    },
+    {
+     "root": 75,
+     "file": "v1/Ds5.mp3",
+     "cents": 0,
+     "keys": [
+      74,
+      76
+     ],
+     "seconds": 2.84
+    },
+    {
+     "root": 78,
+     "file": "v1/Fs5.mp3",
+     "cents": 0,
+     "keys": [
+      77,
+      79
+     ],
+     "seconds": 1.9
+    },
+    {
+     "root": 81,
+     "file": "v1/A5.mp3",
+     "cents": 0,
+     "keys": [
+      80,
+      82
+     ],
+     "seconds": 1.6
+    },
+    {
+     "root": 84,
+     "file": "v1/C6.mp3",
+     "cents": 0,
+     "keys": [
+      83,
+      85
+     ],
+     "seconds": 2.21
+    },
+    {
+     "root": 87,
+     "file": "v1/Ds6.mp3",
+     "cents": 0,
+     "keys": [
+      86,
+      88
+     ],
+     "seconds": 1.07
+    },
+    {
+     "root": 90,
+     "file": "v1/Fs6.mp3",
+     "cents": 0,
+     "keys": [
+      89,
+      91
+     ],
+     "seconds": 1.09
+    },
+    {
+     "root": 93,
+     "file": "v1/A6.mp3",
+     "cents": 0,
+     "keys": [
+      92,
+      94
+     ],
+     "seconds": 0.8
+    },
+    {
+     "root": 96,
+     "file": "v1/C7.mp3",
+     "cents": 0,
+     "keys": [
+      95,
+      97
+     ],
+     "seconds": 0.63
+    },
+    {
+     "root": 99,
+     "file": "v1/Ds7.mp3",
+     "cents": 0,
+     "keys": [
+      98,
+      100
+     ],
+     "seconds": 0.79
+    },
+    {
+     "root": 102,
+     "file": "v1/Fs7.mp3",
+     "cents": 0,
+     "keys": [
+      101,
+      103
+     ],
+     "seconds": 0.6
+    },
+    {
+     "root": 105,
+     "file": "v1/A7.mp3",
+     "cents": 0,
+     "keys": [
+      104,
+      106
+     ],
+     "seconds": 0.73
+    },
+    {
+     "root": 108,
+     "file": "v1/C8.mp3",
+     "cents": 0,
+     "keys": [
+      107,
+      108
+     ],
+     "seconds": 0.39
+    }
+   ]
+  },
+  {
+   "velocity": [
+    0.6377952755905512,
+    1.0
+   ],
+   "centre": 0.819,
+   "samples": [
+    {
+     "root": 21,
+     "file": "v2/A0.mp3",
+     "cents": 0,
+     "keys": [
+      21,
+      22
+     ],
+     "seconds": 13.03
+    },
+    {
+     "root": 23,
+     "file": "v2/B0.mp3",
+     "cents": 0,
+     "keys": [
+      23,
+      23
+     ],
+     "seconds": 13.55
+    },
+    {
+     "root": 24,
+     "file": "v2/C1.mp3",
+     "cents": 0,
+     "keys": [
+      24,
+      25
+     ],
+     "seconds": 15.63
+    },
+    {
+     "root": 27,
+     "file": "v2/Ds1.mp3",
+     "cents": 0,
+     "keys": [
+      26,
+      28
+     ],
+     "seconds": 16.47
+    },
+    {
+     "root": 30,
+     "file": "v2/Fs1.mp3",
+     "cents": 0,
+     "keys": [
+      29,
+      31
+     ],
+     "seconds": 13.97
+    },
+    {
+     "root": 33,
+     "file": "v2/A1.mp3",
+     "cents": 0,
+     "keys": [
+      32,
+      33
+     ],
+     "seconds": 16.03
+    },
+    {
+     "root": 35,
+     "file": "v2/B1.mp3",
+     "cents": 0,
+     "keys": [
+      34,
+      35
+     ],
+     "seconds": 14.32
+    },
+    {
+     "root": 36,
+     "file": "v2/C2.mp3",
+     "cents": 0,
+     "keys": [
+      36,
+      37
+     ],
+     "seconds": 14.54
+    },
+    {
+     "root": 39,
+     "file": "v2/Ds2.mp3",
+     "cents": 0,
+     "keys": [
+      38,
+      40
+     ],
+     "seconds": 15.03
+    },
+    {
+     "root": 42,
+     "file": "v2/Fs2.mp3",
+     "cents": 0,
+     "keys": [
+      41,
+      45
+     ],
+     "seconds": 14.92
+    },
+    {
+     "root": 47,
+     "file": "v2/B2.mp3",
+     "cents": 0,
+     "keys": [
+      46,
+      47
+     ],
+     "seconds": 13.74
+    },
+    {
+     "root": 48,
+     "file": "v2/C3.mp3",
+     "cents": 0,
+     "keys": [
+      48,
+      49
+     ],
+     "seconds": 12.96
+    },
+    {
+     "root": 51,
+     "file": "v2/Ds3.mp3",
+     "cents": 0,
+     "keys": [
+      50,
+      52
+     ],
+     "seconds": 11.45
+    },
+    {
+     "root": 54,
+     "file": "v2/Fs3.mp3",
+     "cents": 0,
+     "keys": [
+      53,
+      55
+     ],
+     "seconds": 12.02
+    },
+    {
+     "root": 57,
+     "file": "v2/A3.mp3",
+     "cents": 0,
+     "keys": [
+      56,
+      57
+     ],
+     "seconds": 10.24
+    },
+    {
+     "root": 59,
+     "file": "v2/B3.mp3",
+     "cents": 0,
+     "keys": [
+      58,
+      61
+     ],
+     "seconds": 11.16
+    },
+    {
+     "root": 63,
+     "file": "v2/Ds4.mp3",
+     "cents": 0,
+     "keys": [
+      62,
+      64
+     ],
+     "seconds": 10.93
+    },
+    {
+     "root": 66,
+     "file": "v2/Fs4.mp3",
+     "cents": 0,
+     "keys": [
+      65,
+      67
+     ],
+     "seconds": 10.2
+    },
+    {
+     "root": 69,
+     "file": "v2/A4.mp3",
+     "cents": 0,
+     "keys": [
+      68,
+      69
+     ],
+     "seconds": 2.96
+    },
+    {
+     "root": 71,
+     "file": "v2/B4.mp3",
+     "cents": 0,
+     "keys": [
+      70,
+      71
+     ],
+     "seconds": 3.42
+    },
+    {
+     "root": 72,
+     "file": "v2/C5.mp3",
+     "cents": 0,
+     "keys": [
+      72,
+      73
+     ],
+     "seconds": 3.47
+    },
+    {
+     "root": 75,
+     "file": "v2/Ds5.mp3",
+     "cents": 0,
+     "keys": [
+      74,
+      76
+     ],
+     "seconds": 3.16
+    },
+    {
+     "root": 78,
+     "file": "v2/Fs5.mp3",
+     "cents": 0,
+     "keys": [
+      77,
+      79
+     ],
+     "seconds": 1.97
+    },
+    {
+     "root": 81,
+     "file": "v2/A5.mp3",
+     "cents": 0,
+     "keys": [
+      80,
+      81
+     ],
+     "seconds": 2.84
+    },
+    {
+     "root": 83,
+     "file": "v2/B5.mp3",
+     "cents": 0,
+     "keys": [
+      82,
+      83
+     ],
+     "seconds": 2.7
+    },
+    {
+     "root": 84,
+     "file": "v2/C6.mp3",
+     "cents": 0,
+     "keys": [
+      84,
+      85
+     ],
+     "seconds": 2.21
+    },
+    {
+     "root": 87,
+     "file": "v2/Ds6.mp3",
+     "cents": 0,
+     "keys": [
+      86,
+      88
+     ],
+     "seconds": 1.83
+    },
+    {
+     "root": 90,
+     "file": "v2/Fs6.mp3",
+     "cents": 0,
+     "keys": [
+      89,
+      91
+     ],
+     "seconds": 1.26
+    },
+    {
+     "root": 93,
+     "file": "v2/A6.mp3",
+     "cents": 0,
+     "keys": [
+      92,
+      93
+     ],
+     "seconds": 1.25
+    },
+    {
+     "root": 95,
+     "file": "v2/B6.mp3",
+     "cents": 0,
+     "keys": [
+      94,
+      95
+     ],
+     "seconds": 1.03
+    },
+    {
+     "root": 96,
+     "file": "v2/C7.mp3",
+     "cents": 0,
+     "keys": [
+      96,
+      97
+     ],
+     "seconds": 1.79
+    },
+    {
+     "root": 99,
+     "file": "v2/Ds7.mp3",
+     "cents": 0,
+     "keys": [
+      98,
+      100
+     ],
+     "seconds": 0.71
+    },
+    {
+     "root": 102,
+     "file": "v2/Fs7.mp3",
+     "cents": 0,
+     "keys": [
+      101,
+      103
+     ],
+     "seconds": 0.67
+    },
+    {
+     "root": 105,
+     "file": "v2/A7.mp3",
+     "cents": 0,
+     "keys": [
+      104,
+      105
+     ],
+     "seconds": 0.91
+    },
+    {
+     "root": 107,
+     "file": "v2/B7.mp3",
+     "cents": 0,
+     "keys": [
+      106,
+      107
+     ],
+     "seconds": 0.83
+    },
+    {
+     "root": 108,
+     "file": "v2/C8.mp3",
+     "cents": 0,
+     "keys": [
+      108,
+      108
+     ],
+     "seconds": 0.69
+    }
+   ]
+  }
+ ]
+}

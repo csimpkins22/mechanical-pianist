@@ -1,22 +1,17 @@
 // Piano sound, scheduled against the same master timeline as the picture.
 //
-// Salamander Grand Piano samples (three velocity layers, every minor third,
-// pitch-shifted to the notes in between) with per-voice brightness from
-// velocity, damper behaviour from the sustain pedal (via the timeline's
-// release times), undamped top octaves, quiet key-release noises and a small
-// synthesized room. If the samples cannot be loaded a synthesized piano takes
-// over. Nothing is ever started without a user gesture.
+// A multisampled upright (FreePats' "Upright Piano KW", converted from its
+// SoundFont by tools/sf2-to-samples.py: two velocity layers, a sample every
+// two or three semitones, pitch-shifted to the notes in between) with
+// per-voice brightness from velocity, damper behaviour from the sustain pedal
+// (via the timeline's release times), undamped top octaves, quiet key-release
+// noises and a small synthesized room. If the samples cannot be loaded a
+// synthesized piano takes over. Nothing is ever started without a user gesture.
 import type { PerformanceNote } from '../core/types';
 import type { PerformanceTimeline } from '../performance/PerformanceTimeline';
 import { synthesizePiano } from './synthPiano';
 
-const LAYERS = [
-  { dir: 'v4', suffix: 'v4', vel: 0.25 },
-  { dir: 'v9', suffix: 'v9', vel: 0.55 },
-  { dir: 'v15', suffix: 'v15', vel: 0.9 },
-];
-const SAMPLE_NAMES = ['C', 'Ds', 'Fs', 'A'];
-const SAMPLE_PCS = [0, 3, 6, 9];
+const SAMPLE_PCS = [0, 3, 6, 9]; // the synthesized fallback's notes
 const LOOKAHEAD = 0.25; // seconds of performance scheduled ahead
 const UNDAMPED_FROM = 89; // F6 and above have no dampers
 
@@ -32,8 +27,23 @@ function sampleMidis(): number[] {
   return out;
 }
 
-function sampleName(m: number, suffix: string) {
-  return `${SAMPLE_NAMES[SAMPLE_PCS.indexOf(m % 12)]}${Math.floor(m / 12) - 1}${suffix}.mp3`;
+/** public/piano/manifest.json, written by tools/sf2-to-samples.py */
+interface PianoManifest {
+  name: string;
+  gain: number;
+  layers: { centre: number; samples: { root: number; file: string; cents: number; keys: [number, number] }[] }[];
+}
+
+interface Zone {
+  root: number;
+  cents: number;
+  keys: [number, number];
+  buf?: AudioBuffer;
+}
+
+interface Layer {
+  vel: number; // the velocity it was recorded at (0..1)
+  zones: Zone[];
 }
 
 export type AudioStatus = 'idle' | 'loading' | 'samples' | 'synth' | 'error';
@@ -43,7 +53,8 @@ export class AudioEngine {
   private master!: GainNode;
   private dry!: GainNode;
   private wet!: GainNode;
-  private layers: Map<number, AudioBuffer>[] = [];
+  private layers: Layer[] = [];
+  private gain = 1;
   private release = new Map<number, AudioBuffer>();
   private voices: Voice[] = [];
   private scheduledUntil = 0; // performance time
@@ -77,7 +88,7 @@ export class AudioEngine {
     this.master.connect(comp).connect(ctx.destination);
     this.dry = ctx.createGain();
     this.wet = ctx.createGain();
-    this.wet.gain.value = 0.2;
+    this.wet.gain.value = 0.14; // the samples already carry their living room
     const verb = ctx.createConvolver();
     verb.buffer = this.roomImpulse(ctx);
     this.dry.connect(this.master);
@@ -88,7 +99,9 @@ export class AudioEngine {
       this.setStatus('samples');
     } catch (e) {
       console.warn('piano samples unavailable, using the synthesized piano', e);
-      this.layers = [synthesizePiano(ctx, sampleMidis())];
+      const synth = synthesizePiano(ctx, sampleMidis());
+      this.layers = [{ vel: 0.55, zones: [...synth].map(([root, buf]) => ({ root, cents: 0, keys: [root, root] as [number, number], buf })) }];
+      this.gain = 1;
       this.setStatus('synth');
     }
   }
@@ -104,15 +117,25 @@ export class AudioEngine {
       if (!r.ok) throw new Error(`${r.status} ${url}`);
       return ctx.decodeAudioData(await r.arrayBuffer());
     };
-    // the middle layer first, so playback can begin as soon as possible
-    const order = [1, 0, 2];
-    this.layers = [new Map(), new Map(), new Map()];
-    const mids = sampleMidis();
-    const loadLayer = (li: number) =>
-      Promise.all(mids.map(async (m) => this.layers[li].set(m, await fetchBuf(`${this.base}samples/${LAYERS[li].dir}/${sampleName(m, LAYERS[li].suffix)}`))));
+    const r = await fetch(`${this.base}piano/manifest.json`);
+    if (!r.ok) throw new Error(`${r.status} piano manifest`);
+    const man = (await r.json()) as PianoManifest;
+    const files = new Map<Zone, string>();
+    this.layers = man.layers.map((l) => ({
+      vel: l.centre,
+      zones: l.samples.map((s) => {
+        const z: Zone = { root: s.root, cents: s.cents, keys: s.keys };
+        files.set(z, s.file);
+        return z;
+      }),
+    }));
+    this.gain = man.gain;
+    const loadLayer = (l: Layer) => Promise.all(l.zones.map(async (z) => (z.buf = await fetchBuf(`${this.base}piano/${files.get(z)}`))));
+    // the layer nearest a moderate touch first, so playback can begin as soon as possible
+    const order = [...this.layers].sort((a, b) => Math.abs(a.vel - 0.5) - Math.abs(b.vel - 0.5));
     await loadLayer(order[0]);
     // the rest load in the background
-    void Promise.all([loadLayer(order[1]), loadLayer(order[2])]).catch((e) => console.warn('velocity layer failed', e));
+    void Promise.all(order.slice(1).map(loadLayer)).catch((e) => console.warn('velocity layer failed', e));
     void Promise.all(
       Array.from({ length: 88 }, async (_, i) => this.release.set(21 + i, await fetchBuf(`${this.base}samples/rel/rel${i + 1}.mp3`))),
     ).catch(() => undefined);
@@ -219,8 +242,8 @@ export class AudioEngine {
     const out: { buf: AudioBuffer; rate: number; gain: number }[] = [];
     // the loaded velocity layers, softest first (the synthesized fallback is a single layer)
     const avail = this.layers
-      .map((l, i) => ({ l, v: this.layers.length === 1 ? 0.55 : LAYERS[i].vel }))
-      .filter((x) => x.l.size > 0)
+      .map((l) => ({ l, v: l.vel }))
+      .filter((x) => x.l.zones.every((z) => z.buf))
       .sort((a, b) => a.v - b.v);
     if (!avail.length) return out;
     let lo = avail[0];
@@ -233,17 +256,18 @@ export class AudioEngine {
     const u = lo === hi ? 0 : (vel - lo.v) / (hi.v - lo.v);
     const pair = lo === hi ? [{ x: lo, w: 1 }] : [{ x: lo, w: Math.cos((u * Math.PI) / 2) }, { x: hi, w: Math.sin((u * Math.PI) / 2) }];
     for (const { x, w } of pair) {
-      let best = -1;
-      let bd = 99;
-      for (const m of x.l.keys()) {
-        const d = Math.abs(m - midi);
-        if (d < bd) {
-          bd = d;
-          best = m;
+      // the sample mapped to this key, else the nearest recorded note
+      let best = x.l.zones.find((z) => midi >= z.keys[0] && midi <= z.keys[1]);
+      if (!best) {
+        let bd = 99;
+        for (const z of x.l.zones) {
+          if (Math.abs(z.root - midi) < bd) {
+            bd = Math.abs(z.root - midi);
+            best = z;
+          }
         }
       }
-      const buf = x.l.get(best);
-      if (buf && w > 0.02) out.push({ buf, rate: Math.pow(2, (midi - best) / 12), gain: w });
+      if (best?.buf && w > 0.02) out.push({ buf: best.buf, rate: Math.pow(2, (midi - best.root - best.cents / 100) / 12), gain: w });
     }
     return out;
   }
@@ -257,7 +281,7 @@ export class AudioEngine {
     filter.frequency.value = 1400 + 15000 * Math.pow(n.velocity, 1.7);
     filter.Q.value = 0.4;
     const out = ctx.createGain();
-    out.gain.value = loud * 0.9;
+    out.gain.value = loud * 0.9 * this.gain;
     filter.connect(out);
     out.connect(this.dry);
     out.connect(this.wet);
