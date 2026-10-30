@@ -1,0 +1,33 @@
+{
+  "name": "mechanical-pianist",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A MIDI piano performance played by two articulated robotic hands, rendered in real time with Three.js.",
+  "scripts": {
+    "predev": "node tools/copy-samples.cjs",
+    "dev": "vite",
+    "prebuild": "node tools/copy-samples.cjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:determinism": "node tools/determinism-test.cjs",
+    "shot": "node tools/shot.cjs",
+    "assets": "python tools/blender/build_hand.py public/assets/robot_hand.glb && python tools/blender/build_piano.py public/assets/piano_case.glb"
+  },
+  "dependencies": {
+    "@audio-samples/piano-mp3-release": "1.0.5",
+    "@audio-samples/piano-mp3-velocity15": "1.0.5",
+    "@audio-samples/piano-mp3-velocity4": "1.0.5",
+    "@audio-samples/piano-mp3-velocity9": "1.0.5",
+    "@tonejs/midi": "2.0.28",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
+  }
+}
