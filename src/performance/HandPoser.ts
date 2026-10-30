@@ -7,7 +7,7 @@ import { clamp, lastAtOrBefore, smoothstep } from '../core/math';
 import { drift } from '../core/random';
 import type { Hand } from '../core/types';
 import { solveFinger, solveThumb, type FingerSolution, type ThumbSolution } from './HandIK';
-import { KEY_RETURN, type KeyMechanics } from './KeyMechanics';
+import type { KeyMechanics } from './KeyMechanics';
 import { ELBOW_Z, SHOULDER_X, type HandTrack, type PlannedNote } from './MotionPlanner';
 
 export type FingerPhase = 'idle' | 'prepare' | 'attack' | 'hold' | 'release';
@@ -38,11 +38,9 @@ export interface HandPose {
 
 const easeOut3 = (u: number) => 1 - Math.pow(1 - clamp(u, 0, 1), 3);
 
-/** When the fingertip leaves a key after release: it rides the key up, unless it is needed elsewhere sooner. */
+/** When the fingertip leaves a key after release (planned: see PlannedNote.leave). */
 function liftoff(pn: PlannedNote): number {
-  const nx = pn.next;
-  const room = nx ? nx.stroke.contact - pn.stroke.release : 1;
-  return pn.stroke.release + Math.min(KEY_RETURN * 0.75, Math.max(0.012, room * 0.35));
+  return pn.leave;
 }
 
 function toWorld(wrist: V3, R: M3, sx: number, p: V3): V3 {
@@ -175,7 +173,8 @@ function contactWeight(ft: FingerTarget, t: number): number {
     if (ft.phase === 'attack' || ft.phase === 'hold') return 1;
     return 1 - smoothstep(ft.note.stroke.release, liftoff(ft.note), t); // riding the key up
   }
-  if (ft.next && ft.phase === 'prepare') return 0.6 * smoothstep(ft.next.stroke.contact - 0.09, ft.next.stroke.contact, t);
+  // reaching full weight exactly as the fingertip lands, so the hand never jumps at contact
+  if (ft.next) return smoothstep(ft.next.stroke.contact - 0.09, ft.next.stroke.contact, t);
   return 0;
 }
 
@@ -215,12 +214,13 @@ const PRIOR = [0.2, 0.12, 0.2, 0.012, 0.012, 0.012];
 const STEP = [1e-4, 1e-4, 1e-4, 1e-3, 1e-3, 1e-3];
 const NP = PRIOR.length;
 
-export function poseHand(track: HandTrack, keys: KeyMechanics, t: number): HandPose {
-  const sx = track.sx;
-  // Contact has priority: if fingers on keys (or about to land) cannot reach
-  // them from the planned hand, the hand yields: a few damped Gauss-Newton
-  // steps over wrist position, yaw, roll and pitch. Recomputed from scratch at every
-  // t, from the same start, so it is as deterministic as everything else.
+/**
+ * Contact has priority: if fingers on keys (or about to land) cannot reach
+ * them from the planned hand, the hand yields: a few damped Gauss-Newton steps
+ * over wrist position, yaw, roll and pitch. Recomputed from scratch at every t,
+ * from the same start, so it is as deterministic as everything else.
+ */
+function comply(track: HandTrack, keys: KeyMechanics, t: number): number[] {
   const d = [0, 0, 0, 0, 0, 0];
   let cur = solveAll(track, keys, t, d);
   for (let it = 0; it < 6; it++) {
@@ -255,6 +255,28 @@ export function poseHand(track: HandTrack, keys: KeyMechanics, t: number): HandP
     for (let k = 3; k < NP; k++) d[k] = clamp(d[k], -0.4, 0.4);
     cur = solveAll(track, keys, t, d);
   }
+  return d;
+}
+
+/** half-width of the window the compliance is averaged over (s) */
+const COMPLY_BLUR = 1 / 120;
+
+/**
+ * The hand at t. Where several fingers converge on a chord the compliance
+ * solve can hop between near-equal compromises from one instant to the next,
+ * so for display it is averaged over a frame either side (still a pure
+ * function of t); planning, which only probes steady moments, can skip that.
+ */
+export function poseHand(track: HandTrack, keys: KeyMechanics, t: number, steady = true): HandPose {
+  const sx = track.sx;
+  const d1 = comply(track, keys, t);
+  let d = d1;
+  if (steady) {
+    const d0 = comply(track, keys, t - COMPLY_BLUR);
+    const d2 = comply(track, keys, t + COMPLY_BLUR);
+    d = d1.map((v, k) => 0.25 * d0[k] + 0.5 * v + 0.25 * d2[k]);
+  }
+  const cur = solveAll(track, keys, t, d);
   const { wrist, R } = handFrame(track, t, d);
   const { states, fingers, thumb } = cur;
   // the forearm points from the wrist back toward an elbow that trails the hand

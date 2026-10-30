@@ -23,6 +23,37 @@ export interface KeyStroke {
   release: number; // finger lets go (keyEnd)
 }
 
+/**
+ * Repeated notes. An upright's action has to come most of the way back up
+ * before its key can strike again, and the finger has to lift off to play it
+ * again, so the earlier of two strikes on the same key lets go in time for
+ * both: up to 120 ms before the next fingertip lands, less for fast
+ * repetitions (never shorter than a 35 ms hold). The earlier note's sound ends
+ * at the re-strike regardless (see PerformanceTimeline.releaseOf).
+ */
+export function restrikeRepeats(notes: readonly PerformanceNote[]) {
+  const byKey = new Map<number, PerformanceNote[]>();
+  for (const n of notes) {
+    if (n.flags.includes('chord-overflow')) continue;
+    const list = byKey.get(n.midi);
+    if (list) list.push(n);
+    else byKey.set(n.midi, [n]);
+  }
+  for (const list of byKey.values()) {
+    list.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < list.length; i++) {
+      const a = list[i - 1];
+      const b = list[i];
+      const ioi = b.start - a.start;
+      if (ioi < 0.03) continue;
+      const contact = b.start - keyTravel(b.velocity);
+      const gap = Math.min(0.12, Math.max(0.035, 0.4 * ioi));
+      const end = Math.max(a.start + 0.035, contact - gap);
+      if (end < a.keyEnd) a.keyEnd = end;
+    }
+  }
+}
+
 export function strokeOf(n: PerformanceNote): KeyStroke {
   return { note: n, contact: n.start - keyTravel(n.velocity), bottom: n.start, release: Math.max(n.keyEnd, n.start + 0.02) };
 }

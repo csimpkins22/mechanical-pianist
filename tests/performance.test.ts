@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { FINGERS, REST_FINGER_POSES, REST_TIPS, REST_THUMB_POSE, THUMB, fingerFK, thumbFK, len, sub, type V3 } from '../src/core/handGeometry';
-import { KEY_COUNT, LOWEST_MIDI, noteName } from '../src/core/keyboard';
+import { FINGERS, REST_FINGER_POSES, REST_TIPS, REST_THUMB_POSE, THUMB, TIP_RADIUS, fingerFK, thumbFK, len, sub, type V3 } from '../src/core/handGeometry';
+import { KEY_COUNT, LOWEST_MIDI, keySurfacePoint, noteName } from '../src/core/keyboard';
+import type { Hand } from '../src/core/types';
 import { solveFinger, solveThumb } from '../src/performance/HandIK';
 import { PerformanceTimeline } from '../src/performance/PerformanceTimeline';
 import { planPerformance } from '../src/interpretation/PerformancePlanner';
@@ -113,5 +114,96 @@ describe('timeline', { timeout: 120000 }, () => {
     const tl = new PerformanceTimeline(planPerformance(s));
     const errs = [...tl.contactError.values()];
     expect(Math.max(...errs)).toBeLessThan(0.002);
+  });
+});
+
+/** the drawn wrist over [a, b]: peak speed (m/s) and peak acceleration (m/s²) at 120 Hz */
+function wristMotion(tl: PerformanceTimeline, hand: Hand, a: number, b: number) {
+  const dt = 1 / 120;
+  let prev: V3 | null = null;
+  let prevV: V3 | null = null;
+  let speed = 0;
+  let accel = 0;
+  for (let t = a; t <= b; t += dt) {
+    const w = tl.evaluate(t).hands[hand].wrist;
+    if (prev) {
+      const v: V3 = [(w[0] - prev[0]) / dt, (w[1] - prev[1]) / dt, (w[2] - prev[2]) / dt];
+      speed = Math.max(speed, Math.hypot(...v));
+      if (prevV) accel = Math.max(accel, Math.hypot(v[0] - prevV[0], v[1] - prevV[1], v[2] - prevV[2]) / dt);
+      prevV = v;
+    }
+    prev = w;
+  }
+  return { speed, accel };
+}
+
+describe('motion', { timeout: 120000 }, () => {
+  test('a repeated note comes back up and is struck again', () => {
+    // repeats written to end just before the next strike, slow then fast, in
+    // the right hand; a held bass in the left
+    const s = scoreOf(
+      line('G4 G4 G4 G4', { step: 0.45, dur: 0.44, vel: 0.6 }),
+      line('D5 D5 D5 D5 D5 D5', { step: 0.16, dur: 0.155, start: 2.2, vel: 0.55 }),
+      line('C2', { step: 3.5, track: 1 }),
+    );
+    const tl = new PerformanceTimeline(planPerformance(s));
+    let pairs = 0;
+    for (const strokes of tl.keys.strokes) {
+      for (let i = 1; i < strokes.length; i++) {
+        const a = strokes[i - 1];
+        const b = strokes[i];
+        pairs++;
+        const fast = b.bottom - a.bottom < 0.25;
+        // the key rises most of the way between the strikes
+        let lowest = 1;
+        for (let t = a.bottom; t <= b.bottom; t += 0.002) lowest = Math.min(lowest, tl.keys.depression(a.note.midi, t));
+        expect(1 - lowest, `key rise before ${noteName(b.note.midi)} at ${b.bottom.toFixed(2)}`).toBeGreaterThan(fast ? 0.7 : 0.9);
+        // and the fingertip lifts off the key before striking it again
+        const track = tl.plan.hands[b.note.hand];
+        const pn = track.notes.find((p) => p.note === b.note)!;
+        let lift = 0;
+        for (let t = a.bottom; t <= b.contact; t += 0.002) {
+          const st = tl.evaluate(t).hands[b.note.hand].states[b.note.finger];
+          const surface = keySurfacePoint(pn.key, pn.cz, tl.keys.depression(b.note.midi, t), [0, 0, 0], pn.cx);
+          lift = Math.max(lift, st.tip[1] - TIP_RADIUS[b.note.finger] - surface[1]);
+        }
+        expect(lift, `fingertip lift before ${noteName(b.note.midi)} at ${b.bottom.toFixed(2)}`).toBeGreaterThan(fast ? 0.003 : 0.004);
+        // the earlier sound ends when the key is struck again
+        expect(tl.releaseOf(a.note)).toBeLessThanOrEqual(b.note.start + 1e-9);
+      }
+    }
+    expect(pairs).toBe(8);
+  });
+
+  test('leaps take time: no jumps, no unnatural speed, onsets unchanged', () => {
+    const s = scoreOf(
+      // right hand: two-octave leaps every half second
+      line('E5 r C7 r E5 r C7', { step: 0.25, vel: 0.6 }),
+      // left hand: a long note, then the same hand an octave and more away
+      line('C4', { step: 2.0, track: 1 }),
+      line('A2 E3 A3', { step: 0.22, start: 2.05, track: 1 }),
+    );
+    const onsets = s.notes.map((n) => n.start).sort((a, b) => a - b);
+    const tl = new PerformanceTimeline(planPerformance(s));
+    expect(tl.perf.notes.map((n) => n.start).sort((a, b) => a - b)).toEqual(onsets);
+    for (const hand of ['L', 'R'] as Hand[]) {
+      const { speed, accel } = wristMotion(tl, hand, 0, tl.duration);
+      expect(speed, `${hand} peak wrist speed`).toBeLessThan(2.5);
+      expect(accel, `${hand} peak wrist acceleration`).toBeLessThan(200);
+    }
+    expect(Math.max(...tl.contactError.values())).toBeLessThan(0.002);
+  });
+
+  test('the Nocturne: the left hand travels to its low A without jumping', () => {
+    const tl = demoTimeline();
+    // a C4 held by the little finger, then the same finger on A2 (around 25.3 s)
+    const near = wristMotion(tl, 'L', 24.8, 25.6);
+    expect(near.speed).toBeLessThan(2);
+    expect(near.accel).toBeLessThan(100);
+    for (const hand of ['L', 'R'] as Hand[]) {
+      const m = wristMotion(tl, hand, 0, tl.duration);
+      expect(m.speed, `${hand} peak wrist speed`).toBeLessThan(2.5);
+      expect(m.accel, `${hand} peak wrist acceleration`).toBeLessThan(150);
+    }
   });
 });

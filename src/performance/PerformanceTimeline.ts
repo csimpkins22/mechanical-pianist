@@ -10,8 +10,11 @@ import { clamp, gaussianBlur, lastAtOrBefore } from '../core/math';
 import { pedalDownAt } from '../interpretation/MidiEngine';
 import type { Hand, Performance, PerformanceNote } from '../core/types';
 import { poseHand, type HandPose } from './HandPoser';
-import { KeyMechanics } from './KeyMechanics';
-import { RATE, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
+
+/** spacing of the moments refine checks through a held note (s) */
+const HOLD_PROBE = 0.2;
+import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
+import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
 
 export interface FrameState {
   t: number;
@@ -32,9 +35,20 @@ export class PerformanceTimeline {
   private soundEnd: Float64Array;
   /** worst fingertip contact error per note after refinement (m), for diagnostics */
   readonly contactError = new Map<number, number>();
+  /** onset of the next note on the same key, which cuts the earlier one's sound */
+  private restrike = new Map<number, number>();
 
   constructor(readonly perf: Performance) {
     this.duration = perf.score.duration;
+    // let go of keys in time to strike them again, and in time to leap
+    restrikeRepeats(perf.notes);
+    leaveInTime(perf);
+    const lastOnKey = new Map<number, PerformanceNote>();
+    for (const n of perf.notes.slice().sort((a, b) => a.start - b.start)) {
+      const p = lastOnKey.get(n.midi);
+      if (p && n.start > p.start) this.restrike.set(p.id, n.start);
+      lastOnKey.set(n.midi, n);
+    }
     this.byStart = perf.notes.slice().sort((a, b) => a.start - b.start);
     this.soundEnd = new Float64Array(this.byStart.length);
     let m = -Infinity;
@@ -65,7 +79,7 @@ export class PerformanceTimeline {
         if (n.keyEnd - n.start < 0.12) continue;
         let bad = -1;
         const lost = (t: number) => {
-          const st = poseHand(track, this.keys, t).states[pn.finger];
+          const st = poseHand(track, this.keys, t, false).states[pn.finger];
           return st.note === pn && len(sub(st.tip, st.target)) > 0.0015;
         };
         // most holds are fine: check a few instants first, scan only when one fails
@@ -98,8 +112,12 @@ export class PerformanceTimeline {
     return changed;
   }
 
-  /** when a note stops sounding: at key release, or when the pedal lifts after it */
+  /** when a note stops sounding: at key release, or when the pedal lifts after it, and at the latest when its key is struck again */
   releaseOf(n: PerformanceNote): number {
+    return Math.min(this.restrike.get(n.id) ?? Infinity, this.dampedAt(n));
+  }
+
+  private dampedAt(n: PerformanceNote): number {
     const ped = this.perf.score.pedal;
     if (!pedalDownAt(ped, n.end)) return n.end;
     const i = lastAtOrBefore(ped, n.end, (e) => e.time);
@@ -108,9 +126,12 @@ export class PerformanceTimeline {
   }
 
   /**
-   * Make sure every finger can actually reach its key: evaluate the IK at each
-   * note's onset and middle, and where a fingertip would fall short, move the
-   * wrist toward it with a smooth local correction. Two passes.
+   * Make sure every finger can actually reach its key: evaluate the pose at
+   * each note's landing, onset, through its hold and at its release, and
+   * wherever a fingertip would fall short, or the hand had to give way to keep
+   * contact (the compliance in poseHand), move the planned wrist there with a
+   * smooth local correction, so that the hand is carried by the plan rather
+   * than snapping back when the contact lets go. Up to three passes.
    */
   private refine(track: HandTrack) {
     for (let pass = 0; pass < 3; pass++) {
@@ -120,37 +141,54 @@ export class PerformanceTimeline {
       const cz = new Float32Array(n);
       const cw = new Float32Array(n);
       let worst = 0;
+      // the notes of a chord share their moments through the hold
+      const poses = new Map<number, HandPose>();
+      const poseAt = (t: number) => {
+        let p = poses.get(t);
+        if (!p) poses.set(t, (p = poseHand(track, this.keys, t, false)));
+        return p;
+      };
       for (const pn of track.notes) {
-        const times = [pn.stroke.contact, pn.note.start, (pn.note.start + pn.stroke.release) / 2, pn.stroke.release];
-        let corr: V3 = [0, 0, 0];
+        // the landing, the onset, every 0.2 s of the hold (on a common grid),
+        // the release, and once while the fingertip rides the key back up
+        const rel = pn.stroke.release;
+        const times = [pn.stroke.contact, pn.note.start];
+        if (pass < 2) for (let i = Math.ceil((pn.note.start + 0.1) / HOLD_PROBE); i * HOLD_PROBE < rel - 0.05; i++) times.push(i * HOLD_PROBE);
+        else times.push((pn.note.start + rel) / 2); // the last pass only measures
+        times.push(rel);
+        if (pn.leave - rel > 0.02) times.push((rel + pn.leave) / 2);
         let e = 0;
         for (const t of times) {
-          const pose = poseHand(track, this.keys, t);
+          const pose = poseAt(t);
           const st = pose.states[pn.finger];
           if (st.note !== pn) continue;
-          const d = sub(st.target, st.tip);
-          const dl = len(d);
-          e = Math.max(e, dl);
-          if (dl > len(corr)) corr = d;
+          const miss = sub(st.target, st.tip);
+          const riding = t > rel;
+          if (!riding) e = Math.max(e, len(miss));
+          // where the fingertip falls short, and where the hand had to give
+          // way to keep it on the key (a riding finger does not pull the plan)
+          const g = add(riding ? [0, 0, 0] : miss, sub(pose.wrist, [track.x.at(t), track.y.at(t), track.z.at(t)]));
+          const gl = len(g);
+          worst = Math.max(worst, gl);
+          if (gl < 0.0008) continue;
+          // a local correction around this moment
+          const a = Math.max(0, Math.floor((t - 0.24 - this.plan.t0) * RATE));
+          const b = Math.min(n - 1, Math.ceil((t + 0.24 - this.plan.t0) * RATE));
+          for (let k = a; k <= b; k++) {
+            const u = (this.plan.t0 + k / RATE - t) / 0.08;
+            const w = Math.exp(-0.5 * u * u);
+            cx[k] += g[0] * w;
+            cy[k] += g[1] * w;
+            cz[k] += g[2] * w;
+            cw[k] += w;
+          }
         }
         this.contactError.set(pn.note.id, e);
-        worst = Math.max(worst, e);
-        if (e < 0.0008) continue;
-        // spread the correction over the note, peaking while it is held
-        const a = Math.max(0, Math.floor((pn.stroke.contact - 0.12 - this.plan.t0) * RATE));
-        const b = Math.min(n - 1, Math.ceil((pn.stroke.release + 0.12 - this.plan.t0) * RATE));
-        const c = scale(corr, 1.0);
-        for (let k = a; k <= b; k++) {
-          cx[k] += c[0];
-          cy[k] += c[1];
-          cz[k] += c[2];
-          cw[k] += 1;
-        }
       }
       if (pass === 2 || worst < 0.0008) break;
       const avg = (arr: Float32Array) => {
         const o = new Float32Array(n);
-        for (let k = 0; k < n; k++) o[k] = cw[k] > 0 ? arr[k] / cw[k] : 0;
+        for (let k = 0; k < n; k++) o[k] = cw[k] > 0 ? arr[k] / Math.max(1, cw[k]) : 0;
         return gaussianBlur(o, 0.05 * RATE);
       };
       const ax = avg(cx);
