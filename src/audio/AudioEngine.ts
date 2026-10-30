@@ -86,12 +86,16 @@ export class AudioEngine {
 
   /** create the context (must be inside a user gesture) and start loading */
   async init() {
+    playThroughSilentSwitch();
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
+      // suspended, or 'interrupted' on iOS (a call, the app sent to the background)
+      if (this.ctx.state !== 'running') await this.ctx.resume();
       return;
     }
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     this.ctx = ctx;
+    // mobile browsers can create it suspended even inside the tap: resume before anything awaits
+    const resumed = ctx.state === 'running' ? Promise.resolve() : ctx.resume().catch(() => {});
     this.master = ctx.createGain();
     this.master.gain.value = this.muted ? 0 : this.volume;
     const comp = ctx.createDynamicsCompressor();
@@ -105,6 +109,7 @@ export class AudioEngine {
     this.dry.connect(this.master);
     this.applyReverb(true);
     this.setStatus('loading');
+    await resumed;
     try {
       await this.loadSamples(ctx);
       this.setStatus('samples');
@@ -409,4 +414,45 @@ export class AudioEngine {
     this.voices = [];
     this.scheduled.clear();
   }
+}
+
+/**
+ * On iPhones, Web Audio is silenced by the ring/silent switch unless the page
+ * declares itself media playback: navigator.audioSession does that on iOS 17
+ * and later; before that, a (silent) media element playing alongside does.
+ * Must run inside the tap that starts playback.
+ */
+let silentAudio: HTMLAudioElement | null = null;
+function playThroughSilentSwitch() {
+  const nav = navigator as Navigator & { audioSession?: { type: string } };
+  try {
+    if (nav.audioSession) nav.audioSession.type = 'playback';
+  } catch {
+    /* not supported */
+  }
+  if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) return;
+  if (!silentAudio) {
+    // half a second of silence as a WAV (8 kHz, 8-bit mono)
+    const n = 4000;
+    const b = new Uint8Array(44 + n);
+    const dv = new DataView(b.buffer);
+    const str = (o: number, t: string) => [...t].forEach((c, i) => (b[o + i] = c.charCodeAt(0)));
+    str(0, 'RIFF');
+    dv.setUint32(4, 36 + n, true);
+    str(8, 'WAVEfmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true);
+    dv.setUint16(22, 1, true);
+    dv.setUint32(24, 8000, true);
+    dv.setUint32(28, 8000, true);
+    dv.setUint16(32, 1, true);
+    dv.setUint16(34, 8, true);
+    str(36, 'data');
+    dv.setUint32(40, n, true);
+    b.fill(128, 44);
+    silentAudio = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+    silentAudio.loop = true;
+    silentAudio.setAttribute('playsinline', '');
+  }
+  silentAudio.play().catch(() => {});
 }
