@@ -92,8 +92,6 @@ body.library-open button.lib-btn svg { color: #1b140e; }
 @media (max-width: 760px) {
   .cams { order: 3; width: 100%; justify-content: center; }
   input.vol { display: none; }
-  button.lib-btn { padding: 0 9px; }
-  button.lib-btn span { display: none; }
   .title-card .name { font-size: 24px; }
 }
 
