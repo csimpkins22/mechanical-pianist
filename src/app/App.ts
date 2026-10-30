@@ -54,6 +54,8 @@ export class App {
   ready = false;
   fps = 0;
   private fpsAcc = { n: 0, t: 0 };
+  private slowFor = 0;
+  autoQuality = true;
 
   constructor(readonly canvas: HTMLCanvasElement, readonly uiRoot: HTMLElement) {
     this.view = new SceneRenderer(canvas);
@@ -331,6 +333,15 @@ export class App {
     if (this.fpsAcc.t > 0.5) {
       this.fps = this.fpsAcc.n / this.fpsAcc.t;
       this.fpsAcc = { n: 0, t: 0 };
+      // keep playback smooth on slower machines: step quality down once
+      if (this.playing && this.autoQuality && document.visibilityState === 'visible') {
+        this.slowFor = this.fps < 28 ? this.slowFor + 0.5 : 0;
+        if (this.slowFor >= 3 && this.view.post.quality !== 'low') {
+          this.view.setQuality(this.view.post.quality === 'high' ? 'medium' : 'low');
+          this.slowFor = 0;
+          this.emit('quality');
+        }
+      }
     }
     if (this.playing && this.piece) {
       // the audio clock is the master while sound is running

@@ -189,6 +189,7 @@ export class AppUI {
       if (p?.perf.warnings.length) this.toast(p.perf.warnings.join(' · '));
       this.lastFingerRefresh = -1;
     }
+    if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Look)`, 6000);
     if (what === 'audio') {
       const s = this.app.audio.status;
       if (s === 'loading') this.toast('Tuning the piano…');
@@ -581,6 +582,7 @@ export class AppUI {
     const q = el('select') as HTMLSelectElement;
     for (const v of ['high', 'medium', 'low']) q.appendChild(new Option(`Quality: ${v}`, v, v === a.view.post.quality, v === a.view.post.quality));
     q.onchange = () => {
+      a.autoQuality = false;
       a.view.setQuality(q.value as 'high');
       a.renderNow();
     };
