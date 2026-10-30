@@ -292,10 +292,24 @@ export class AppUI {
       const melodic = parsed.tracks.filter((t) => t.noteCount > 0 && t.instrument !== 'percussion');
       if (!melodic.length) throw new Error('no notes found in this file');
       if (melodic.length > 1) this.trackDialog(parsed, f.name);
-      else this.app.loadParsed(parsed, f.name);
+      else this.perform(() => this.app.loadParsed(parsed, f.name), parsed.name);
     } catch (e) {
       this.toast(`Could not read ${f.name}: ${e instanceof Error ? e.message : e}`, 6000);
     }
+  }
+
+  /** interpretation runs on the main thread: say so before it starts */
+  private perform(fn: () => void, name: string) {
+    this.toast(`Interpreting ${name}: hands, fingering and motion…`, 60000);
+    setTimeout(() => {
+      try {
+        fn();
+        const p = this.app.piece;
+        this.toast(p?.perf.warnings.length ? p.perf.warnings.join(' · ') : '', 5000);
+      } catch (e) {
+        this.toast(`Could not perform ${name}: ${e instanceof Error ? e.message : e}`, 6000);
+      }
+    }, 40);
   }
 
   private trackDialog(parsed: ParsedMidi, name: string, current?: number[]) {
@@ -322,8 +336,7 @@ export class AppUI {
       const tracks = checks.filter(([, c]) => c.checked).map(([t]) => t.index);
       back.remove();
       if (!tracks.length) return;
-      if (current) this.app.selectTracks(tracks);
-      else this.app.loadParsed(parsed, name, tracks);
+      this.perform(() => (current ? this.app.selectTracks(tracks) : this.app.loadParsed(parsed, name, tracks)), parsed.name);
     };
     const cancel = el('button', '', 'Cancel');
     cancel.onclick = () => back.remove();
