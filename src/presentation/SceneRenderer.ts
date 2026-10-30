@@ -16,6 +16,8 @@ import { createSheetMusic } from './SheetMusic';
 import { SHARED_UNIFORMS } from './shaderPatch';
 
 export interface Look {
+  /** the visual style preset last chosen (see VisualStyles.ts) */
+  style: string;
   exposure: number;
   dof: boolean;
   dofScale: number;
@@ -28,6 +30,8 @@ export interface Look {
   saturation: number;
   warmth: number; // -1 cool .. 1 warm
   rolloff: number; // highlight roll-off
+  fade: number; // lifted, faded blacks (old film)
+  accent: number; // keep the cyan of the joints when the rest is desaturated
   /** anamorphic streaks on glints and the cyan rings */
   streaksOn: boolean;
   streaks: number;
@@ -37,6 +41,7 @@ export interface Look {
 }
 
 export const DEFAULT_LOOK: Look = {
+  style: 'golden',
   exposure: 1.0,
   dof: true,
   dofScale: 1,
@@ -48,6 +53,8 @@ export const DEFAULT_LOOK: Look = {
   saturation: 0.82,
   warmth: 0.5,
   rolloff: 0.7,
+  fade: 0,
+  accent: 0,
   streaksOn: true,
   streaks: 0.5,
   letterboxOn: false,
@@ -260,6 +267,8 @@ export class SceneRenderer {
       aberration: 0.0018,
       frame: Math.floor(t * 24) % 997,
       rolloff: L.rolloff,
+      fade: L.fade,
+      accent: L.accent,
       blackTint: w >= 0 ? [0.03 * w, 0.015 * w, 0] : [0, 0.008 * -w, 0.028 * -w],
       streaks: L.streaksOn ? 0.18 * L.streaks : 0,
       letterbox: L.letterboxOn ? L.letterbox : 0,

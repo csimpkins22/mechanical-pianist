@@ -6,6 +6,7 @@ import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '..
 import { composeEtudes, composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
 import { planChecked } from './plan';
 import { DEFAULT_SOUND, loadSettings, saveSettings, type SoundSettings } from './settings';
+import { STYLES, styleSettings } from '../presentation/VisualStyles';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
 import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
@@ -79,6 +80,18 @@ export class App {
     this.renderNow();
     clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => saveSettings({ look: this.view.look, lights: this.lights, framing: this.framing, sound: this.sound }), 250);
+  }
+
+  /** apply a visual style preset (light and grade together) */
+  setStyle(id: string) {
+    const style = STYLES.find((s) => s.id === id) ?? STYLES[0];
+    const { look, lights } = styleSettings(style, this.view.look);
+    Object.assign(this.view.look, look, { style: style.id });
+    this.lights = lights;
+    this.view.setLights(lights);
+    this.settingsChanged();
+    this.emit('style');
+    return style;
   }
 
   get sound(): SoundSettings {
@@ -168,7 +181,7 @@ export class App {
     const sel = tracks ?? defaultTrackSelection(parsed.tracks);
     const score = buildScore(parsed, sel);
     const { perf, timeline } = planChecked(score, overrides);
-    const camera = new CinematicCamera(timeline.plan, score.duration);
+    const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos);
     const sameSource = this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
     this.piece = { parsed, perf, timeline, camera, overrides, tracks: sel, source };
     this.t = sameSource ? Math.min(this.t, score.duration) : 0;
@@ -316,7 +329,7 @@ export class App {
   }
 
   cameraAt(t: number): CameraState {
-    const target = this.piece!.camera.evaluate(this.mode, t, this.framing);
+    const target = this.piece!.camera.evaluate(this.mode, t, this.framing, this.view.camera.aspect);
     if (!this.modeFrom) return target;
     const u = Math.min(1, (performance.now() - this.modeFrom.start) / 1800);
     if (u >= 1) {

@@ -24,7 +24,7 @@ export interface LightRig {
 
 export interface LightSettings {
   sun: number;
-  warmth: number; // 0 = neutral, 1 = deep amber
+  warmth: number; // -1 = cold moonlight, 0 = neutral, 1 = deep amber
   fill: number;
   rim: number;
   /** visible shafts of window light, with dust drifting in them */
@@ -122,7 +122,8 @@ export class Environment {
   }
 
   applySettings(s: LightSettings) {
-    const warm = new THREE.Color(0xfff1e0).lerp(new THREE.Color(0xffb46a), s.warmth);
+    const warm =
+      s.warmth >= 0 ? new THREE.Color(0xfff1e0).lerp(new THREE.Color(0xffb46a), s.warmth) : new THREE.Color(0xfff1e0).lerp(new THREE.Color(0x8fb0ff), -s.warmth);
     this.lights.sun.color.copy(warm);
     this.lights.sun.intensity = 3.6 * s.sun;
     this.lights.window.intensity = 2.6 * s.sun;
@@ -132,7 +133,9 @@ export class Environment {
     const rake = this.lights.rake;
     rake.visible = s.rakeOn && s.rake > 0.001;
     rake.intensity = 2.2 * s.rake;
-    rake.color.copy(new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xffc488), s.warmth));
+    rake.color.copy(
+      s.warmth >= 0 ? new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xffc488), s.warmth) : new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xa4bcff), -s.warmth),
+    );
     this.aimRake(s.rakeAngle, s.rakeDir);
     this.lights.fill.intensity = 0.45 * s.fill;
     this.soft.intensity = 1.35 * s.fill;

@@ -10,6 +10,7 @@ import { DEFAULT_LIGHTS } from '../presentation/Environment';
 import { DEFAULT_FRAMING } from '../presentation/CinematicCamera';
 import { ROOMS, type RoomId } from '../audio/AudioEngine';
 import { DEFAULT_SOUND } from '../app/settings';
+import { STYLES } from '../presentation/VisualStyles';
 
 const ICON = {
   play: '<path d="M8 5.5v13l11-6.5z"/>',
@@ -90,11 +91,12 @@ export class AppUI {
     const mid = el('div', 'group cams');
     for (const [m, label] of [
       ['cinematic', 'Cinematic'],
+      ['follow', 'Follow'],
       ['overhead', 'Overhead'],
       ['macro', 'Macro'],
     ] as [CameraMode, string][]) {
       const b = el('button', 'seg', label);
-      b.title = `${label} camera (${m === 'cinematic' ? 1 : m === 'overhead' ? 2 : 3})`;
+      b.title = `${label} camera (${{ cinematic: 1, follow: 2, overhead: 3, macro: 4 }[m]})${m === 'cinematic' ? ': designed shots, cut with the music' : ''}`;
       b.onclick = () => this.app.setMode(m);
       this.camBtns[m] = b;
       mid.appendChild(b);
@@ -197,7 +199,7 @@ export class AppUI {
       if (p?.perf.warnings.length) this.toast(p.perf.warnings.join(' · '));
       this.lastFingerRefresh = -1;
     }
-    if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Look)`, 6000);
+    if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Camera)`, 6000);
     if (what === 'audio') {
       const s = this.app.audio.status;
       if (s === 'loading') this.toast('Tuning the piano…');
@@ -409,9 +411,12 @@ export class AppUI {
           a.setMode('cinematic');
           break;
         case '2':
-          a.setMode('overhead');
+          a.setMode('follow');
           break;
         case '3':
+          a.setMode('overhead');
+          break;
+        case '4':
           a.setMode('macro');
           break;
         case 'd':
@@ -426,6 +431,14 @@ export class AppUI {
         case 'M':
           a.audio.setMuted(!a.audio.muted);
           break;
+        case 's':
+        case 'S': {
+          const i = STYLES.findIndex((s) => s.id === a.view.look.style);
+          const st = a.setStyle(STYLES[(i + (e.shiftKey ? STYLES.length - 1 : 1)) % STYLES.length].id);
+          this.toast(`Style: ${st.name}`, 1600);
+          if (this.drawer.classList.contains('open') && this.tab === 'light') this.renderDrawer();
+          break;
+        }
         case 'l':
         case 'L':
           a.loop = !a.loop;
@@ -640,9 +653,25 @@ export class AppUI {
     const L = () => a.lights;
     const sl = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt?: (v: number) => string) =>
       this.slider(body, label, min, max, step, get, set, fmt);
+    body.appendChild(el('div', 'sec', 'Style'));
+    const chips = el('div', 'chips');
+    for (const st of STYLES) {
+      const b = el('button', 'chip', st.name);
+      b.title = st.blurb;
+      b.classList.toggle('on', look.style === st.id);
+      b.onclick = () => {
+        a.setStyle(st.id);
+        this.renderDrawer();
+      };
+      chips.appendChild(b);
+    }
+    body.appendChild(chips);
+    const cur = STYLES.find((s) => s.id === look.style);
+    if (cur) body.appendChild(el('p', 'note', `${cur.blurb} Press S to step through the styles; every slider below still applies.`));
+
     body.appendChild(el('div', 'sec', 'Light'));
     sl('Window sun', 0, 1.8, 0.01, () => L().sun, (v) => a.setLights({ sun: v }));
-    sl('Sun warmth', 0, 1, 0.01, () => L().warmth, (v) => a.setLights({ warmth: v }));
+    sl('Sun warmth', -1, 1, 0.01, () => L().warmth, (v) => a.setLights({ warmth: v }), (v) => (v < 0 ? `cool ${(-v).toFixed(2)}` : v.toFixed(2)));
     sl('Room fill', 0, 2.5, 0.01, () => L().fill, (v) => a.setLights({ fill: v }));
     sl('Cool rim', 0, 2.5, 0.01, () => L().rim, (v) => a.setLights({ rim: v }));
     sl('Joint glow', 0, 2, 0.01, () => look.glow, (v) => (look.glow = v));
@@ -663,11 +692,10 @@ export class AppUI {
     sl('Saturation', 0, 1.4, 0.01, () => look.saturation, (v) => (look.saturation = v));
     sl('Warmth', -1, 1, 0.01, () => look.warmth, (v) => (look.warmth = v));
     sl('Highlight roll-off', 0, 2, 0.01, () => look.rolloff, (v) => (look.rolloff = v));
+    sl('Faded blacks', 0, 1, 0.01, () => look.fade, (v) => (look.fade = v));
+    sl('Keep cyan', 0, 1, 0.01, () => look.accent, (v) => (look.accent = v));
 
-    this.resetButton(body, () => {
-      a.setLights({ ...DEFAULT_LIGHTS });
-      for (const k of ['exposure', 'glow', 'contrast', 'saturation', 'warmth', 'rolloff'] as const) look[k] = DEFAULT_LOOK[k];
-    });
+    this.resetButton(body, () => a.setStyle('golden'));
   }
 
   private renderCamera(body: HTMLElement) {
@@ -677,9 +705,15 @@ export class AppUI {
     const sl = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt?: (v: number) => string) =>
       this.slider(body, label, min, max, step, get, set, fmt);
 
+    if (a.piece && a.mode === 'cinematic') {
+      const sh = a.piece.camera.director.shotAt(a.t);
+      body.appendChild(
+        el('p', 'note', `Cinematic cuts between designed camera moves at phrase points. Now: shot ${sh.index + 1} of ${sh.count}, “${sh.name}”. Follow, Overhead and Macro are single continuous cameras; the settings below shape them.`),
+      );
+    }
     const drama = this.sectionToggle(body, 'Camera drama', () => f().dramaOn, (v) => (a.framing.dramaOn = v));
     drama([sl('Amount', 0, 1, 0.01, () => f().drama, (v) => (a.framing.drama = v), (v) => `${Math.round(v * 100)}%`)]);
-    body.appendChild(el('p', 'note', 'Slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));
+    body.appendChild(el('p', 'note', 'For Follow, Overhead and Macro: slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));
 
     body.appendChild(el('div', 'sec', 'Lens'));
     sl('Depth of field', 0, 2, 0.01, () => look.dofScale, (v) => (look.dofScale = v));
@@ -763,6 +797,10 @@ export class AppUI {
     if (!f || !p) return;
     const lines: string[] = [];
     lines.push(`t ${a.t.toFixed(3)} s   ${a.fps.toFixed(0)} fps   pedal ${(f.pedal * 100).toFixed(0)}%`);
+    if (a.mode === 'cinematic') {
+      const sh = p.camera.director.shotAt(a.t);
+      lines.push(`shot ${sh.index + 1}/${sh.count}  ${sh.name}  ${sh.start.toFixed(1)}–${sh.end.toFixed(1)} s`);
+    }
     for (const h of ['L', 'R'] as Hand[]) {
       const hp = f.hands[h];
       lines.push(`${h} wrist ${hp.wrist.map((v) => (v * 1000).toFixed(0)).join(', ')} mm`);

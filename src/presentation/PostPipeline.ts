@@ -36,6 +36,10 @@ export interface PostParams {
   frame: number;
   /** highlight roll-off before the tone curve (0 = none) */
   rolloff: number;
+  /** lifted, faded blacks (0 = none) */
+  fade: number;
+  /** keep cyan hues saturated when the rest is desaturated (0..1) */
+  accent: number;
   /** added to the blacks after the contrast curve (warm or cool) */
   blackTint: [number, number, number];
   /** anamorphic streak strength (0 = off) */
@@ -306,6 +310,8 @@ uniform float uGrain;
 uniform float uFrame;
 uniform float uAberration;
 uniform float uRolloff;
+uniform float uFade;
+uniform float uAccent;
 uniform vec3 uBlackTint;
 uniform sampler2D tStreak;
 uniform float uStreak;
@@ -352,7 +358,10 @@ void main() {
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c *= mix(uShadowTint, uHighlightTint, smoothstep(0.05, 0.7, l));
   l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = mix(vec3(l), c, uSaturation);
+  // selective colour: the cyan of the joints can keep its saturation
+  vec3 chroma = c - vec3(l);
+  float cyan = smoothstep(0.55, 0.85, dot(chroma / max(length(chroma), 1e-5), vec3(-0.85, 0.3, 0.43))) * smoothstep(0.015, 0.06, length(chroma));
+  c = mix(vec3(l), c, max(uSaturation, uAccent * cyan * 1.2));
   c = max(c, 0.0);
   float v = 1.0 - smoothstep(0.3, 1.1, length(d * vec2(1.2, 1.55)));
   c *= mix(1.0, v, uVignette);
@@ -361,6 +370,8 @@ void main() {
   // warm (or cool) blacks: the deepest shadows keep a little colour
   float sl = dot(s, vec3(0.333));
   s += uBlackTint * pow(1.0 - sl, 5.0);
+  // faded print: blacks lifted to a warm grey, whites a touch lower
+  s = s * (1.0 - 0.13 * uFade) + vec3(0.095, 0.08, 0.065) * uFade;
   float g = hash12(floor(vUv * uRes) + uFrame * 17.31) - 0.5;
   g += hash12(floor(vUv * uRes * 0.5) + uFrame * 3.7) - 0.5;
   float lum = dot(s, vec3(0.333));
@@ -460,6 +471,8 @@ export class PostPipeline {
       uFrame: { value: 0 },
       uAberration: { value: 0.002 },
       uRolloff: { value: 0 },
+      uFade: { value: 0 },
+      uAccent: { value: 0 },
       uBlackTint: { value: new THREE.Vector3() },
       tStreak: { value: null },
       uStreak: { value: 0 },
@@ -595,6 +608,8 @@ export class PostPipeline {
     const g = U(this.grade);
     g.uStreak.value = p.streaks;
     g.uRolloff.value = p.rolloff;
+    g.uFade.value = p.fade;
+    g.uAccent.value = p.accent;
     g.uBlackTint.value.fromArray(p.blackTint);
     g.uLetterbox.value = p.letterbox;
     g.tColor.value = this.rtFull.texture;

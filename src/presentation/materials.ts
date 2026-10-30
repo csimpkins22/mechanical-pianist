@@ -5,6 +5,14 @@
 import * as THREE from 'three';
 import { CONTACT_SHADOW_GLSL, patch } from './shaderPatch';
 
+/**
+ * The robot forearms are only forearms: they fade into the dark over their
+ * last stretch, so in a wide shot the arms reach out of the shadows rather
+ * than stopping. Only the forearm extends toward +Z in its own object space
+ * (fingers and palm point along -Z), so the hand's materials can share this.
+ */
+const ARM_FADE = /* glsl */ `outgoingLight *= 1.0 - smoothstep(0.16, 0.335, vOPos.z);`;
+
 /** AO from the baked mask, applied to indirect light only (direct light has real shadows). */
 const MASK_AO = (strength: number) => /* glsl */ `
 {
@@ -53,24 +61,28 @@ export function createPalette(): Palette {
       afterMap: /* glsl */ `diffuseColor.rgb *= mix(vec3(0.86, 0.83, 0.8), vec3(1.0), smoothstep(0.25, 0.9, vMask.r));`,
       afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpNoise(vOPos * 900.0) - 0.5) * 0.05, 0.05, 1.0);`,
       afterAO: MASK_AO(0.85),
+      beforeOpaque: ARM_FADE,
     },
   );
-  const shellInner = patch(new THREE.MeshStandardMaterial({ color: 0x8d8984, roughness: 0.6 }), { masks: true, afterAO: MASK_AO(0.9) });
+  const shellInner = patch(new THREE.MeshStandardMaterial({ color: 0x8d8984, roughness: 0.6 }), { masks: true, afterAO: MASK_AO(0.9), beforeOpaque: ARM_FADE });
   const chrome = patch(new THREE.MeshPhysicalMaterial({ color: 0xf4f5f7, metalness: 1, roughness: 0.065 }), {
     masks: true,
     afterRough: /* glsl */ `roughnessFactor += vMask.b * 0.15;`,
     afterAO: MASK_AO(0.7),
+    beforeOpaque: ARM_FADE,
   });
   const steel = patch(new THREE.MeshPhysicalMaterial({ color: 0xb4b9c0, metalness: 1, roughness: 0.27 }), {
     masks: true,
     // brushed: anisotropic-looking streaks along the part
     afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpNoise(vec3(vOPos.x * 4000.0, vOPos.y * 4000.0, vOPos.z * 60.0)) - 0.5) * 0.18, 0.08, 0.6);`,
     afterAO: MASK_AO(0.8),
+    beforeOpaque: ARM_FADE,
   });
   const graphite = patch(new THREE.MeshPhysicalMaterial({ color: 0x1b1e22, metalness: 0.55, roughness: 0.42, clearcoat: 0.2, clearcoatRoughness: 0.4 }), {
     masks: true,
     afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpNoise(vOPos * 1500.0) - 0.5) * 0.12, 0.1, 0.9);`,
     afterAO: MASK_AO(0.95),
+    beforeOpaque: ARM_FADE,
   });
   const rubber = patch(new THREE.MeshStandardMaterial({ color: 0x2b2d30, roughness: 0.72 }), {
     masks: true,

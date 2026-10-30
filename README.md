@@ -31,7 +31,7 @@ To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.
 
 Open a `.mid` file with the folder button or by dropping it on the window. Files with several parts ask which tracks to perform; piano parts are preselected.
 
-URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start time), `?camera=cinematic|overhead|macro`, `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
 ### Controls
 
@@ -43,10 +43,11 @@ URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start ti
 | Back / forward 1 s | Shift + ← / → |
 | Start / end, restart | Home / End, ⏮ |
 | Speed (0.25×–1.5×) | the speed menu, `[` / `]` |
-| Cinematic / Overhead / Macro camera | 1 / 2 / 3, or the camera switch |
+| Cinematic / Follow / Overhead / Macro camera | 1 / 2 / 3 / 4, or the camera switch |
+| Next / previous visual style | S / Shift + S |
 | Loop | L |
 | Mute, volume | M, the volume slider |
-| Fingering, look, debug drawer | A, or ⚙ |
+| Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
 | Kinematics overlay | D |
 
 ## The built-in pieces
@@ -105,9 +106,58 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
 * **Sheet music** (`SheetMusic.ts`) is drawn procedurally onto canvases: aged paper, grand staves, notes, beams and slurs. An open score leans on the music desk, and loose pages lie on the floor toward the window.
 * **The piano case** (`tools/blender/build_piano.py`) is an older upright: key slip, scrolled cheek blocks on turned legs, a nameboard with gilt lettering over burgundy key felt, folded fallboard, music desk, panelled fronts, lid, brass sconces and pedals. The 88 keys are built in three.js from the shared layout: bevelled ivory with per-key tint, tapered ebony, each on its own pivot.
 * **Materials** extend three's PBR shaders: lacquered walnut with procedural grain and edge wear, ivory with faint grain and yellowing, porcelain with clearcoat and cavity warmth, chrome and brushed steel, matte fingertip pads, and thin iridescent glass that casts no shadow. The hands reflect a cube capture of the keyboard. Contact shadows darken the keys under approaching fingertips.
-* **Light**: low warm sun through a window on the bass side (4096² shadow map framed tightly on the keyboard), the window itself as an area light for long reflections, a cool fill, a camera-side soft key, a shaft of dusty light and drifting motes.
-* **Post**: HDR with MSAA, a physical thin-lens depth of field (focal length in mm on a 36 mm sensor, f-stop, focus distance), restrained bloom, ACES with a gentle split-tone grade, vignette and grain seeded by *t*.
-* **`CinematicCamera`** analyses the performance ahead of time into a slowly varying region of interest. It eases toward a register before the hands arrive, widens as they spread and drifts very slowly. Cinematic is the treble-end three-quarter view down the keyboard, Overhead looks over the player's shoulder, and Macro is low and close at the right hand's fingertips. Switching views blends over 1.8 s.
+* **Light**:
+  * **Sun**: low warm sun through a tall window on the bass side, with a 4096² shadow map framed tightly on the keyboard. The window's heavy glazing bars throw their shadows across the keys.
+  * **Window and fill**: the window itself as an area light for long reflections, a cool fill and a camera-side soft key.
+  * **Raking light** (optional): a hard source a few degrees above the keys, its own shadow map fitted to the keyboard each time its angle changes.
+  * **Light shafts**: a volumetric pass in `PostPipeline`, raymarched at half resolution against the scene depth. The sun gets through only a few openings in drawn curtains, so it crosses the room as distinct beams. The sun's shadow map shades the air, so the hands cut shadows through the light. Dust hangs over the instrument, and motes drift and catch the light only inside the beams.
+* **Post**:
+  * HDR with MSAA.
+  * A physical thin-lens depth of field (focal length in mm on a 36 mm sensor, f-stop, focus distance).
+  * Restrained bloom and anamorphic streaks: the bright parts are smeared horizontally in three passes and tinted blue.
+  * A grade with highlight roll-off, ACES, lift/gamma/gain, split toning, warm (or cool) blacks, faded blacks, selective colour (keep the cyan) and vignette.
+  * Grain seeded by *t*, and letterbox bars.
+* **Visual styles** (`VisualStyles.ts`) set the room's light and the grade together:
+  * Golden hour
+  * Noir (black and white, hard low light)
+  * Noir, cyan (only the joint lights keep their colour)
+  * Moonlight
+  * Faded film
+  * Studio
+
+  Every slider still applies after choosing one.
+* **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. There are four modes:
+  * **Cinematic** is the director (`ShotDirector.ts`): eighteen designed camera moves cut together at musical moments, described below.
+  * **Follow** is one continuous treble-end three-quarter view down the keyboard.
+  * **Overhead** looks over the player's shoulder.
+  * **Macro** is low and close at the right hand's fingertips.
+
+  Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous modes. Switching modes blends over 1.8 s; cuts within Cinematic are hard cuts.
+* **`ShotDirector`** edits the piece like a concert film.
+  * **Cutting:** every onset is a candidate cut, scored for attack strength, a breath before it, a bar line and a new bass note. A cut in the middle of a fast run is penalised. Dynamic programming chooses cuts that aim for shots of 6–9 s in calm passages and 3–5 s as the music builds. Each cut falls 50 ms before an attack, so the new shot sees it land.
+  * **Shot choice:** shots are assigned by film grammar. The edit opens on an establishing shot and ends on a pull-back reveal. It alternates wide, medium, close and detail, never repeats a recent shot, and gives close-ups to the leading hand.
+  * **The shots:**
+    * establishing
+    * crane up
+    * into the light
+    * overhead turning
+    * down the keys from the bass and from the treble
+    * Dutch angle
+    * handheld
+    * orbit
+    * over the shoulder
+    * low from the key slip
+    * slider along the keys
+    * macro
+    * the back of the hand
+    * waiting on a key (locked off on the key of the strongest coming note)
+    * from the music desk
+    * slow push-in
+    * pull-back reveal
+  * **Tracking:** each shot's subject is pre-tracked, so the camera follows the hands smoothly instead of chasing them. Close shots stop down to keep the fingers sharp.
+  * **Forearms:** the robots are only forearms, so their ends are never shown. Wide shots look down from above the arms, in front of where they end. Every camera mode, including any framing or drama setting, also passes through a guard. It projects both forearm ends for the actual screen shape, landscape or portrait. If an end could be in frame, it tightens the lens, or failing that turns away. A test scans every mode at five aspect ratios across both demos. As a further safeguard, the forearms fade into darkness over their last stretch.
+  * **Determinism:** the edit is computed once, so the camera is still a pure function of *t*.
+* **Settings** are remembered in the browser (`app/settings.ts`). Each tab of the drawer has its own reset.
 
 ### Audio
 
