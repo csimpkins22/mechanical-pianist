@@ -121,7 +121,7 @@ export class AppUI {
     const open = this.btn(ICON.open, 'Open a MIDI file (or drop one anywhere)', () => this.pickFile());
     this.demoSel = el('select', 'demo');
     this.demoSel.title = 'Built-in pieces';
-    this.demoSel.append(new Option('Nocturne', 'nocturne'), new Option('Five-note phrase', 'phrase'), new Option('Your file', 'file'));
+    this.demoSel.append(new Option('Nocturne', 'nocturne'), new Option('Five-note phrase', 'phrase'), new Option('Études (test passages)', 'etudes'), new Option('Your file', 'file'));
     this.demoSel.onchange = () => {
       if (this.demoSel.value === 'file') this.pickFile();
       else this.app.loadDemo(this.demoSel.value as DemoId);

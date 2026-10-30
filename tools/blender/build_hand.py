@@ -274,7 +274,7 @@ def build_wrist(parent):
     rings = []
     for i, z in enumerate((0.0135, 0.0215)):
         band = MB()
-        pill(band, "graphite", z + 0.0032, z - 0.0032, 0.056 + 0.004 * i, 0.035 + 0.003 * i, n=2.4, e0=0, e1=0,
+        pill(band, "steel", z + 0.0032, z - 0.0032, 0.056 + 0.004 * i, 0.035 + 0.003 * i, n=2.4, e0=0, e1=0,
              xoff=0.0025, yoff=-0.002, nu=4, nv=48)
         edge = MB()
         for zz in (z + 0.0033, z - 0.0033):

@@ -187,6 +187,52 @@ export function composePhrase(): Midi {
   return c.toMidi('Five-Note Phrase');
 }
 
+/**
+ * Études: the test passages, one after another, so each can be watched (and
+ * checked in the debug view): five-finger position, two-octave scales in both
+ * hands with thumb crossings, a trill, repeated notes, fast arpeggios, wide
+ * leaps, interlocking hands in the same register, a tempo change and pedalled
+ * two-handed chords.
+ */
+export function composeEtudes(): Midi {
+  const c = new Composer();
+  const sixteenths = (notes: string) => notes.split(' ').map((p) => `${p}:0.25`).join(' ');
+  c.tempo(0, 92);
+  // five-finger position, then the same in the left hand
+  c.line('R', 0, 'C4:0.5 D4:0.5 E4:0.5 F4:0.5 G4:0.5 F4:0.5 E4:0.5 D4:0.5 C4:1', 0.5, { legato: 0.04 });
+  c.line('L', 5, 'C3:0.5 D3:0.5 E3:0.5 F3:0.5 G3:0.5 F3:0.5 E3:0.5 D3:0.5 C3:1', 0.45, { legato: 0.04 });
+  // two-octave C major scales, up and down, right then left (thumb crossings)
+  const up = 'C4 D4 E4 F4 G4 A4 B4 C5 D5 E5 F5 G5 A5 B5 C6';
+  const dn = 'B5 A5 G5 F5 E5 D5 C5 B4 A4 G4 F4 E4 D4 C4';
+  c.line('R', 11, sixteenths(`${up} ${dn}`) + ' r:0.75', 0.5, { legato: 0.02, arc: 0.15 });
+  c.line('L', 19, sixteenths(`${up.replace(/(\d)/g, (d) => String(+d - 2))} ${dn.replace(/(\d)/g, (d) => String(+d - 2))}`) + ' r:0.75', 0.48, { legato: 0.02, arc: 0.15 });
+  // a trill, then fast repeated notes
+  c.line('R', 27, sixteenths('E5 F5 E5 F5 E5 F5 E5 F5 E5 F5 E5 F5 E5 F5 E5 D5') + ' E5:1', 0.45, { legato: 0.01 });
+  c.line('R', 32, 'G4:0.25 G4:0.25 G4:0.25 G4:0.25 G4:0.25 G4:0.25 G4:0.25 G4:0.25 C5:1', 0.5, { legato: -0.06 });
+  c.line('L', 32, 'C3+G3:2 C3+G3:1', 0.35, { legato: -0.05 });
+  // a tempo change: fast arpeggios in both hands
+  c.tempo(36, 112);
+  c.line('L', 36, sixteenths('C2 G2 C3 E3 G3 C4 G3 E3 C3 G2 C2 G2 C3 E3 G3 C4'), 0.45, { legato: 0.02, arc: 0.12 });
+  c.line('R', 40, sixteenths('C4 E4 G4 C5 E5 G5 C6 G5 E5 C5 G4 E4 C4 E4 G4 C5'), 0.5, { legato: 0.02, arc: 0.12 });
+  c.ped(36, 40);
+  c.ped(40, 44.2);
+  // wide leaps: bass to treble and back
+  c.tempo(44.5, 76);
+  c.line('L', 44.5, 'C1+C2:1 r:1 C2+G2:1 r:1', 0.55, { legato: -0.1 });
+  c.line('R', 45.5, 'E6+G6+C7:1 r:1 C4+E4+G4:1 r:0.5', 0.5, { legato: -0.1 });
+  // interlocking hands in the same register
+  c.line('L', 49.5, 'E4:0.5 G4:0.5 E4:0.5 G4:0.5 F4:0.5 A4:0.5 F4:0.5 A4:0.5', 0.4, { legato: -0.05 });
+  c.line('R', 49.75, 'C5:0.5 B4:0.5 C5:0.5 B4:0.5 D5:0.5 C5:0.5 D5:0.5 C5:0.25', 0.45, { legato: -0.05 });
+  // pedalled chords and a slow close
+  c.tempo(54, 60);
+  c.line('L', 54, 'F2+C3+F3:2 G2+D3+G3:2 C2+G2+C3:4', 0.55, { legato: -0.12, spread: 0.01 });
+  c.line('R', 54, 'A4+C5+F5:2 B4+D5+G5:2 C5+E5+G5+C6:4', 0.58, { legato: -0.12, spread: 0.008 });
+  c.ped(54, 56);
+  c.ped(56, 58);
+  c.ped(58, 62.5);
+  return c.toMidi('Études for Mechanical Hands');
+}
+
 export function midiBytes(m: Midi): Uint8Array {
   return m.toArray();
 }

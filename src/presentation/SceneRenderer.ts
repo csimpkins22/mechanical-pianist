@@ -26,6 +26,29 @@ export interface Look {
 
 export const DEFAULT_LOOK: Look = { exposure: 1.0, dof: true, dofScale: 1, bloom: 1, glow: 1, grain: 1, vignette: 1 };
 
+/** Pack glTF JSON and its binary buffer into a GLB container. */
+function packGlb(json: object, bin: Uint8Array): ArrayBuffer {
+  const enc = new TextEncoder().encode(JSON.stringify(json));
+  const jsonLen = Math.ceil(enc.length / 4) * 4;
+  const binLen = Math.ceil(bin.length / 4) * 4;
+  const total = 12 + 8 + jsonLen + 8 + binLen;
+  const out = new ArrayBuffer(total);
+  const dv = new DataView(out);
+  const u8 = new Uint8Array(out);
+  dv.setUint32(0, 0x46546c67, true); // 'glTF'
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  dv.setUint32(12, jsonLen, true);
+  dv.setUint32(16, 0x4e4f534a, true); // 'JSON'
+  u8.set(enc, 20);
+  for (let i = enc.length; i < jsonLen; i++) u8[20 + i] = 0x20;
+  const o = 20 + jsonLen;
+  dv.setUint32(o, binLen, true);
+  dv.setUint32(o + 4, 0x004e4942, true); // 'BIN'
+  u8.set(bin, o + 8);
+  return out;
+}
+
 export class SceneRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -70,8 +93,23 @@ export class SceneRenderer {
       new Promise<THREE.Group>((resolve, reject) =>
         loader.load(url, (g) => resolve(g.scene), (e) => e.total && onProgress?.(e.loaded / e.total), reject),
       );
-    // binary glTF where the host serves it, self-contained glTF JSON otherwise
-    const model = (name: string) => get(`${base}assets/${name}.glb`).catch(() => get(`${base}assets/${name}.json`));
+    // Binary glTF where the host serves it; otherwise self-contained glTF JSON,
+    // whose embedded buffer is decoded here and handed over as a GLB, so the
+    // loader never has to fetch a data: URL (some hosts forbid that).
+    const fromJson = async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${r.status} ${url}`);
+      const json = await r.json();
+      const uri: string = json.buffers[0].uri;
+      const b64 = uri.slice(uri.indexOf(',') + 1);
+      const raw = atob(b64);
+      const bin = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bin[i] = raw.charCodeAt(i);
+      delete json.buffers[0].uri;
+      const gltf = await loader.parseAsync(packGlb(json, bin), '');
+      return gltf.scene;
+    };
+    const model = (name: string) => get(`${base}assets/${name}.glb`).catch(() => fromJson(`${base}assets/${name}.json`));
     const [hand, pianoCase] = await Promise.all([model('robot_hand'), model('piano_case')]);
     applyPalette(hand, this.palette);
     applyPalette(pianoCase, this.palette);

@@ -173,3 +173,18 @@ describe('MIDI engine and demo', () => {
     expect(rh.startsWith('A4:1')).toBe(true);
   });
 });
+
+describe('études (the test passages)', () => {
+  test('plan with every note in reach and no finger conflicts', async () => {
+    const { composeEtudes } = await import('../src/interpretation/demoPiece');
+    const score = buildScore(readMidi(midiBytes(composeEtudes()), 'etudes.mid'));
+    expect(score.tempos.some((t) => Math.round(t.bpm) === 112)).toBe(true);
+    const p = planPerformance(score);
+    expect(p.stats.approximated).toBe(0);
+    // both scales get thumb crossings
+    for (const hand of ['L', 'R'] as const) {
+      const ones = p.byHand[hand].filter((n) => n.finger === 1).length;
+      expect(ones).toBeGreaterThan(4);
+    }
+  });
+});

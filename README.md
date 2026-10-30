@@ -29,7 +29,7 @@ npm test             # interpretation + kinematics tests (vitest)
 
 Open a `.mid` file with the folder button or by dropping it on the window. Files with several parts ask which tracks to perform; piano parts are preselected.
 
-URL options for development: `?demo=phrase|nocturne`, `?t=12.5` (start time), `?camera=cinematic|overhead|macro`, `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start time), `?camera=cinematic|overhead|macro`, `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
 ### Controls
 
@@ -59,6 +59,8 @@ URL options for development: `?demo=phrase|nocturne`, `?t=12.5` (start time), `?
 6. the opening returns, and a quiet A major chord with a long release.
 
 **Five-Note Phrase** is that opening on its own: the first visual milestone.
+
+**Études for Mechanical Hands** strings the test passages together so each can be watched (and inspected with the debug overlay): a five-finger position in each hand, two-octave scales in both hands with thumb crossings, a trill, fast repeated notes, a tempo change into fast arpeggios in both hands, wide leaps from the bass to the top of the keyboard, interlocking hands in the same register, and pedalled two-handed chords.
 
 ## How it works
 
@@ -104,7 +106,8 @@ Nothing is integrated frame to frame. Planning happens once, and every frame is 
 
 * five-finger positions; two-octave scales up and down (right hand, thumb crossings in the right places); a left-hand scale; harmonic minor (thumb never on G♯); triads; trills (two alternating fingers); repeated notes; no finger ever holding two keys;
 * hand assignment: melodies crossing middle C stay in one hand, bass and treble split, interleaved lines in overlapping registers keep their tracks, leaps stay in reach, impossible chords are detected and flagged, overrides are honoured;
-* the demo round-trips through a real MIDI file with tempo changes and pedal, and plans with no approximations, deterministically;
+* the demo round-trips through a real MIDI file with tempo changes and pedal, and plans with no approximations, deterministically; so do the Études;
+* the exported robot hand's joints match the shared hand spec;
 * IK reproduces the rest pose and reaches forward-kinematics targets exactly;
 * every key is down exactly at its onset and up after release;
 * every key that is going down or held down has its fingertip on it, within 2 mm, across the whole demo;
@@ -120,7 +123,7 @@ pip install bpy==5.2.3      # Blender as a Python module
 npm run assets              # writes public/assets/robot_hand.glb and piano_case.glb
 ```
 
-Add `--preview out.png` to either script for a Cycles studio render. `tools/glb-to-json.cjs` converts a `.glb` into self-contained glTF JSON for hosts that do not serve binary glTF; the app loads either.
+Add `--preview out.png` to either script for a Cycles studio render. `tests/assets.test.ts` fails if the exported joints drift from `hand_spec.json`, so the model and the IK can never disagree. `tools/glb-to-json.cjs` converts a `.glb` into self-contained glTF JSON for hosts that do not serve binary glTF; the app tries the `.glb` first and otherwise decodes the JSON itself.
 
 ## Layout
 

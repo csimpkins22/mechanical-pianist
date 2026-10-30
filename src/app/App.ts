@@ -3,7 +3,7 @@
 // plays, `t` is read from the audio clock so picture and sound cannot drift.
 import { AudioEngine } from '../audio/AudioEngine';
 import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '../interpretation/MidiEngine';
-import { composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
+import { composeEtudes, composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
 import { planPerformance } from '../interpretation/PerformancePlanner';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
 import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
@@ -13,7 +13,7 @@ import { SceneRenderer } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 
-export type DemoId = 'nocturne' | 'phrase';
+export type DemoId = 'nocturne' | 'phrase' | 'etudes';
 
 export interface Piece {
   parsed: ParsedMidi;
@@ -117,7 +117,7 @@ export class App {
 
   // ------------------------------------------------------------- pieces
   loadDemo(id: DemoId) {
-    const midi = id === 'phrase' ? composePhrase() : composeNocturne();
+    const midi = id === 'phrase' ? composePhrase() : id === 'etudes' ? composeEtudes() : composeNocturne();
     const parsed = readMidi(midiBytes(midi), `${id}.mid`);
     this.build(parsed, { kind: 'demo', id }, new Map(), undefined);
   }
