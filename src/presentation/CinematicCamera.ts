@@ -48,6 +48,13 @@ export const DEFAULT_FRAMING: Framing = { distance: 1, height: 0, angle: 0, foca
 
 const RATE = 30;
 
+// the forearm guard's zoom, calmed (see calmZoom): sampled every STEP s, held
+// HOLD s either side of each sample, eased out by REACH s, with a little to spare
+const CALM_STEP = 0.2;
+const CALM_HOLD = 0.8;
+const CALM_REACH = 2.2;
+const CALM_MARGIN = 1.03;
+
 export class CinematicCamera {
   private center: Signal;
   private span: Signal;
@@ -188,7 +195,54 @@ export class CinematicCamera {
   }
 
   evaluate(mode: CameraMode, t: number, f: Framing = DEFAULT_FRAMING, aspect = 16 / 9): CameraState {
-    return this.guard(this.compose(mode, t, f), t, aspect);
+    const raw = this.compose(mode, t, f);
+    const z = this.calmZoom(mode, t, f, aspect);
+    // the guard stays the hard limit; after the calm zoom it rarely has anything left to do
+    return this.guard(z > 1 ? { ...raw, focalLength: raw.focalLength * z } : raw, t, aspect);
+  }
+
+  /** the guard's zoom needs, per (mode, framing, screen shape), on the CALM_STEP grid */
+  private needs = new Map<string, Map<number, number>>();
+
+  /**
+   * How far the guard has to zoom in to keep the forearm ends out of frame,
+   * held and eased over a few seconds. On a narrow (portrait) screen the ends
+   * drift near the frame's sides as the hands move, and following that need
+   * frame by frame made the camera pump in and out. The need is sampled on a
+   * fixed time grid (so the result depends on t alone and stays
+   * deterministic), and each sample holds its zoom for a while either side.
+   * In Cinematic mode only the current shot counts: a cut is a fresh start.
+   */
+  private calmZoom(mode: CameraMode, t: number, f: Framing, aspect: number): number {
+    const key = `${mode}|${aspect.toFixed(3)}|${f.distance}|${f.height}|${f.angle}|${f.focalScale}|${f.dramaOn}|${f.drama}`;
+    let needs = this.needs.get(key);
+    if (!needs) {
+      if (this.needs.size >= 8) this.needs.delete(this.needs.keys().next().value!);
+      this.needs.set(key, (needs = new Map()));
+    }
+    let lo = t - CALM_REACH;
+    let hi = t + CALM_REACH;
+    if (mode === 'cinematic') {
+      const shot = this.director.shotAt(t);
+      lo = Math.max(lo, shot.start);
+      hi = Math.min(hi, shot.end - 1e-6);
+    }
+    let z = 1;
+    for (let k = Math.ceil(lo / CALM_STEP); k * CALM_STEP <= hi; k++) {
+      const ts = k * CALM_STEP;
+      let need = needs.get(k);
+      if (need === undefined) {
+        const raw = this.compose(mode, ts, f);
+        need = this.guard(raw, ts, aspect).focalLength / raw.focalLength;
+        needs.set(k, need);
+      }
+      if (need <= 1.0001) continue;
+      const d = Math.abs(t - ts);
+      const u = clamp((d - CALM_HOLD) / (CALM_REACH - CALM_HOLD), 0, 1);
+      const w = 1 - u * u * (3 - 2 * u);
+      z = Math.max(z, 1 + (need * CALM_MARGIN - 1) * w);
+    }
+    return z;
   }
 
   /** where each robot forearm ends (the arms are only forearms: their ends must never be seen) */
