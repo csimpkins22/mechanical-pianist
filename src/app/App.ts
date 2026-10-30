@@ -4,7 +4,8 @@
 import { AudioEngine } from '../audio/AudioEngine';
 import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '../interpretation/MidiEngine';
 import { DEFAULT_PIECE, LIBRARY, entryById, type LibraryEntry } from './library';
-import { Cancelled, Planner, idb, type PlanRequest } from './planner';
+import { Cancelled, PLAN_VERSION, Planner, idb, type PlanRequest } from './planner';
+import { fingerprint } from './planCodec';
 import { DEFAULT_SOUND, loadSettings, saveSettings, type SoundSettings } from './settings';
 import { STYLES, styleSettings } from '../presentation/VisualStyles';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
@@ -65,6 +66,8 @@ export class App {
   readonly planner = new Planner();
   private buildSeq = 0;
   private entryReqs = new Map<string, { req: PlanRequest; duration: number }>();
+  /** plans prepared at build time for the library (plans/manifest.json), when they match this build */
+  private prebuilt: Record<string, { file: string; midi: string; tracks: number[] }> = {};
   frame: FrameState | null = null;
   t = 0;
   playing = false;
@@ -151,6 +154,7 @@ export class App {
     this.view.scene.add(this.debug.group);
     this.view.setLights(this.lights);
     onProgress?.(0.7, 'Interpreting the score');
+    await this.loadPrebuilt();
     const id = this.params.get('demo') || this.params.get('piece') || DEFAULT_PIECE;
     await this.openEntry(entryById(id) ?? entryById(DEFAULT_PIECE)!, (f, label) => onProgress?.(0.7 + 0.3 * f, label));
     onProgress?.(1, '');
@@ -219,11 +223,15 @@ export class App {
   ) {
     const seq = ++this.buildSeq;
     const sel = tracks ?? defaultTrackSelection(parsed.tracks);
+    // the library default (its usual parts, no overrides) was prepared at build time
+    const entry = source.kind === 'library' ? entryById(source.id) : undefined;
+    const def = entry && this.entryInfo(entry).req;
+    const prebuilt = def && !overrides.size && def.tracks.join() === sel.join() ? def.prebuilt : undefined;
     const sameSource = !!this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
     this.loading = { source, title: meta.title, fraction: 0, label: 'Reading the score' };
     this.emit('loading');
     try {
-      const { perf, timeline } = await this.planner.plan({ bytes, name: parsed.name, tracks: sel, overrides }, (f, label) => {
+      const { perf, timeline } = await this.planner.plan({ bytes, name: parsed.name, tracks: sel, overrides, prebuilt }, (f, label) => {
         if (seq !== this.buildSeq) return;
         this.loading = { source, title: meta.title, fraction: f, label };
         progress?.(f, label);
@@ -266,21 +274,35 @@ export class App {
     return this.rebuild(new Map());
   }
 
+  private async loadPrebuilt() {
+    try {
+      const r = await fetch(`${import.meta.env.BASE_URL}plans/manifest.json`);
+      const m = r.ok ? await r.json() : null;
+      if (m?.version === PLAN_VERSION) this.prebuilt = m.plans;
+      else if (m) console.info(`prepared plans are from other planner code (${m.version}, this is ${PLAN_VERSION}): planning here`);
+    } catch {
+      /* none: plan in the browser */
+    }
+  }
+
   /** the planning request for a library piece as it opens (default parts, no overrides), and its length */
   entryInfo(e: LibraryEntry) {
     let info = this.entryReqs.get(e.id);
     if (!info) {
       const bytes = e.bytes();
       const parsed = readMidi(bytes, `${e.id}.mid`);
-      info = { req: { bytes, name: parsed.name, tracks: defaultTrackSelection(parsed.tracks), overrides: new Map() }, duration: parsed.midi.duration };
+      const tracks = defaultTrackSelection(parsed.tracks);
+      const pre = this.prebuilt[e.id];
+      const prebuilt = pre && pre.midi === fingerprint(bytes) && pre.tracks.join() === tracks.join() ? `${import.meta.env.BASE_URL}plans/${pre.file}` : undefined;
+      info = { req: { bytes, name: parsed.name, tracks, overrides: new Map(), prebuilt }, duration: parsed.midi.duration };
       this.entryReqs.set(e.id, info);
     }
     return info;
   }
 
-  /** library pieces not yet prepared in this browser: prepare them quietly, one at a time */
+  /** library pieces without a prepared plan, not yet planned in this browser: plan them quietly, one at a time */
   prepareLibrary() {
-    this.planner.prepare(LIBRARY.map((e) => this.entryInfo(e).req));
+    this.planner.prepare(LIBRARY.map((e) => this.entryInfo(e).req).filter((r) => !r.prebuilt));
   }
 
   /** 1 when a library piece opens at once (planned already), else how far its preparation is (null: not started) */
@@ -292,9 +314,7 @@ export class App {
 
   // ------------------------------------------------------------- the viewer's files
   private async rememberFile(bytes: Uint8Array, name: string, parsed: ParsedMidi, tracks?: number[]): Promise<string> {
-    let x = 2166136261 >>> 0;
-    for (let i = 0; i < bytes.length; i++) x = Math.imul(x ^ bytes[i], 16777619) >>> 0;
-    const id = `f${x.toString(16)}${bytes.length.toString(16)}`;
+    const id = `f${fingerprint(bytes)}`;
     const rec: UserFile = { id, name, title: titleOf(parsed, name), bytes, tracks, added: Date.now() };
     await idb('files', 'readwrite', (s) => s.put(rec));
     this.emit('files');

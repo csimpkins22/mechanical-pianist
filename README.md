@@ -21,7 +21,7 @@ Needs Node 20+ (tested on 22).
 ```bash
 npm install
 npm run dev          # http://127.0.0.1:5174
-npm run build        # static site in dist/ (open with `npm run preview`)
+npm run build        # static site in dist/, with the library's plans prepared (open with `npm run preview`)
 npm test             # interpretation + kinematics tests (vitest)
 ```
 
@@ -72,7 +72,9 @@ The library is laid out like a concert programme, in three groups, each in order
 
 The songs and classical pieces are piano MIDI performances supplied with the project, in `src/music/`, and inlined into the build (nothing is fetched). Two were trimmed with `tools/trim-midi.cjs`: 1979 lost four stray notes and twenty seconds of silence before the song begins, and There There lost eight seconds of leading silence. The song arrangements are transcriptions of copyrighted songs; check the rights before distributing the app publicly with them.
 
-**Planning off the main thread.** Interpreting a long piece takes a while: about 10 to 40 seconds for the songs. Planning happens in a Web Worker (`src/app/planner.worker.ts`), so the current piece keeps playing while the next is prepared. Progress shows under the title. The result is kept in this browser (IndexedDB), keyed by the file, the chosen parts, the fingering overrides and a hash of the planner's own source, so a piece opens at once the second time and a change to the planner never reuses stale plans. Because plans are deterministic, a cached plan is exactly the one that would be computed again. Opening the library also starts preparing the other library pieces in the background, one at a time. Where workers are unavailable, planning falls back to the page itself.
+**Prepared at build time.** Interpreting a long piece takes a while: about 10 to 40 seconds for the songs. So `npm run build` plans every library piece in advance (`tools/plan-library.cjs`, one process per core, about a minute) and ships the results in `public/plans/`, gzipped (1 to 2.5 MB each). A visitor downloads the finished performance, which opens in a fraction of a second. The plans are deterministic, so a prepared plan is exactly the one the browser would compute. Each carries the hash of the planner's source and a fingerprint of its MIDI file, and the app only uses a plan whose hash and fingerprint match its own code and file. A piece is re-planned at build time only when one of them changes (`npm run plans -- --force` redoes them all). The file format is in `src/app/planCodec.ts`.
+
+**Planning in the browser.** Your own files, other parts, fingering overrides, and the dev server (whose code is usually newer than the last build's plans) are planned in a Web Worker (`src/app/planner.worker.ts`). The current piece keeps playing meanwhile, and progress shows under the title. The result is kept in this browser (IndexedDB), keyed by the file, the chosen parts, the overrides and the planner hash, so a piece opens at once the second time. Where workers are unavailable, planning falls back to the page itself.
 
 ### The original pieces
 
@@ -228,9 +230,10 @@ src/
   audio/           AudioEngine, synthPiano
   ui/              AppUI, LibrarySheet, dom helpers, styles
   app/             App (master clock, transport, pieces), library, planner + planner.worker (worker + cache),
-                   plan (IK-checked planning), settings
+                   planCodec (prepared plan files), plan (IK-checked planning), settings
   music/           the bundled MIDI performances
-tools/             Blender builds, SoundFont conversion, MIDI trimming, sample copy, screenshots, video, determinism test
+tools/             Blender builds, SoundFont conversion, library plans, MIDI trimming, sample copy, screenshots, video,
+                   determinism test
 tests/             vitest suites
 ```
 

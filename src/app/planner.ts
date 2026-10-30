@@ -1,22 +1,28 @@
-// Planning a performance is heavy (a long piece takes many seconds), so it
-// runs in a worker and the result is kept in this browser (IndexedDB): a
-// piece opened before opens at once. The worker sends plain data; the few
-// classes in it (the timeline, its key mechanics, the motion signals) get
-// their prototypes back here. Results are deterministic, so a cached plan is
-// exactly the plan that would be computed again; the cache key includes a
-// hash of the planner's own source, so any change to it starts afresh.
+// Planning a performance is heavy (a long piece takes many seconds). The
+// library's pieces are planned at build time (tools/plan-library.cjs) and
+// fetched ready-made; anything else is planned in a worker, and the result is
+// kept in this browser (IndexedDB), so a piece opened before opens at once.
+// Both arrive as plain data; the few classes in it (the timeline, its key
+// mechanics, the motion signals) get their prototypes back here. Results are
+// deterministic, so a stored plan is exactly the plan that would be computed
+// again; both carry a hash of the planner's own source, so any change to it
+// starts afresh.
 import { Signal } from '../core/math';
 import type { Override, Performance } from '../core/types';
 import { KeyMechanics } from '../performance/KeyMechanics';
 import { PerformanceTimeline } from '../performance/PerformanceTimeline';
+import { decodePlan } from './planCodec';
 
 declare const __PLAN_VERSION__: string;
+export const PLAN_VERSION = __PLAN_VERSION__;
 
 export interface PlanRequest {
   bytes: Uint8Array;
   name: string;
   tracks: number[];
   overrides: Map<number, Override>;
+  /** where a plan prepared at build time for exactly this request can be fetched */
+  prebuilt?: string;
 }
 
 export interface Planned {
@@ -100,6 +106,16 @@ function revive(data: { perf: Performance; timeline: PerformanceTimeline }): Pla
   return { perf: data.perf, timeline: tl };
 }
 
+/** a plan prepared at build time: gzipped (unless the server already unpacked it), see planCodec.ts */
+async function fetchPrebuilt(url: string): Promise<{ perf: Performance; timeline: PerformanceTimeline }> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  let buf = await r.arrayBuffer();
+  const head = new Uint8Array(buf, 0, 2);
+  if (head[0] === 0x1f && head[1] === 0x8b) buf = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  return decodePlan(buf) as { perf: Performance; timeline: PerformanceTimeline };
+}
+
 // ------------------------------------------------------------- the workers
 interface Job {
   key: string;
@@ -128,6 +144,7 @@ export class Planner {
   onStatus?: () => void;
 
   async cached(req: PlanRequest): Promise<boolean> {
+    if (req.prebuilt) return true;
     const key = await keyOf(req);
     if (this.status.get(key) === 1) return true;
     const hit = (await idb('plans', 'readonly', (s) => s.count(key))) ?? 0;
@@ -152,6 +169,17 @@ export class Planner {
       this.status.set(key, 1);
       progress?.(1, 'Ready');
       return revive(hit);
+    }
+    if (req.prebuilt) {
+      try {
+        progress?.(0.4, 'Fetching the prepared performance');
+        const data = await fetchPrebuilt(req.prebuilt);
+        this.status.set(key, 1);
+        progress?.(1, 'Ready');
+        return revive(data);
+      } catch (err) {
+        console.warn('prepared plan unavailable, planning here instead:', err);
+      }
     }
     let job = this.jobs.get(key);
     if (!job) job = this.start(req, key, background);
