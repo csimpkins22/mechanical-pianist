@@ -7,10 +7,11 @@ import { planPerformance } from '../src/interpretation/PerformancePlanner';
 import { buildScore, readMidi } from '../src/interpretation/MidiEngine';
 import { composeNocturne, composePhrase, midiBytes } from '../src/interpretation/demoPiece';
 import { line, scoreOf } from './helpers';
+import { planChecked } from '../src/app/plan';
 
 const demoTimeline = (() => {
   let tl: PerformanceTimeline | null = null;
-  return () => (tl ??= new PerformanceTimeline(planPerformance(buildScore(readMidi(midiBytes(composeNocturne()), 'demo.mid')))));
+  return () => (tl ??= planChecked(buildScore(readMidi(midiBytes(composeNocturne()), 'demo.mid'))).timeline);
 })();
 
 describe('IK', () => {

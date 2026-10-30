@@ -680,6 +680,10 @@ const FLAG_LABEL: Record<string, string> = {
   'finger-conflict': '⇄',
   'early-release': '↑',
   'chord-overflow': '✕',
+  scale: 'scale',
+  chromatic: 'chrom.',
+  arpeggio: 'arp.',
+  motif: 'motif',
 };
 
 function escapeHtml(s: string) {

@@ -4,7 +4,7 @@
 import { AudioEngine } from '../audio/AudioEngine';
 import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '../interpretation/MidiEngine';
 import { composeEtudes, composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
-import { planPerformance } from '../interpretation/PerformancePlanner';
+import { planChecked } from './plan';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
 import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
@@ -139,8 +139,7 @@ export class App {
     if (wasPlaying) this.pause();
     const sel = tracks ?? defaultTrackSelection(parsed.tracks);
     const score = buildScore(parsed, sel);
-    const perf = planPerformance(score, overrides);
-    const timeline = new PerformanceTimeline(perf);
+    const { perf, timeline } = planChecked(score, overrides);
     const camera = new CinematicCamera(timeline.plan, score.duration);
     const sameSource = this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
     this.piece = { parsed, perf, timeline, camera, overrides, tracks: sel, source };

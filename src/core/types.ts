@@ -58,7 +58,12 @@ export type NoteFlag =
   | 'finger-conflict' // finger had to leave a held key early
   | 'early-release' // the hand had to leave before the notated release (sound continues)
   | 'chord-overflow' // more simultaneous notes than fingers
-  | 'track-hand';
+  | 'track-hand'
+  // recognised figures whose conventional fingering guided the choice
+  | 'scale'
+  | 'chromatic'
+  | 'arpeggio'
+  | 'motif'; // fingered like an earlier, identical figure
 
 /** A note after interpretation: who plays it and how. */
 export interface PerformanceNote extends ScoreNote {

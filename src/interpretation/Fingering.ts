@@ -11,12 +11,21 @@
 // "semitone equivalents" of 13.7 mm), because hands care how far a key is,
 // not what interval it makes: E-F is as wide as C-D.
 //
+// Repeated notes: a slow repetition keeps its finger; a fast one changes
+// finger on the key (3-2-1, 4-3-2-1), which is cheap because the finger that
+// just played has to lift anyway.
+//
+// Recognised figures (scales, arpeggios, chromatic runs, repeated motifs; see
+// Patterns.ts) arrive as soft priors and add a cost when the search departs
+// from them.
+//
 // Everything runs in the right-hand canonical frame; left-hand positions are
 // mirrored (x -> -x) so finger 1 is always on the low side.
 import { isBlack, keyOf } from '../core/keyboard';
 import { NATURAL_OFFSET } from '../core/handGeometry';
 import type { Finger, Hand, ScoreNote } from '../core/types';
 import { groupOnsets } from './HandAssignment';
+import { motifPriors, patternPriors, type Prior, type Priors } from './Patterns';
 
 /** how long a key may still be held when its finger is needed elsewhere */
 const HELD_SLACK = 0.1;
@@ -121,17 +130,28 @@ function handRef(notes: FingerNote[], fingers: number[]): number {
 }
 
 /** Transition cost from state `st` to playing group `g` with `fingers`. */
-function transition(st: FState, g: { time: number; notes: FingerNote[] }, fingers: number[], forced: (number | undefined)[]): number {
+function transition(
+  st: FState,
+  g: { time: number; notes: FingerNote[] },
+  fingers: number[],
+  forced: (number | undefined)[],
+  prior: (Prior | undefined)[],
+): number {
   const t = g.time;
   let c = 0;
   for (let i = 0; i < fingers.length; i++) if (forced[i] && forced[i] !== fingers[i]) return Infinity;
+  for (let i = 0; i < fingers.length; i++) {
+    const p = prior[i];
+    if (p && !p.fingers.includes(fingers[i] as Finger)) c += p.weight;
+  }
 
   // fingers still holding keys
-  // (an overlap of up to ~0.1 s is ordinary legato: the finger lifts a moment early)
+  // (an overlap of up to ~0.1 s is ordinary legato: the finger lifts a moment early;
+  // a key that is struck again has been let up, whatever the file says)
   const contact: { f: number; X: number }[] = [];
   for (let f = 1; f <= 5; f++) {
     const s = st.slots[f];
-    if (s && s.end > t + HELD_SLACK) {
+    if (s && s.end > t + HELD_SLACK && !g.notes.some((n) => Math.abs(n.X - s.X) < 1e-4)) {
       if (fingers.includes(f)) c += 6 + 40 * Math.min(1, (s.end - t - HELD_SLACK) / 0.3); // would have to abandon a held key
       else contact.push({ f, X: s.X });
     }
@@ -158,13 +178,28 @@ function transition(st: FState, g: { time: number; notes: FingerNote[] }, finger
     for (let i = 0; i < fingers.length; i++) {
       const f = fingers[i];
       const n = g.notes[i];
+      const sameKey = Math.abs(p.X - n.X) < 1e-4;
       if (p.f === f) {
-        if (Math.abs(p.X - n.X) < 1e-4) c += ioi < 0.16 ? 2.5 : 0.25; // repeated key, same finger
+        // repeated key, same finger: natural when slow, hard to keep even when fast
+        if (sameKey) c += 0.15 + 2.6 * Math.min(1, Math.max(0, (0.26 - ioi) / 0.12));
         else {
           // one finger to a new key: impossible to connect, and slow to get there
           const wasLegato = p.end >= t - 0.02;
-          c += chordShift * ((ioi < 0.3 ? 5 : wasLegato ? 3.2 : 1.2) + (0.4 * Math.abs(p.X - n.X)) / W);
+          // (sliding one finger to the neighbouring key at speed is the worst of it)
+          c += chordShift * ((ioi < 0.2 ? 7 : ioi < 0.3 ? 5 : wasLegato ? 3.2 : 1.2) + (0.4 * Math.abs(p.X - n.X)) / W);
         }
+        continue;
+      }
+      if (sameKey) {
+        // a fresh finger on the same key: the pianist's answer to fast
+        // repetition, running down the hand (3-2-1, 4-3-2-1) and resetting;
+        // when slow, just a needless shift of the hand
+        if (fingers.length === 1 && st.prev.length === 1) {
+          const down = f < p.f;
+          const fast = Math.min(1, Math.max(0, (0.3 - ioi) / 0.12));
+          // (stepping back up the hand costs more than resetting it: 4-3-2-1 4-3-2-1, not 4-3-2-3)
+          c += (down ? 0.35 : 1.2) + (down ? 0.3 : 0.15) * (Math.abs(f - p.f) - 1) + 1.4 * (1 - fast);
+        } else c += 0.8;
         continue;
       }
       const a = Math.min(p.f, f);
@@ -221,7 +256,45 @@ export interface FingeringResult {
   unreachable: Set<number>;
 }
 
-export function assignFingers(notes: ScoreNote[], hand: Hand, forcedFingers: Map<number, Finger>, beamWidth = 72): FingeringResult {
+/**
+ * Fingering for one hand: recognised figures become priors, then the search;
+ * if the result fingers an exact repeat of a motif differently from its first
+ * appearance, search again nudged toward the first fingering.
+ */
+export function fingerHand(notes: ScoreNote[], hand: Hand, forcedFingers: Map<number, Finger>, bans: Bans = new Map()): FingeringResult & { priors: Priors } {
+  const priors = patternPriors(notes, hand);
+  let res = assignFingers(notes, hand, forcedFingers, 72, priors, bans);
+  const motifs = motifPriors(notes, res.fingers);
+  let differs = false;
+  for (const [id, p] of motifs) {
+    if (priors.has(id)) continue;
+    priors.set(id, p);
+    if (!p.fingers.includes(res.fingers.get(id)!)) differs = true;
+  }
+  if (differs) res = assignFingers(notes, hand, forcedFingers, 72, priors, bans);
+  return { ...res, priors };
+}
+
+/**
+ * Hand shapes the real hand failed to make (from the IK check after motion
+ * planning): onset group (its note ids, ascending, joined by ',') -> banned
+ * finger tuples (fingers in the same note order, joined).
+ */
+export type Bans = Map<string, string[]>;
+export const BAN_COST = 9;
+
+export function groupKey(ids: number[]): string {
+  return ids.slice().sort((a, b) => a - b).join(',');
+}
+
+export function assignFingers(
+  notes: ScoreNote[],
+  hand: Hand,
+  forcedFingers: Map<number, Finger>,
+  beamWidth = 72,
+  priors: Priors = new Map(),
+  bans: Bans = new Map(),
+): FingeringResult {
   const sign = hand === 'R' ? 1 : -1;
   const overflow = new Set<number>();
   const groups = groupOnsets(notes).map((g) => {
@@ -243,10 +316,14 @@ export function assignFingers(notes: ScoreNote[], hand: Hand, forcedFingers: Map
   for (const g of groups) {
     const k = g.notes.length;
     const forced = g.notes.map((n) => forcedFingers.get(n.note.id));
+    const prior = g.notes.map((n) => priors.get(n.note.id));
+    const banned = bans.get(groupKey(g.notes.map((n) => n.note.id)));
+    const byId = g.notes.map((n, i) => [n.note.id, i] as const).sort((a, b) => a[0] - b[0]);
     const next: FState[] = [];
     for (const st of beam) {
       for (const fingers of COMBOS[k]) {
-        const tc = transition(st, g, fingers, forced);
+        let tc = transition(st, g, fingers, forced, prior);
+        if (banned && banned.includes(byId.map(([, i]) => fingers[i]).join(''))) tc += BAN_COST;
         if (!isFinite(tc)) continue;
         const slots = st.slots.slice();
         fingers.forEach((f, i) => {

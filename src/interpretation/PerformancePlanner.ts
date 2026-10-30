@@ -4,10 +4,10 @@
 // re-plans with a constraint and the renderer never knows the difference.
 import type { Finger, Hand, NoteFlag, Override, Performance, PerformanceNote, Score } from '../core/types';
 import { keyOf } from '../core/keyboard';
-import { assignFingers, pairCost } from './Fingering';
+import { fingerHand, pairCost, type Bans } from './Fingering';
 import { assignHands, trackHands } from './HandAssignment';
 
-export function planPerformance(score: Score, overrides: Map<number, Override> = new Map()): Performance {
+export function planPerformance(score: Score, overrides: Map<number, Override> = new Map(), bans: Bans = new Map()): Performance {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const warnings: string[] = [];
   const tracks = trackHands(score.tracks, score.selectedTracks, score.notes);
@@ -33,9 +33,11 @@ export function planPerformance(score: Score, overrides: Map<number, Override> =
       const f = overrides.get(n.id)?.finger;
       if (f) forced.set(n.id, f);
     }
-    const res = assignFingers(list, hand, forced);
+    const res = fingerHand(list, hand, forced, bans);
     for (const n of list) {
       n.finger = res.fingers.get(n.id) ?? 3;
+      const prior = res.priors.get(n.id);
+      if (prior && prior.fingers.includes(n.finger)) n.flags.push(prior.source);
       if (res.overflow.has(n.id)) {
         n.flags.push('chord-overflow');
         approximated++;
