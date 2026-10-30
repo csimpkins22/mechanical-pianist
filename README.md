@@ -29,9 +29,9 @@ The piano samples are checked in under `public/piano`. `npm run dev` and `npm ru
 
 To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.sf2> public/piano`. It needs numpy and ffmpeg.
 
-Open a `.mid` file with the folder button or by dropping it on the window. Files with several parts ask which tracks to perform; piano parts are preselected.
+Choose a piece from the **Library** (the button in the control bar, the title, or `O`). To perform your own `.mid` file, use **Open a MIDI file** there or drop the file anywhere on the window. Files with several parts ask which tracks to perform, with piano parts preselected. Your files are kept under "Your files" in this browser (IndexedDB), along with the parts you chose.
 
-URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=<library id>` (for example `son-of-sam`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
 ### Controls
 
@@ -47,10 +47,34 @@ URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start ti
 | Next / previous visual style | S / Shift + S |
 | Loop | L |
 | Mute, volume | M, the volume slider |
+| Library: choose a piece or open a file | O, the Library button, or the title |
+| Close the library, a dialog or the drawer | Esc |
 | Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
 | Kinematics overlay | D |
 
-## The built-in pieces
+## The library
+
+The library is laid out like a concert programme, in three groups, each in order of year. Son of Sam plays first.
+
+| Piece | Artist | |
+|---|---|---|
+| Black Hole Sun | Soundgarden | 1994 |
+| 1979 | The Smashing Pumpkins | 1995 |
+| Between the Bars | Elliott Smith | 1997 |
+| Paranoid Android | Radiohead | 1997 |
+| Son of Sam | Elliott Smith | 2000 |
+| There There | Radiohead | 2003 |
+| Nocturne in E♭ major, Op. 9 No. 2 | Frédéric Chopin | 1832 |
+| Prelude in D♭ major, Op. 28 No. 15 “Raindrop” | Frédéric Chopin | 1839 |
+| Gnossienne No. 1 | Erik Satie | 1890 |
+| Maple Leaf Rag | Scott Joplin | 1899 |
+| Nocturne for Mechanical Hands, Études, Five-Note Phrase | The Mechanical Pianist | |
+
+The songs and classical pieces are piano MIDI performances supplied with the project, in `src/music/`, and inlined into the build (nothing is fetched). Two were trimmed with `tools/trim-midi.cjs`: 1979 lost four stray notes and twenty seconds of silence before the song begins, and There There lost eight seconds of leading silence. The song arrangements are transcriptions of copyrighted songs; check the rights before distributing the app publicly with them.
+
+**Planning off the main thread.** Interpreting a long piece takes a while: about 10 to 40 seconds for the songs. Planning happens in a Web Worker (`src/app/planner.worker.ts`), so the current piece keeps playing while the next is prepared. Progress shows under the title. The result is kept in this browser (IndexedDB), keyed by the file, the chosen parts, the fingering overrides and a hash of the planner's own source, so a piece opens at once the second time and a change to the planner never reuses stale plans. Because plans are deterministic, a cached plan is exactly the one that would be computed again. Opening the library also starts preparing the other library pieces in the background, one at a time. Where workers are unavailable, planning falls back to the page itself.
+
+### The original pieces
 
 **Nocturne for Mechanical Hands** (original, A minor, about 90 s) is written as data in `src/interpretation/demoPiece.ts` and rendered to a real Standard MIDI File at startup, so it goes through the same parser as your files. It has two tracks, tempo changes and sustain pedal:
 
@@ -155,7 +179,7 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
     * slow push-in
     * pull-back reveal
   * **Tracking:** each shot's subject is pre-tracked, so the camera follows the hands smoothly instead of chasing them. Close shots stop down to keep the fingers sharp.
-  * **Forearms:** the robots are only forearms, so their ends are never shown. Wide shots look down from above the arms, in front of where they end. Every camera mode, including any framing or drama setting, also passes through a guard. It projects both forearm ends for the actual screen shape, landscape or portrait. If an end could be in frame, it tightens the lens, or failing that turns away. A test scans every mode at five aspect ratios across both demos. As a further safeguard, the forearms fade into darkness over their last stretch.
+  * **Forearms:** the robots are only forearms, so their ends are never shown. Wide shots look down from above the arms, in front of where they end. Every camera mode, including any framing or drama setting, also passes through a guard. It projects both forearm ends for the actual screen shape, landscape or portrait. If an end could be in frame, it tightens the lens, or failing that turns away. A test scans every mode at five aspect ratios across both demos. As a further safeguard, the last few centimetres of each forearm fade into darkness.
   * **Determinism:** the edit is computed once, so the camera is still a pure function of *t*.
 * **Settings** are remembered in the browser (`app/settings.ts`). Each tab of the drawer has its own reset.
 
@@ -202,9 +226,11 @@ src/
   presentation/    SceneRenderer, PianoModel, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
   audio/           AudioEngine, synthPiano
-  ui/              AppUI, styles
-  app/App.ts       master clock, transport, re-planning on overrides
-tools/             Blender builds, SoundFont conversion, sample copy, screenshots, video, determinism test
+  ui/              AppUI, LibrarySheet, dom helpers, styles
+  app/             App (master clock, transport, pieces), library, planner + planner.worker (worker + cache),
+                   plan (IK-checked planning), settings
+  music/           the bundled MIDI performances
+tools/             Blender builds, SoundFont conversion, MIDI trimming, sample copy, screenshots, video, determinism test
 tests/             vitest suites
 ```
 

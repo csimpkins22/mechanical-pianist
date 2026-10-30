@@ -1,6 +1,9 @@
 // The interface: a quiet translucent control bar, a title card, and an
 // optional drawer for fingering corrections, look and debugging. Plain DOM.
-import { FRAME_STEP, SPEEDS, type App, type DemoId } from '../app/App';
+import { FRAME_STEP, SPEEDS, type App } from '../app/App';
+import { entryById } from '../app/library';
+import { el, escapeHtml, fmt, svg } from './dom';
+import { LibrarySheet, NOTE_ICON } from './LibrarySheet';
 import { noteName } from '../core/keyboard';
 import type { Finger, Hand, PerformanceNote, TrackInfo } from '../core/types';
 import type { ParsedMidi } from '../interpretation/MidiEngine';
@@ -21,24 +24,11 @@ const ICON = {
   vol: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4zM15 8.5a5 5 0 010 7M17.5 6a8.5 8.5 0 010 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>',
   mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   gear: '<path d="M12 8.6a3.4 3.4 0 100 6.8 3.4 3.4 0 000-6.8zm8.2 4.6l1.6 1.2-1.7 3-1.9-.7c-.5.4-1.1.8-1.7 1l-.3 2H12l-.3-2a7 7 0 01-1.7-1l-1.9.7-1.7-3 1.6-1.2a7 7 0 010-2l-1.6-1.2 1.7-3 1.9.7c.5-.4 1.1-.8 1.7-1l.3-2h3.4l.3 2c.6.2 1.2.6 1.7 1l1.9-.7 1.7 3-1.6 1.2a7 7 0 010 2z" transform="translate(-1.5 -1) scale(1.02)"/>',
-  open: '<path d="M4 6.5h6l2 2h8v9.5a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
   loop: '<path d="M7 8h9.5a3 3 0 013 3v.5M17 16H7.5a3 3 0 01-3-3v-.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14.5 5.5L17 8l-2.5 2.5M9.5 18.5L7 16l2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
-const svg = (p: string) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">${p}</svg>`;
 
-function fmt(t: number) {
-  const m = Math.floor(t / 60);
-  const s = t - m * 60;
-  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
-}
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (html !== undefined) e.innerHTML = html;
-  return e;
-}
 
 export class AppUI {
   private bar!: HTMLDivElement;
@@ -56,7 +46,7 @@ export class AppUI {
   private volBtn!: HTMLButtonElement;
   private loopBtn!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
-  private demoSel!: HTMLSelectElement;
+  private library!: LibrarySheet;
   private debugInfo!: HTMLDivElement;
   private toastEl!: HTMLDivElement;
   private idleTimer = 0;
@@ -126,16 +116,14 @@ export class AppUI {
       this.app.audio.setVolume(parseFloat(vol.value));
       this.app.settingsChanged();
     };
-    const open = this.btn(ICON.open, 'Open a MIDI file (or drop one anywhere)', () => this.pickFile());
-    this.demoSel = el('select', 'demo');
-    this.demoSel.title = 'Built-in pieces';
-    this.demoSel.append(new Option('Nocturne', 'nocturne'), new Option('Five-note phrase', 'phrase'), new Option('Études (test passages)', 'etudes'), new Option('Your file', 'file'));
-    this.demoSel.onchange = () => {
-      if (this.demoSel.value === 'file') this.pickFile();
-      else this.app.loadDemo(this.demoSel.value as DemoId);
+    const lib = el('button', 'lib-btn', `${svg(NOTE_ICON, 17)}<span>Library</span>`);
+    lib.title = 'Choose a piece, or open your own MIDI file (O)';
+    lib.onclick = (e) => {
+      e.stopPropagation();
+      this.library.toggle();
     };
     const gear = this.btn(ICON.gear, 'Fingering, light, camera, sound and debug (A)', () => this.toggleDrawer());
-    right.append(this.speedSel, this.loopBtn, this.volBtn, vol, open, this.demoSel, gear);
+    right.append(this.speedSel, this.loopBtn, this.volBtn, vol, lib, gear);
     row.append(left, mid, right);
     this.bar.append(scrub, row);
     r.appendChild(this.bar);
@@ -171,6 +159,7 @@ export class AppUI {
     r.appendChild(this.debugInfo);
     this.toastEl = el('div', 'toast');
     r.appendChild(this.toastEl);
+    this.library = new LibrarySheet(this.app, r, { pickFile: () => this.pickFile(), toast: (m, ms) => this.toast(m, ms) });
 
     this.bindDrop();
     this.bindKeys();
@@ -195,10 +184,11 @@ export class AppUI {
     if (what === 'piece') {
       this.renderTitle();
       const p = this.app.piece;
-      if (p) this.demoSel.value = p.source.kind === 'demo' ? p.source.id : 'file';
       if (p?.perf.warnings.length) this.toast(p.perf.warnings.join(' · '));
       this.lastFingerRefresh = -1;
     }
+    if (what === 'loading') this.renderTitle();
+    this.library.refresh(what);
     if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Camera)`, 6000);
     if (what === 'audio') {
       const s = this.app.audio.status;
@@ -247,9 +237,20 @@ export class AppUI {
     const p = this.app.piece;
     if (!p) return;
     const approx = p.perf.stats.approximated;
-    this.title.innerHTML = `<div class="eyebrow">The Mechanical Pianist</div><div class="name">${escapeHtml(p.perf.score.name)}</div>${
+    const year = p.source.kind === 'library' ? entryById(p.source.id)?.year : undefined;
+    const ld = this.app.loading;
+    const same = ld && ld.source.kind === p.source.kind && ld.source.id === p.source.id;
+    const next = ld
+      ? `<div class="next"><div class="next-l">${same ? 'Re-planning the performance' : `Next · <em>${escapeHtml(ld.title)}</em>`}</div><div class="next-bar"><i style="width:${(Math.max(0.03, ld.fraction) * 100).toFixed(1)}%"></i></div><div class="next-s">${escapeHtml(ld.label)}</div></div>`
+      : '';
+    const key = `${p.source.kind}:${p.source.id}|${p.title}|${approx}|${next}`;
+    if (this.title.dataset.key === key) return;
+    this.title.dataset.key = key;
+    this.title.classList.toggle('busy', !!ld);
+    this.title.innerHTML = `<div class="eyebrow">${escapeHtml(p.artist)}${year ? ` · ${year}` : ''}</div><button class="name" title="Choose another piece (O)">${escapeHtml(p.title)}<span class="chev" aria-hidden="true">${svg('<path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>', 18)}</span></button>${
       approx ? `<div class="note">${approx} note${approx === 1 ? '' : 's'} approximated (beyond the robot's reach)</div>` : ''
-    }`;
+    }${next}`;
+    (this.title.querySelector('.name') as HTMLButtonElement).onclick = () => this.library.toggle(true);
   }
 
   toast(msg: string, ms = 4200) {
@@ -293,36 +294,27 @@ export class AppUI {
     inp.accept = '.mid,.midi,audio/midi,audio/x-midi';
     inp.onchange = () => inp.files?.[0] && this.loadFile(inp.files[0]);
     inp.click();
-    if (this.app.piece) this.demoSel.value = this.app.piece.source.kind === 'demo' ? this.app.piece.source.id : 'file';
   }
 
   private async loadFile(f: File) {
     try {
-      const parsed = this.app.readFile(await f.arrayBuffer(), f.name);
+      const { bytes, parsed } = this.app.readFile(await f.arrayBuffer(), f.name);
       const melodic = parsed.tracks.filter((t) => t.noteCount > 0 && t.instrument !== 'percussion');
       if (!melodic.length) throw new Error('no notes found in this file');
-      if (melodic.length > 1) this.trackDialog(parsed, f.name);
-      else this.perform(() => this.app.loadParsed(parsed, f.name), parsed.name);
+      this.library.close();
+      if (melodic.length > 1) this.trackDialog(parsed, (tracks) => this.app.openFile(bytes, parsed, f.name, tracks));
+      else this.perform(this.app.openFile(bytes, parsed, f.name), f.name);
     } catch (e) {
       this.toast(`Could not read ${f.name}: ${e instanceof Error ? e.message : e}`, 6000);
     }
   }
 
-  /** interpretation runs on the main thread: say so before it starts */
-  private perform(fn: () => void, name: string) {
-    this.toast(`Interpreting ${name}: hands, fingering and motion…`, 60000);
-    setTimeout(() => {
-      try {
-        fn();
-        const p = this.app.piece;
-        this.toast(p?.perf.warnings.length ? p.perf.warnings.join(' · ') : '', 5000);
-      } catch (e) {
-        this.toast(`Could not perform ${name}: ${e instanceof Error ? e.message : e}`, 6000);
-      }
-    }, 40);
+  /** interpretation runs in the background (progress shows under the title): only failures need saying */
+  private perform(job: Promise<void>, name: string) {
+    job.catch((e) => this.toast(`Could not perform ${name}: ${e instanceof Error ? e.message : e}`, 6000));
   }
 
-  private trackDialog(parsed: ParsedMidi, name: string, current?: number[]) {
+  private trackDialog(parsed: ParsedMidi, go: (tracks: number[]) => Promise<void>, current?: number[]) {
     const back = el('div', 'modal-back');
     const box = el('div', 'modal');
     box.innerHTML = `<h3>${escapeHtml(parsed.name)}</h3><p>Choose the parts the pianist should play. Piano parts are selected; two tracks are usually the two hands.</p>`;
@@ -341,20 +333,26 @@ export class AppUI {
       list.appendChild(row);
       checks.push([t, cb]);
     }
-    const go = el('button', 'primary', 'Perform');
-    go.onclick = () => {
+    const perform = el('button', 'primary', 'Perform');
+    const update = () => (perform.disabled = !checks.some(([, c]) => c.checked));
+    for (const [, c] of checks) c.onchange = update;
+    update();
+    perform.onclick = () => {
       const tracks = checks.filter(([, c]) => c.checked).map(([t]) => t.index);
       back.remove();
       if (!tracks.length) return;
-      this.perform(() => (current ? this.app.selectTracks(tracks) : this.app.loadParsed(parsed, name, tracks)), parsed.name);
+      this.perform(go(tracks), parsed.name);
     };
     const cancel = el('button', '', 'Cancel');
     cancel.onclick = () => back.remove();
     const actions = el('div', 'actions');
-    actions.append(cancel, go);
+    actions.append(cancel, perform);
     box.append(list, actions);
     back.appendChild(box);
-    back.onclick = (e) => e.target === back && back.remove();
+    back.onclick = (e) => {
+      // (a handler returning false would cancel clicks inside, checkboxes included)
+      if (e.target === back) back.remove();
+    };
     this.root.appendChild(back);
   }
 
@@ -385,7 +383,19 @@ export class AppUI {
   private bindKeys() {
     window.addEventListener('keydown', (e) => {
       if ((e.target as HTMLElement).closest('input, select, textarea')) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const a = this.app;
+      if (e.key === 'Escape') {
+        if (document.querySelector('.modal-back')) document.querySelector('.modal-back')!.remove();
+        else if (this.library.isOpen) this.library.close();
+        else if (this.drawer.classList.contains('open')) this.toggleDrawer(false);
+        return;
+      }
+      if (e.key === 'o' || e.key === 'O') {
+        this.library.toggle();
+        return;
+      }
+      if (this.library.isOpen) return; // the library takes the keyboard while it is open
       switch (e.key) {
         case ' ':
           e.preventDefault();
@@ -527,7 +537,7 @@ export class AppUI {
     acts.append(clear, exp, imp);
     if (p.parsed.tracks.filter((tr) => tr.noteCount > 0).length > 1) {
       const tracks = el('button', '', 'Tracks…');
-      tracks.onclick = () => this.trackDialog(p.parsed, p.perf.score.name, p.tracks);
+      tracks.onclick = () => this.trackDialog(p.parsed, (sel) => this.app.selectTracks(sel), p.tracks);
       acts.appendChild(tracks);
     }
     head.appendChild(acts);
@@ -832,8 +842,5 @@ const FLAG_LABEL: Record<string, string> = {
   motif: 'motif',
 };
 
-function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-}
 
 export { FRAME_STEP };

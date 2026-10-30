@@ -38,7 +38,10 @@ export class PerformanceTimeline {
   /** onset of the next note on the same key, which cuts the earlier one's sound */
   private restrike = new Map<number, number>();
 
-  constructor(readonly perf: Performance) {
+  constructor(
+    readonly perf: Performance,
+    progress?: (fraction: number) => void,
+  ) {
     this.duration = perf.score.duration;
     // let go of keys in time to strike them again, and in time to leap
     restrikeRepeats(perf.notes);
@@ -61,8 +64,11 @@ export class PerformanceTimeline {
     // Plan, check every held key against the hand that holds it, and where the
     // hand must leave before the notated release, let that key come up as it
     // goes (the sound still lasts the full note); then plan again.
+    // (Progress assumes two rounds, which is what most pieces take.)
+    progress?.(0.05);
     for (let round = 0; round < 4; round++) {
-      for (const hand of ['L', 'R'] as Hand[]) this.refine(this.plan.hands[hand]);
+      for (const hand of ['L', 'R'] as Hand[])
+        this.refine(this.plan.hands[hand], progress && ((u) => progress(Math.min(0.98, 0.05 + 0.47 * (round + (hand === 'L' ? 0 : 0.5) + 0.5 * u)))));
       if (round === 3 || !this.releaseUnheldKeys()) break;
       this.keys = new KeyMechanics(perf.notes);
       this.plan = planMotion(perf);
@@ -133,7 +139,7 @@ export class PerformanceTimeline {
    * smooth local correction, so that the hand is carried by the plan rather
    * than snapping back when the contact lets go. Up to three passes.
    */
-  private refine(track: HandTrack) {
+  private refine(track: HandTrack, progress?: (fraction: number) => void) {
     for (let pass = 0; pass < 3; pass++) {
       const n = track.x.data.length;
       const cx = new Float32Array(n);
@@ -148,7 +154,9 @@ export class PerformanceTimeline {
         if (!p) poses.set(t, (p = poseHand(track, this.keys, t, false)));
         return p;
       };
+      let done = 0;
       for (const pn of track.notes) {
+        if (progress && ++done % 64 === 0) progress((pass + done / track.notes.length) / 3);
         // the landing, the onset, every 0.2 s of the hold (on a common grid),
         // the release, and once while the fingertip rides the key back up
         const rel = pn.stroke.release;

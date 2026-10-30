@@ -6,12 +6,13 @@ import * as THREE from 'three';
 import { CONTACT_SHADOW_GLSL, patch } from './shaderPatch';
 
 /**
- * The robot forearms are only forearms: they fade into the dark over their
- * last stretch, so in a wide shot the arms reach out of the shadows rather
- * than stopping. Only the forearm extends toward +Z in its own object space
+ * The robot forearms are only forearms. The camera keeps their ends out of
+ * frame (CinematicCamera.guard); as a safety net the last few centimetres
+ * also fade into the dark. A longer fade read as a black band across the arm
+ * in bright shots. Only the forearm extends toward +Z in its own object space
  * (fingers and palm point along -Z), so the hand's materials can share this.
  */
-const ARM_FADE = /* glsl */ `outgoingLight *= 1.0 - smoothstep(0.16, 0.335, vOPos.z);`;
+const ARM_FADE = /* glsl */ `outgoingLight *= 1.0 - smoothstep(0.29, 0.335, vOPos.z);`;
 
 /** AO from the baked mask, applied to indirect light only (direct light has real shadows). */
 const MASK_AO = (strength: number) => /* glsl */ `

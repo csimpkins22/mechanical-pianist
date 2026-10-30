@@ -97,7 +97,7 @@ export function planPerformance(score: Score, overrides: Map<number, Override> =
       }
     }
   }
-  if (approximated) warnings.push(`${approximated} note${approximated === 1 ? '' : 's'} need a best-effort approximation (beyond the modelled hands)`);
+  if (approximated) warnings.push(`${approximated} note${approximated === 1 ? ' needs' : 's need'} a best-effort approximation (beyond the modelled hands)`);
   if (score.outOfRange) warnings.push(`${score.outOfRange} notes outside A0–C8 were moved by an octave`);
   notes.sort((a, b) => a.start - b.start || a.midi - b.midi);
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();

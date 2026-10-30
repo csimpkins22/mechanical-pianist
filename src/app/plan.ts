@@ -38,10 +38,24 @@ function groupMisses(timeline: PerformanceTimeline, notes: PerformanceNote[]): b
   return false;
 }
 
-export function planChecked(score: Score, overrides: Map<number, Override> = new Map()): { perf: Performance; timeline: PerformanceTimeline; rounds: number } {
+/** progress through planning: fraction 0..1 and what is happening */
+export type PlanProgress = (fraction: number, label: string) => void;
+
+export function planChecked(
+  score: Score,
+  overrides: Map<number, Override> = new Map(),
+  progress: PlanProgress = () => {},
+): { perf: Performance; timeline: PerformanceTimeline; rounds: number } {
   const bans: Bans = new Map();
+  // rough shares of the work: interpretation is light, motion and its
+  // refinement heavy; a re-plan (if needed) is reported as a second pass
+  let span: [number, number] = [0, 1];
+  const at = (u: number, label: string) => progress(span[0] + (span[1] - span[0]) * u, label);
+  span = [0, 0.75];
+  at(0, 'Choosing hands and fingers');
   let perf = planPerformance(score, overrides, bans);
-  let timeline = new PerformanceTimeline(perf);
+  at(0.12, 'Planning the motion');
+  let timeline = new PerformanceTimeline(perf, (u) => at(0.12 + 0.88 * u, 'Planning the motion'));
   let rounds = 0;
   for (; rounds < MAX_ROUNDS; rounds++) {
     let added = false;
@@ -49,7 +63,8 @@ export function planChecked(score: Score, overrides: Map<number, Override> = new
       const list = perf.notes.filter((n) => n.hand === hand);
       for (const g of groupOnsets(list)) {
         const notes = g.notes as typeof list;
-        if (notes.length > 5 || notes.some((n) => n.flags.includes('chord-overflow'))) continue;
+        // shapes beyond any hand (flagged unreachable) cannot be fixed by refingering
+        if (notes.length > 5 || notes.some((n) => n.flags.includes('chord-overflow') || n.flags.includes('unreachable'))) continue;
         if (notes.some((n) => overrides.get(n.id)?.finger)) continue; // the user asked for it
         if (!groupMisses(timeline, notes)) continue;
         const key = groupKey(notes.map((n) => n.id));
@@ -65,8 +80,11 @@ export function planChecked(score: Score, overrides: Map<number, Override> = new
       }
     }
     if (!added) break;
+    span = [0.75 + 0.25 * (rounds / MAX_ROUNDS), 0.75 + 0.25 * ((rounds + 1) / MAX_ROUNDS)];
+    at(0, 'Refingering the shapes the hands could not hold');
     perf = planPerformance(score, overrides, bans);
-    timeline = new PerformanceTimeline(perf);
+    timeline = new PerformanceTimeline(perf, (u) => at(0.1 + 0.9 * u, 'Refingering the shapes the hands could not hold'));
   }
+  progress(1, 'Ready');
   return { perf, timeline, rounds };
 }

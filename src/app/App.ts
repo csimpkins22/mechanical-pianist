@@ -3,8 +3,8 @@
 // plays, `t` is read from the audio clock so picture and sound cannot drift.
 import { AudioEngine } from '../audio/AudioEngine';
 import { readMidi, buildScore, defaultTrackSelection, type ParsedMidi } from '../interpretation/MidiEngine';
-import { composeEtudes, composeNocturne, composePhrase, midiBytes } from '../interpretation/demoPiece';
-import { planChecked } from './plan';
+import { DEFAULT_PIECE, LIBRARY, entryById, type LibraryEntry } from './library';
+import { Cancelled, Planner, idb, type PlanRequest } from './planner';
 import { DEFAULT_SOUND, loadSettings, saveSettings, type SoundSettings } from './settings';
 import { STYLES, styleSettings } from '../presentation/VisualStyles';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
@@ -15,16 +15,39 @@ import { SceneRenderer } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 
-export type DemoId = 'nocturne' | 'phrase' | 'etudes';
+export type PieceSource = { kind: 'library'; id: string } | { kind: 'file'; id: string; name: string };
 
 export interface Piece {
+  bytes: Uint8Array;
   parsed: ParsedMidi;
   perf: Performance;
   timeline: PerformanceTimeline;
   camera: CinematicCamera;
   overrides: Map<number, Override>;
   tracks: number[];
-  source: { kind: 'demo'; id: DemoId } | { kind: 'file'; name: string };
+  source: PieceSource;
+  /** for the title card */
+  title: string;
+  artist: string;
+}
+
+/** a piece being interpreted (the previous one keeps playing meanwhile) */
+export interface Loading {
+  source: PieceSource;
+  title: string;
+  fraction: number;
+  label: string;
+}
+
+/** a MIDI file the viewer opened, kept in this browser */
+export interface UserFile {
+  id: string;
+  name: string;
+  title: string;
+  bytes: Uint8Array;
+  /** the parts chosen to perform (multi-track files) */
+  tracks?: number[];
+  added: number;
 }
 
 type Listener = (what: string) => void;
@@ -38,6 +61,10 @@ export class App {
   readonly audio: AudioEngine;
   debug!: DebugOverlay;
   piece: Piece | null = null;
+  loading: Loading | null = null;
+  readonly planner = new Planner();
+  private buildSeq = 0;
+  private entryReqs = new Map<string, { req: PlanRequest; duration: number }>();
   frame: FrameState | null = null;
   t = 0;
   playing = false;
@@ -123,10 +150,9 @@ export class App {
     this.debug = new DebugOverlay(this.uiRoot);
     this.view.scene.add(this.debug.group);
     this.view.setLights(this.lights);
-    onProgress?.(0.7, 'Reading the score');
-    await new Promise((r) => setTimeout(r, 0));
-    const demo = (this.params.get('demo') as DemoId) || 'nocturne';
-    this.loadDemo(demo);
+    onProgress?.(0.7, 'Interpreting the score');
+    const id = this.params.get('demo') || this.params.get('piece') || DEFAULT_PIECE;
+    await this.openEntry(entryById(id) ?? entryById(DEFAULT_PIECE)!, (f, label) => onProgress?.(0.7 + 0.3 * f, label));
     onProgress?.(1, '');
     const mode = this.params.get('camera') as CameraMode | null;
     if (mode) this.mode = mode;
@@ -159,35 +185,73 @@ export class App {
   }
 
   // ------------------------------------------------------------- pieces
-  loadDemo(id: DemoId) {
-    const midi = id === 'phrase' ? composePhrase() : id === 'etudes' ? composeEtudes() : composeNocturne();
-    const parsed = readMidi(midiBytes(midi), `${id}.mid`);
-    this.build(parsed, { kind: 'demo', id }, new Map(), undefined);
+  /** open a piece from the library */
+  openEntry(e: LibraryEntry, progress?: (f: number, label: string) => void) {
+    const { bytes } = this.entryInfo(e).req;
+    return this.build(bytes, readMidi(bytes, `${e.id}.mid`), { kind: 'library', id: e.id }, new Map(), undefined, { title: e.title, artist: e.artist }, progress);
   }
 
   /** a user file: returns the parsed MIDI so the UI can offer track selection */
-  readFile(bytes: ArrayBuffer, name: string): ParsedMidi {
-    return readMidi(bytes, name);
+  readFile(bytes: ArrayBuffer, name: string): { bytes: Uint8Array; parsed: ParsedMidi } {
+    const b = new Uint8Array(bytes);
+    return { bytes: b, parsed: readMidi(b, name) };
   }
 
-  loadParsed(parsed: ParsedMidi, name: string, tracks?: number[]) {
-    this.build(parsed, { kind: 'file', name }, new Map(), tracks);
+  async openFile(bytes: Uint8Array, parsed: ParsedMidi, name: string, tracks?: number[]) {
+    const id = await this.rememberFile(bytes, name, parsed, tracks);
+    return this.build(bytes, parsed, { kind: 'file', id, name }, new Map(), tracks, { title: titleOf(parsed, name), artist: name });
   }
 
-  /** (re)interpret the score: new files, track changes and fingering overrides all come through here */
-  build(parsed: ParsedMidi, source: Piece['source'], overrides: Map<number, Override>, tracks?: number[]) {
-    const wasPlaying = this.playing;
-    if (wasPlaying) this.pause();
+  /**
+   * (Re)interpret a score: new pieces, track changes and fingering overrides
+   * all come through here. Planning runs in a worker (or comes from this
+   * browser's cache); meanwhile the current piece stays on screen and
+   * playable. A newer request supersedes an older one.
+   */
+  async build(
+    bytes: Uint8Array,
+    parsed: ParsedMidi,
+    source: PieceSource,
+    overrides: Map<number, Override>,
+    tracks: number[] | undefined,
+    meta: { title: string; artist: string },
+    progress?: (f: number, label: string) => void,
+  ) {
+    const seq = ++this.buildSeq;
     const sel = tracks ?? defaultTrackSelection(parsed.tracks);
-    const score = buildScore(parsed, sel);
-    const { perf, timeline } = planChecked(score, overrides);
-    const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos);
-    const sameSource = this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
-    this.piece = { parsed, perf, timeline, camera, overrides, tracks: sel, source };
-    this.t = sameSource ? Math.min(this.t, score.duration) : 0;
-    this.renderNow();
-    this.emit('piece');
-    if (wasPlaying && sameSource) void this.play();
+    const sameSource = !!this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
+    this.loading = { source, title: meta.title, fraction: 0, label: 'Reading the score' };
+    this.emit('loading');
+    try {
+      const { perf, timeline } = await this.planner.plan({ bytes, name: parsed.name, tracks: sel, overrides }, (f, label) => {
+        if (seq !== this.buildSeq) return;
+        this.loading = { source, title: meta.title, fraction: f, label };
+        progress?.(f, label);
+        this.emit('loading');
+      });
+      if (seq !== this.buildSeq) return; // superseded
+      const score = perf.score;
+      const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos);
+      const wasPlaying = this.playing;
+      if (wasPlaying) this.pause();
+      this.piece = { bytes, parsed, perf, timeline, camera, overrides, tracks: sel, source, title: meta.title, artist: meta.artist };
+      this.t = sameSource ? Math.min(this.t, score.duration) : 0;
+      this.loading = null;
+      this.renderNow();
+      this.emit('piece');
+      if (wasPlaying) void this.play();
+    } catch (err) {
+      if (seq !== this.buildSeq || err instanceof Cancelled) return; // superseded: nothing to report
+      this.loading = null;
+      this.emit('loading');
+      throw err;
+    }
+  }
+
+  private rebuild(overrides: Map<number, Override>, tracks?: number[]) {
+    const p = this.piece;
+    if (!p) return Promise.resolve();
+    return this.build(p.bytes, p.parsed, p.source, overrides, tracks ?? p.tracks, { title: p.title, artist: p.artist });
   }
 
   setOverride(noteId: number, o: Override | null) {
@@ -195,12 +259,61 @@ export class App {
     const ov = new Map(this.piece.overrides);
     if (!o || (!o.hand && !o.finger)) ov.delete(noteId);
     else ov.set(noteId, { ...ov.get(noteId), ...o });
-    this.build(this.piece.parsed, this.piece.source, ov, this.piece.tracks);
+    return this.rebuild(ov);
   }
 
   clearOverrides() {
-    if (!this.piece) return;
-    this.build(this.piece.parsed, this.piece.source, new Map(), this.piece.tracks);
+    return this.rebuild(new Map());
+  }
+
+  /** the planning request for a library piece as it opens (default parts, no overrides), and its length */
+  entryInfo(e: LibraryEntry) {
+    let info = this.entryReqs.get(e.id);
+    if (!info) {
+      const bytes = e.bytes();
+      const parsed = readMidi(bytes, `${e.id}.mid`);
+      info = { req: { bytes, name: parsed.name, tracks: defaultTrackSelection(parsed.tracks), overrides: new Map() }, duration: parsed.midi.duration };
+      this.entryReqs.set(e.id, info);
+    }
+    return info;
+  }
+
+  /** library pieces not yet prepared in this browser: prepare them quietly, one at a time */
+  prepareLibrary() {
+    this.planner.prepare(LIBRARY.map((e) => this.entryInfo(e).req));
+  }
+
+  /** 1 when a library piece opens at once (planned already), else how far its preparation is (null: not started) */
+  async entryStatus(e: LibraryEntry): Promise<number | null> {
+    const { req } = this.entryInfo(e);
+    if (await this.planner.cached(req)) return 1;
+    return this.planner.status.get(await this.planner.key(req)) ?? null;
+  }
+
+  // ------------------------------------------------------------- the viewer's files
+  private async rememberFile(bytes: Uint8Array, name: string, parsed: ParsedMidi, tracks?: number[]): Promise<string> {
+    let x = 2166136261 >>> 0;
+    for (let i = 0; i < bytes.length; i++) x = Math.imul(x ^ bytes[i], 16777619) >>> 0;
+    const id = `f${x.toString(16)}${bytes.length.toString(16)}`;
+    const rec: UserFile = { id, name, title: titleOf(parsed, name), bytes, tracks, added: Date.now() };
+    await idb('files', 'readwrite', (s) => s.put(rec));
+    this.emit('files');
+    return id;
+  }
+
+  async userFiles(): Promise<UserFile[]> {
+    const all = ((await idb('files', 'readonly', (s) => s.getAll())) ?? []) as UserFile[];
+    return all.sort((a, b) => b.added - a.added);
+  }
+
+  async forgetFile(id: string) {
+    await idb('files', 'readwrite', (s) => s.delete(id));
+    this.emit('files');
+  }
+
+  async openUserFile(f: UserFile) {
+    const parsed = readMidi(f.bytes, f.name);
+    return this.build(f.bytes, parsed, { kind: 'file', id: f.id, name: f.name }, new Map(), f.tracks, { title: f.title, artist: f.name });
   }
 
   exportOverrides(): string {
@@ -221,12 +334,14 @@ export class App {
       const n = p.perf.notes.find((m) => m.midi === o.midi && Math.abs(m.start - o.start) < 0.01);
       if (n) ov.set(n.id, { hand: o.hand, finger: o.finger });
     }
-    this.build(p.parsed, p.source, ov, p.tracks);
+    return this.rebuild(ov);
   }
 
   selectTracks(tracks: number[]) {
-    if (!this.piece) return;
-    this.build(this.piece.parsed, this.piece.source, new Map(), tracks);
+    const src = this.piece?.source;
+    if (src?.kind === 'file')
+      void idb<UserFile>('files', 'readonly', (s) => s.get(src.id)).then((f) => f && idb('files', 'readwrite', (s) => s.put({ ...f, tracks })));
+    return this.rebuild(new Map(), tracks);
   }
 
   get duration() {
@@ -410,4 +525,15 @@ export class App {
   dispose() {
     cancelAnimationFrame(this.raf);
   }
+}
+
+/** a readable title for a MIDI file: its own name, else the file name tidied up */
+export function titleOf(parsed: ParsedMidi, file: string): string {
+  const own = parsed.name?.trim();
+  if (own && !/^(untitled|track|pianoteq|sequence)/i.test(own)) return own;
+  return file
+    .replace(/\.(mid|midi)$/i, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/\s+-\s+|-/g, ' – ')
+    .trim();
 }
