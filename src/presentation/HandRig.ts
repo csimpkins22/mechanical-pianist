@@ -21,7 +21,10 @@ export class HandRig {
   readonly root: THREE.Object3D;
   private node: Record<string, THREE.Object3D> = {};
 
-  constructor(template: THREE.Object3D, readonly hand: Hand) {
+  /** the servo rings: one material per finger (1 = thumb) and one for the rest of the hand ([0]) */
+  private glows: THREE.MeshStandardMaterial[] = [];
+
+  constructor(template: THREE.Object3D, readonly hand: Hand, glow?: THREE.MeshStandardMaterial) {
     this.root = template.clone(true);
     this.root.name = hand === 'R' ? 'RightHand' : 'LeftHand';
     this.root.traverse((o) => {
@@ -36,6 +39,34 @@ export class HandRig {
       handNode.quaternion.identity();
     }
     this.root.scale.set(hand === 'R' ? 1 : -1, 1, 1);
+    if (glow) {
+      const own = (node: THREE.Object3D) => {
+        const m = glow.clone();
+        node.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh && mesh.material === glow) mesh.material = m;
+        });
+        return m;
+      };
+      this.glows[1] = own(this.node['T_0']);
+      FINGERS.forEach((f) => (this.glows[f.id] = own(this.node[`F${f.id}_0`])));
+      this.glows[0] = own(this.root);
+    }
+  }
+
+  /**
+   * Servo rings at their base intensity, each finger's flaring a little when
+   * it strikes (effort 0..1 per finger), the emblem and wrist rings a third
+   * as much with the hand's hardest-working finger.
+   */
+  setGlow(base: number, effort: number[]) {
+    if (!this.glows.length) return;
+    let most = 0;
+    for (let f = 1; f <= 5; f++) {
+      this.glows[f].emissiveIntensity = base * (1 + 0.75 * effort[f]);
+      most = Math.max(most, effort[f]);
+    }
+    this.glows[0].emissiveIntensity = base * (1 + 0.25 * most);
   }
 
   get(name: string) {

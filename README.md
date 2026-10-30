@@ -187,7 +187,16 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
 
 ### Audio
 
-`AudioEngine` plays FreePats' Upright Piano KW, a Kawai upright recorded in a living room. It has two velocity layers, crossfaded by velocity, with a sample every two or three semitones and the notes in between pitch-shifted. `tools/sf2-to-samples.py` converts the SoundFont into one stereo MP3 per sample. Because the SoundFont normalises every sample, the converter evens out levels along the keyboard and sets the two layers 6 dB apart. It also unrolls the sustain loops in the bass and middle into decaying tails, since MP3 padding would make runtime loops click. Brightness follows velocity, dampers follow the sustain pedal, and the top octaves are undamped. It adds quiet key-release noises and a small synthesized room. Notes are scheduled ahead against the master timeline. While sound plays, the picture reads its time from the audio clock, so they cannot drift. Seeking fades everything out and restarts the notes already sounding at the new time part-way through their samples, so nothing gets stuck. If samples cannot load, `synthPiano.ts` renders an additive, inharmonic, two-stage-decay piano instead.
+`AudioEngine` plays FreePats' Upright Piano KW, a Kawai upright recorded in a living room. It has two velocity layers, crossfaded by velocity, with a sample every two or three semitones and the notes in between pitch-shifted. `tools/sf2-to-samples.py` converts the SoundFont into one stereo MP3 per sample. Because the SoundFont normalises every sample, the converter evens out levels along the keyboard and sets the two layers 6 dB apart. It also unrolls the sustain loops in the bass and middle into decaying tails, since MP3 padding would make runtime loops click. Brightness follows velocity, dampers follow the sustain pedal, and the top octaves are undamped. It adds quiet key-release noises and a small synthesized room. While the sustain pedal is down, a little more of the sound goes to the room, a stand-in for the halo of undamped strings ringing in sympathy. Notes are scheduled ahead against the master timeline. While sound plays, the picture reads its time from the audio clock, so they cannot drift. Seeking fades everything out and restarts the notes already sounding at the new time part-way through their samples, so nothing gets stuck. If samples cannot load, `synthPiano.ts` renders an additive, inharmonic, two-stage-decay piano instead.
+
+### Small signs of life
+
+* A released key rises on its spring, arrives at rest still moving a little, and bounces about 3% of its dip (a quarter of a millimetre) on the back-rail felt before settling, all within 0.25 s (`KeyMechanics.ts`).
+* Each finger's cyan servo rings flare briefly when it strikes, in proportion to the velocity, and fade over a quarter of a second. The emblem and wrist rings follow the hand's hardest-working finger, a third as much (`PerformanceTimeline.effort`, `HandRig.setGlow`).
+* Thin clouds pass over the sun: the window light, its shafts and the lit dust breathe by about a tenth over tens of seconds (`Environment.update`).
+* The fingers, wrists and camera drift very slightly even at rest, and the camera breathes.
+
+All of these are functions of the performance time, so a paused or scrubbed frame is still exact.
 
 ## Determinism
 

@@ -14,6 +14,9 @@ import { synthesizePiano } from './synthPiano';
 
 const SAMPLE_PCS = [0, 3, 6, 9]; // the synthesized fallback's notes
 const LOOKAHEAD = 0.25; // seconds of performance scheduled ahead
+// with the sustain pedal down every damper is off its strings, which ring along
+// in sympathy: a soft halo, given here as a little more of the room
+const HALO = 0.5;
 const UNDAMPED_FROM = 89; // F6 and above have no dampers
 
 interface Voice {
@@ -63,6 +66,9 @@ export class AudioEngine {
   private master!: GainNode;
   private dry!: GainNode;
   private wet!: GainNode;
+  /** the voices' send to the room, raised while the pedal is down */
+  private send!: GainNode;
+  private haloUntil = 0;
   private verb: { conv: ConvolverNode; out: GainNode } | null = null;
   private layers: Layer[] = [];
   private gain = 1;
@@ -107,6 +113,8 @@ export class AudioEngine {
     this.dry = ctx.createGain();
     this.wet = ctx.createGain();
     this.dry.connect(this.master);
+    this.send = ctx.createGain();
+    this.send.connect(this.wet);
     this.applyReverb(true);
     this.setStatus('loading');
     await resumed;
@@ -275,6 +283,10 @@ export class AudioEngine {
       this.scheduled.add(n.id);
     }
     this.scheduledUntil = t;
+    const g = this.send.gain;
+    g.cancelScheduledValues(this.ctx.currentTime);
+    g.setValueAtTime(1 + HALO * tl.pedalAt(t), this.ctx.currentTime);
+    this.haloUntil = t;
     this.pump(tl);
   }
 
@@ -306,6 +318,10 @@ export class AudioEngine {
         this.releaseNoise(n);
       }
     }
+    // the sympathetic halo follows the pedal
+    let ts = Math.max(this.haloUntil, now);
+    for (; ts < until; ts += 0.04) this.send.gain.setTargetAtTime(1 + HALO * tl.pedalAt(ts), Math.max(this.ctx.currentTime, this.toAudio(ts)), 0.05);
+    this.haloUntil = ts;
     this.voices = this.voices.filter((v) => v.end > this.ctx!.currentTime);
   }
 
@@ -359,7 +375,7 @@ export class AudioEngine {
     out.gain.value = loud * 0.9 * this.gain;
     filter.connect(out);
     out.connect(this.dry);
-    out.connect(this.wet);
+    out.connect(this.send);
     const damped = n.midi < UNDAMPED_FROM;
     // dampers fall back on the strings: low strings ring on a little longer
     const releaseTau = 0.06 + 0.22 * Math.max(0, (72 - n.midi) / 51);

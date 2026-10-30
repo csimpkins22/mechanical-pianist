@@ -3,13 +3,22 @@
 // A key is pressed by its finger: it starts moving when the fingertip lands
 // (a little before the MIDI onset; soft notes travel more slowly), bottoms out
 // exactly at the onset (when the hammer strikes), stays down while the finger
-// holds it, and returns on its spring when the finger lets go. Repeated notes
+// holds it, and returns on its spring when the finger lets go, with a tiny
+// bounce off the felt as it arrives at rest. Repeated notes
 // can restrike a half-risen key. Sound is a separate matter: a pedalled note
 // keeps sounding after its key has risen.
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import type { PerformanceNote } from '../core/types';
 
 export const KEY_RETURN = 0.085; // seconds for a released key to rise
+
+// the bounce at rest: the key arrives with a little speed left (BOUNCE_V of the
+// way, blended into the soft return) and rocks on the back-rail felt, rising
+// about 3% of its dip above rest and settling within BOUNCE_END
+const BOUNCE_V = 0.4;
+const BOUNCE_W = 75; // rad/s: about 12 Hz
+const BOUNCE_DAMP = 45; // 1/s
+const BOUNCE_END = 0.16;
 
 /** Key travel time from first contact to key bottom (s). */
 export function keyTravel(velocity: number): number {
@@ -58,13 +67,20 @@ export function strokeOf(n: PerformanceNote): KeyStroke {
   return { note: n, contact: n.start - keyTravel(n.velocity), bottom: n.start, release: Math.max(n.keyEnd, n.start + 0.02) };
 }
 
-/** Depression of a released key at time t after its release from depth d0. */
+/** Depression of a released key at time t after its release from depth d0 (negative: a hair above rest). */
 function releaseCurve(d0: number, dt: number): number {
   if (dt <= 0) return d0;
-  if (dt >= KEY_RETURN) return 0;
-  const u = dt / KEY_RETURN;
-  // fast spring return that settles softly
-  return d0 * (1 - u) * (1 - u) * (1 + 0.6 * u);
+  if (dt < KEY_RETURN) {
+    const u = dt / KEY_RETURN;
+    // fast spring return, still moving a little as it reaches rest
+    return d0 * ((1 - BOUNCE_V) * (1 - u) * (1 - u) * (1 + 0.6 * u) + BOUNCE_V * (1 - u));
+  }
+  const s = dt - KEY_RETURN;
+  if (s >= BOUNCE_END) return 0;
+  // a damped rebound, continuing at the speed it arrived with
+  const v = (d0 * BOUNCE_V) / KEY_RETURN;
+  const fade = s < BOUNCE_END * 0.6 ? 1 : 1 - (s - BOUNCE_END * 0.6) / (BOUNCE_END * 0.4);
+  return (-v * Math.exp(-BOUNCE_DAMP * s) * Math.sin(BOUNCE_W * s) * fade) / BOUNCE_W;
 }
 
 /** Depression in [0, 1] of a key with strokes sorted by contact, at t. */

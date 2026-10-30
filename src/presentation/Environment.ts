@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { NOISE_GLSL, patch } from './shaderPatch';
+import { drift } from '../core/random';
 
 export const FLOOR_Y = -0.72;
 // tall and high in the wall, so the sun through it falls on the keys and the shafts cross the air above them
@@ -60,6 +61,9 @@ export class Environment {
   private rakeKey = '';
   /** colour of the sunlight in the shafts */
   readonly shaftColor = new THREE.Color(0xffd2a0);
+  /** the window light now, relative to its setting: clouds pass slowly over the sun */
+  clouds = 1;
+  private sunBase = { sun: 3.6, window: 2.6, dust: 1 };
 
   constructor() {
     RectAreaLightUniformsLib.init();
@@ -125,10 +129,11 @@ export class Environment {
     const warm =
       s.warmth >= 0 ? new THREE.Color(0xfff1e0).lerp(new THREE.Color(0xffb46a), s.warmth) : new THREE.Color(0xfff1e0).lerp(new THREE.Color(0x8fb0ff), -s.warmth);
     this.lights.sun.color.copy(warm);
-    this.lights.sun.intensity = 3.6 * s.sun;
-    this.lights.window.intensity = 2.6 * s.sun;
+    this.sunBase = { sun: 3.6 * s.sun, window: 2.6 * s.sun, dust: s.shaftsOn ? s.shafts / 0.6 : 0 };
+    this.lights.sun.intensity = this.sunBase.sun * this.clouds;
+    this.lights.window.intensity = this.sunBase.window * this.clouds;
     this.lights.window.color.copy(warm).lerp(new THREE.Color(0xffffff), 0.35);
-    this.dustMat.uniforms.uStrength.value = s.shaftsOn ? s.shafts / 0.6 : 0;
+    this.dustMat.uniforms.uStrength.value = this.sunBase.dust * this.clouds;
     this.dust.visible = s.shaftsOn && s.shafts > 0.001;
     const rake = this.lights.rake;
     rake.visible = s.rakeOn && s.rake > 0.001;
@@ -320,6 +325,11 @@ export class Environment {
   update(t: number, pixelScale: number) {
     this.dustMat.uniforms.uTime.value = t;
     this.dustMat.uniforms.uPixel.value = pixelScale;
+    // thin clouds drifting past the sun: the light breathes by about a tenth over tens of seconds
+    this.clouds = 1 + 0.085 * drift(t * 0.035, 71) + 0.03 * drift(t * 0.12, 72);
+    this.lights.sun.intensity = this.sunBase.sun * this.clouds;
+    this.lights.window.intensity = this.sunBase.window * this.clouds;
+    this.dustMat.uniforms.uStrength.value = this.sunBase.dust * this.clouds;
   }
 
   /** a small environment for reflections: dark room, bright window, dim ceiling */

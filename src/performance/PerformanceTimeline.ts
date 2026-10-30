@@ -22,6 +22,8 @@ export interface FrameState {
   hands: Record<Hand, HandPose>;
   /** sustain pedal position 0..1 (eased) */
   pedal: number;
+  /** per hand, per finger (1..5): how hard and how recently it struck, 0..1 (lights the servo rings) */
+  effort: Record<Hand, number[]>;
   /** notes whose keys are down or still sounding (pedal) */
   sounding: PerformanceNote[];
 }
@@ -213,6 +215,22 @@ export class PerformanceTimeline {
     }
   }
 
+  /** each finger's last strikes, by velocity, fading over a quarter of a second */
+  effort(hand: Hand, t: number): number[] {
+    const out = [0, 0, 0, 0, 0, 0];
+    const fingers = this.plan.hands[hand].fingers;
+    for (let f = 1; f <= 5; f++) {
+      const list = fingers[f];
+      const i = lastAtOrBefore(list, t, (pn) => pn.stroke.bottom);
+      for (let k = i; k >= 0 && k > i - 3; k--) {
+        const dt = t - list[k].stroke.bottom;
+        if (dt > 1) break;
+        out[f] = Math.max(out[f], list[k].note.velocity * Math.exp(-dt / 0.25));
+      }
+    }
+    return out;
+  }
+
   pedalAt(t: number): number {
     // the foot takes ~60 ms to press or lift the pedal
     const ped = this.perf.score.pedal;
@@ -242,6 +260,7 @@ export class PerformanceTimeline {
       keys,
       hands: { L: poseHand(this.plan.hands.L, this.keys, t), R: poseHand(this.plan.hands.R, this.keys, t) },
       pedal: this.pedalAt(t),
+      effort: { L: this.effort('L', t), R: this.effort('R', t) },
       sounding: this.sounding(t),
     };
   }

@@ -48,13 +48,16 @@ describe('IK', () => {
 });
 
 describe('timeline', { timeout: 120000 }, () => {
-  test('keys bottom out exactly at each onset and are up again after release', () => {
+  test('keys bottom out exactly at each onset, are up again after release and bounce only slightly', () => {
     const tl = demoTimeline();
     for (const n of tl.perf.notes) {
       if (n.flags.includes('chord-overflow')) continue;
       expect(tl.keys.depression(n.midi, n.start)).toBeCloseTo(1, 5);
       const next = tl.perf.notes.find((m) => m.midi === n.midi && m.start > n.start);
-      if (!next || next.start > n.keyEnd + 0.2) expect(tl.keys.depression(n.midi, n.keyEnd + 0.1)).toBe(0);
+      if (!next || next.start > n.keyEnd + 0.3) {
+        expect(Math.abs(tl.keys.depression(n.midi, n.keyEnd + 0.1))).toBeLessThan(0.04);
+        expect(tl.keys.depression(n.midi, n.keyEnd + 0.26)).toBe(0);
+      }
     }
   });
 

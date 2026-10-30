@@ -92,6 +92,7 @@ export class SceneRenderer {
   readonly env: Environment;
   piano!: PianoModel;
   hands!: Record<Hand, HandRig>;
+  private effort: Record<Hand, number[]> = { L: [0, 0, 0, 0, 0, 0], R: [0, 0, 0, 0, 0, 0] };
   readonly post: PostPipeline;
   look: Look = { ...DEFAULT_LOOK };
   private cubeRT: THREE.WebGLCubeRenderTarget | null = null;
@@ -151,7 +152,7 @@ export class SceneRenderer {
     applyPalette(pianoCase, this.palette);
     this.piano = new PianoModel(pianoCase, this.palette);
     this.scene.add(this.piano.root);
-    this.hands = { L: new HandRig(hand, 'L'), R: new HandRig(hand, 'R') };
+    this.hands = { L: new HandRig(hand, 'L', this.palette.glow), R: new HandRig(hand, 'R', this.palette.glow) };
     this.scene.add(this.hands.L.root, this.hands.R.root);
     this.captureHandReflections();
   }
@@ -216,6 +217,7 @@ export class SceneRenderer {
     this.piano.setKeys(frame.keys);
     this.hands.L.apply(frame.hands.L);
     this.hands.R.apply(frame.hands.R);
+    this.effort = frame.effort;
     // fingertips feed the contact shadows on the keys
     const tips = SHARED_UNIFORMS.uFingertips.value;
     let k = 0;
@@ -237,6 +239,8 @@ export class SceneRenderer {
     this.camera.setFocalLength(cam.focalLength);
     this.camera.updateProjectionMatrix();
     this.palette.glow.emissiveIntensity = 2.4 * this.look.glow;
+    this.hands.L.setGlow(2.4 * this.look.glow, this.effort.L);
+    this.hands.R.setGlow(2.4 * this.look.glow, this.effort.R);
     const L = this.look;
     const ls = this.lightSettings;
     // warmth moves white balance, highlights, mid-tones and blacks together
@@ -275,7 +279,7 @@ export class SceneRenderer {
       shafts:
         ls.shaftsOn && ls.shafts > 0.001
           ? {
-              strength: ls.shafts * ls.sun,
+              strength: ls.shafts * ls.sun * this.env.clouds,
               color: this.env.shaftColor,
               sunDir: this.env.sunDir,
               window: WINDOW,
