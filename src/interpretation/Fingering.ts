@@ -163,6 +163,19 @@ function transition(
       const v = pairCost(contact[i].f, contact[j].f, contact[j].X - contact[i].X);
       c += v.cost * (contact.length > 2 ? 0.7 : 1);
     }
+  // a hand already spread near its limit between its outer fingers has little
+  // spread left between the inner ones (the pairwise table cannot see this)
+  if (contact.length >= 3) {
+    const o = contact[contact.length - 1];
+    const u = (o.X - contact[0].X) / SEMI / TABLE[`${contact[0].f}-${o.f}`][4];
+    if (u > 0.8)
+      for (let i = 1; i < contact.length; i++) {
+        const a = contact[i - 1];
+        const b = contact[i];
+        const maxR = TABLE[`${a.f}-${b.f}`][3];
+        c += 2.5 * Math.min(1, (u - 0.8) / 0.2) * Math.max(0, (b.X - a.X) / SEMI - maxR);
+      }
+  }
 
   // the move from the previous group
   const ioi = t - st.prevT;

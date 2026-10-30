@@ -70,7 +70,17 @@ URL options for development: `?demo=nocturne|phrase|etudes`, `?t=12.5` (start ti
 
 * **`MidiEngine`** reads the file with `@tonejs/midi`, applies the tempo map, folds out-of-range notes by octaves, merges duplicate notes, makes sure a key is released before it is struck again, and extracts the sustain pedal (CC 64).
 * **`HandAssignment`** is a beam search over onset groups. Each state knows where both hands are, what each is holding and when it last moved. Every split of a chord between the hands is scored for count (at most five fingers), span, travel speed, collisions, register and, when the file separates the hands into tracks, the track. Overrides are hard constraints.
-* **`Fingering`** is a beam search per hand whose states remember the last key each finger played and whether it is still held. Transitions follow Parncutt et al. (1997) — comfortable and practical spans per finger pair, thumb passing, weak fingers, thumb and fifth on black keys — extended to chords, held notes and timing (legato vs. detached, fast vs. slow, chord-to-chord shifts). Distances are physical: E–F is as wide as C–D. Results it produces include standard scale fingerings (3 crossings in two octaves, after 3 or 4, finishing 3-4-5), 1-3-5 / 5-3-1 triads and 1-2-4-5 for wide four-note chords.
+* **`Fingering`** is a beam search per hand whose states remember the last key each finger played and whether it is still held. Transitions follow Parncutt et al. (1997) — comfortable and practical spans per finger pair, thumb passing, weak fingers, thumb and fifth on black keys — extended to chords, held notes and timing (legato vs. detached, fast vs. slow, chord-to-chord shifts). Distances are physical: E–F is as wide as C–D. A hand spread near its limit between its outer fingers leaves the inner pairs less room. Fast repeated notes change finger down the hand (4-3-2-1); slow ones keep it.
+* **`Patterns`** recognises familiar figures and hands their conventional fingerings (`Conventions.ts`) to the search as soft priors:
+  * scale runs longer than a hand position, fitted to a major key or a white-key minor;
+  * chromatic runs;
+  * white-root arpeggios;
+  * exact repeats of an earlier figure, nudged toward its first fingering.
+
+  Priors add a cost when the search departs from them; they never force it, so a recognised fragment that fits under five fingers, or that collides with a held note, is still fingered sensibly. Recognised notes are labelled in the Fingering tab (scale, chrom., arp., motif).
+
+  `node tools/fingering-report.cjs` writes an image comparing the engine with conventional fingering. It covers all 24 major scales over two octaves up and down, arpeggios, chords and repeated notes, and currently 98.8% of notes match. The remaining differences are turnaround variants at the top of a scale.
+* **`app/plan.ts`** checks the interpretation against the physical hand. After motion planning, it scans the holds of chords and stretches at 30 Hz. If a fingertip cannot stay within 2 mm of its key, that exact hand shape is banned for that chord and the piece is planned again (at most twice). User overrides are never second-guessed.
 * **`PerformancePlanner`** combines both, then makes the result physically honest: a finger that is needed elsewhere lets go of its key in time, and a held key that is out of reach of the next notes is released early enough for the hand to travel (the pedal, when down, keeps it sounding).
 
 Anything the modelled hands genuinely cannot do (more than five notes at once, spans beyond reach) is flagged and reported in the title card and the fingering drawer. The key of a note with no free finger is not animated, rather than moving under a hovering finger.
@@ -78,6 +88,10 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
 ### Physical performance
 
 * **`MotionPlanner`** samples each hand's wrist position, yaw, pitch and roll at 120 Hz for the whole piece. Every note pulls the wrist toward the place that puts its finger on its key, starting as early as the music allows. The pull is blurred with a zero-phase filter, so the hand starts moving before it must (anticipation), then projected back into what is reachable while keys are held, and re-smoothed. On top come black-key depth (a thumb on a black key brings the whole hand in and the long fingers play between the black keys), lifting between phrases, arcs over leaps, a small give of the wrist on chord attacks, roll toward the playing side of the hand and turning for thumb passages.
+
+  **Leaps:** where no key is held, the wrist follows a minimum-jerk path. Keys the hand cannot keep are let go early enough for the trip, allowing 0.08 s plus 0.7 s per metre. Onsets never move, and the sound still lasts the written note. Peak wrist speed stays under 2 m/s.
+
+  **Repeated notes:** the earlier key lets go in time to rise most of the way before the re-strike, and the finger visibly lifts off.
 * **`HandIK`** is closed-form. For each finger, abduction turns its flexion plane to the target and a preferred distal angle fixes the DIP joint, so MCP and PIP follow from the two-link solution. The thumb's CMC is a ball joint: swing spreads it in the palm plane and twist turns its flexion plane until the target lies in it.
 * **`HandPoser`** evaluates every fingertip target from that finger's notes (prepare, strike, hold, release, travel), then runs a few damped Gauss–Newton steps over wrist position, yaw, roll and pitch so the fingers on keys always reach them.
 * **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
@@ -133,7 +147,7 @@ Add `--preview out.png` to either script for a Cycles studio render. `tests/asse
 ```
 src/
   core/            keyboard layout, hand spec + forward kinematics, types, math, seeded noise
-  interpretation/  MidiEngine, HandAssignment, Fingering, PerformancePlanner, demoPiece
+  interpretation/  MidiEngine, HandAssignment, Fingering, Patterns, Conventions, PerformancePlanner, demoPiece
   performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, PerformanceTimeline
   presentation/    SceneRenderer, PianoModel, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
