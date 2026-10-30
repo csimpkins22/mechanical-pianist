@@ -389,7 +389,7 @@ export class AudioEngine {
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const g = ctx.createGain();
-    g.gain.value = 0.045 + 0.055 * n.velocity; // the key-release thump: texture, not a feature
+    g.gain.value = 0.03 + 0.037 * n.velocity; // the key-release thump: texture, not a feature
     src.connect(g).connect(this.dry);
     const when = Math.max(ctx.currentTime, this.toAudio(n.keyEnd));
     src.start(when);
