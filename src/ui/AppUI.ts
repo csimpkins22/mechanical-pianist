@@ -696,6 +696,13 @@ export class AppUI {
       sl('Direction', -80, 80, 1, () => L().rakeDir, (v) => a.setLights({ rakeDir: v }), (v) => `${v.toFixed(0)}°`),
     ]);
 
+    const bounce = this.sectionToggle(body, 'Bounced light', () => L().bounceOn, (v) => a.setLights({ bounceOn: v }));
+    bounce([sl('Amount', 0, 1.5, 0.01, () => L().bounce, (v) => a.setLights({ bounce: v }))]);
+    const ao = this.sectionToggle(body, 'Contact shadows (AO)', () => look.aoOn, (v) => (look.aoOn = v));
+    ao([sl('Strength', 0, 1, 0.01, () => look.ao, (v) => (look.ao = v))]);
+    this.sectionToggle(body, 'Reflections in the lacquer', () => look.reflectionsOn, (v) => (look.reflectionsOn = v))([]);
+    if (a.view.post.quality === 'low') body.appendChild(el('p', 'note', 'Contact shadows and lacquer reflections need medium or high quality.'));
+
     body.appendChild(el('div', 'sec', 'Grade'));
     sl('Exposure', 0.4, 1.8, 0.01, () => look.exposure, (v) => (look.exposure = v));
     sl('Contrast', 0.8, 1.7, 0.01, () => look.contrast, (v) => (look.contrast = v));
@@ -705,7 +712,10 @@ export class AppUI {
     sl('Faded blacks', 0, 1, 0.01, () => look.fade, (v) => (look.fade = v));
     sl('Keep cyan', 0, 1, 0.01, () => look.accent, (v) => (look.accent = v));
 
-    this.resetButton(body, () => a.setStyle('golden'));
+    this.resetButton(body, () => {
+      a.setStyle('golden');
+      for (const k of ['aoOn', 'ao', 'reflectionsOn'] as const) (look as unknown as Record<string, unknown>)[k] = DEFAULT_LOOK[k];
+    });
   }
 
   private renderCamera(body: HTMLElement) {
@@ -730,6 +740,10 @@ export class AppUI {
     sl('Bloom', 0, 2, 0.01, () => look.bloom, (v) => (look.bloom = v));
     sl('Grain', 0, 2, 0.01, () => look.grain, (v) => (look.grain = v));
     sl('Vignette', 0, 2, 0.01, () => look.vignette, (v) => (look.vignette = v));
+
+    const blur = this.sectionToggle(body, 'Motion blur', () => look.motionBlurOn, (v) => (look.motionBlurOn = v));
+    blur([sl('Shutter', 45, 270, 5, () => look.shutter, (v) => (look.shutter = v), (v) => `${v.toFixed(0)}°`)]);
+    if (a.view.post.quality === 'low') body.appendChild(el('p', 'note', 'Motion blur needs medium or high quality.'));
 
     const streaks = this.sectionToggle(body, 'Anamorphic streaks', () => look.streaksOn, (v) => (look.streaksOn = v));
     streaks([sl('Strength', 0, 2, 0.01, () => look.streaks, (v) => (look.streaks = v))]);
@@ -768,7 +782,7 @@ export class AppUI {
       body,
       () => {
         a.framing = { ...DEFAULT_FRAMING };
-        for (const k of ['dof', 'dofScale', 'bloom', 'grain', 'vignette', 'streaksOn', 'streaks', 'letterboxOn', 'letterbox'] as const)
+        for (const k of ['dof', 'dofScale', 'bloom', 'grain', 'vignette', 'motionBlurOn', 'shutter', 'streaksOn', 'streaks', 'letterboxOn', 'letterbox'] as const)
           (look as unknown as Record<string, unknown>)[k] = DEFAULT_LOOK[k];
       },
       q,

@@ -9,7 +9,9 @@ import type { FrameState } from '../performance/PerformanceTimeline';
 import type { CameraState } from './CinematicCamera';
 import { Environment, DEFAULT_LIGHTS, WINDOW, WINDOW_BARS, type LightSettings } from './Environment';
 import { HandRig } from './HandRig';
-import { applyPalette, createPalette, type Palette } from './materials';
+import { MIRROR_UNIFORMS, applyPalette, createPalette, type Palette } from './materials';
+import { SHARED_UNIFORMS as SHARED } from './shaderPatch';
+import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
 import { PianoModel } from './PianoModel';
 import { PostPipeline, type PostParams, type Quality } from './PostPipeline';
 import { createSheetMusic } from './SheetMusic';
@@ -38,6 +40,14 @@ export interface Look {
   /** letterbox bars */
   letterboxOn: boolean;
   letterbox: number; // aspect, e.g. 2.39
+  /** motion blur, as a film camera's shutter angle at 24 fps (180 = 1/48 s) */
+  motionBlurOn: boolean;
+  shutter: number;
+  /** live reflections of the keys and hands in the lacquer behind them */
+  reflectionsOn: boolean;
+  /** ambient occlusion: darkening where surfaces crowd each other */
+  aoOn: boolean;
+  ao: number;
 }
 
 export const DEFAULT_LOOK: Look = {
@@ -59,7 +69,17 @@ export const DEFAULT_LOOK: Look = {
   streaks: 0.5,
   letterboxOn: false,
   letterbox: 2.39,
+  motionBlurOn: true,
+  shutter: 180,
+  reflectionsOn: true,
+  aoOn: true,
+  ao: 0.6,
 };
+
+/** exposure time of the shutter (s) */
+export function shutterTime(look: Look) {
+  return look.motionBlurOn ? look.shutter / 360 / 24 : 0;
+}
 
 /** Pack glTF JSON and its binary buffer into a GLB container. */
 function packGlb(json: object, bin: Uint8Array): ArrayBuffer {
@@ -84,6 +104,9 @@ function packGlb(json: object, bin: Uint8Array): ArrayBuffer {
   return out;
 }
 
+/** bounced light, balanced against the flat fill it replaces so the room keeps its overall level */
+const BOUNCE_GAIN = 0.6;
+
 export class SceneRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -96,6 +119,29 @@ export class SceneRenderer {
   readonly post: PostPipeline;
   look: Look = { ...DEFAULT_LOOK };
   private cubeRT: THREE.WebGLCubeRenderTarget | null = null;
+  private handEnv: THREE.Texture | null = null;
+  /** everything that moves (keys, hand parts): their transforms at the start of the shutter go in userData.prevMW */
+  private moving: THREE.Object3D[] = [];
+  private prevViewProj = new THREE.Matrix4();
+  private hasPrev = false;
+  private prevCam = new THREE.PerspectiveCamera();
+  // the live mirror image in the lacquer behind the keys (see MIRROR_UNIFORMS)
+  private mirrorRT = new THREE.WebGLRenderTarget(2, 2, {
+    type: THREE.HalfFloatType,
+    generateMipmaps: true,
+    minFilter: THREE.LinearMipmapLinearFilter,
+    magFilter: THREE.LinearFilter,
+  });
+  private mirrorCam = new THREE.PerspectiveCamera();
+  private mirrorBlank = MIRROR_UNIFORMS.uMirror.value;
+  /** the board's own panels, left out of their reflection */
+  private mirrorHidden: THREE.Object3D[] = [];
+  // bounced light: small cube captures of the lit room, reduced to irradiance
+  private bounceRT = new THREE.WebGLCubeRenderTarget(32, { type: THREE.HalfFloatType });
+  private bounceCam = new THREE.CubeCamera(0.01, 20, this.bounceRT);
+  private bounceBusy = false;
+  private bounceAgain = false;
+  private bounceTimer = 0;
   readonly debugLayer = new THREE.Group();
 
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -154,7 +200,18 @@ export class SceneRenderer {
     this.scene.add(this.piano.root);
     this.hands = { L: new HandRig(hand, 'L', this.palette.glow), R: new HandRig(hand, 'R', this.palette.glow) };
     this.scene.add(this.hands.L.root, this.hands.R.root);
+    this.moving = [];
+    for (const root of [this.hands.L.root, this.hands.R.root, ...this.piano.pivots])
+      root.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) this.moving.push(o);
+      });
+    this.post.prepassHidden = [this.env.dust];
+    this.mirrorHidden = ['Nameboard', 'UpperPanel'].map((n) => this.piano.root.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+    MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
     this.captureHandReflections();
+    await this.captureBounce();
+    // a second pass lets the first bounce light the room the probes see: two bounces
+    await this.captureBounce();
   }
 
   /**
@@ -169,19 +226,66 @@ export class SceneRenderer {
     cam.position.set(0, 0.07, 0.04);
     this.hands.L.root.visible = false;
     this.hands.R.root.visible = false;
+    const mirrorOn = MIRROR_UNIFORMS.uMirrorOn.value;
+    MIRROR_UNIFORMS.uMirrorOn.value = 0;
     this.scene.add(cam);
     cam.update(this.renderer, this.scene);
     this.scene.remove(cam);
+    MIRROR_UNIFORMS.uMirrorOn.value = mirrorOn;
     this.hands.L.root.visible = true;
     this.hands.R.root.visible = true;
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const tex = pmrem.fromCubemap(rt.texture).texture;
     pmrem.dispose();
     rt.dispose();
+    this.handEnv?.dispose();
+    this.handEnv = tex;
     for (const m of [this.palette.shell, this.palette.chrome, this.palette.steel, this.palette.graphite, this.palette.rubber, this.palette.shellInner]) {
       (m as THREE.MeshStandardMaterial).envMap = tex;
       (m as THREE.MeshStandardMaterial).envMapIntensity = 1.6;
       m.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Bounced light: the room as it is lit now, captured at three heights in
+   * front of the piano (by the floor, at the keys, above them) with the hands
+   * left out, each reduced to spherical-harmonic irradiance that every
+   * surface then takes by height (see shaderPatch BOUNCE_GLSL). Redone when
+   * the lights change; each capture includes the previous bounce.
+   */
+  async captureBounce() {
+    if (this.bounceBusy) {
+      this.bounceAgain = true;
+      return;
+    }
+    this.bounceBusy = true;
+    try {
+      const ys = SHARED.uBounceY.value;
+      const spots = [new THREE.Vector3(0, ys.x, 0.45), new THREE.Vector3(0, ys.y, 0.1), new THREE.Vector3(0, ys.z, 0.35)];
+      const sh = SHARED.uBounceSH.value;
+      for (let i = 0; i < 3; i++) {
+        const hidden = [this.hands.L.root, this.hands.R.root, this.env.dust, this.debugLayer].filter((o) => o.visible);
+        for (const o of hidden) o.visible = false;
+        const mirrorOn = MIRROR_UNIFORMS.uMirrorOn.value;
+        MIRROR_UNIFORMS.uMirrorOn.value = 0;
+        this.bounceCam.position.copy(spots[i]);
+        this.scene.add(this.bounceCam);
+        this.bounceCam.update(this.renderer, this.scene);
+        this.scene.remove(this.bounceCam);
+        MIRROR_UNIFORMS.uMirrorOn.value = mirrorOn;
+        for (const o of hidden) o.visible = true;
+        const probe = await LightProbeGenerator.fromCubeRenderTarget(this.renderer, this.bounceRT);
+        for (let k = 0; k < 9; k++) sh[i * 9 + k].copy(probe.sh.coefficients[k]);
+      }
+      const ls = this.lightSettings;
+      SHARED.uBounce.value = ls.bounceOn ? BOUNCE_GAIN * ls.bounce : 0;
+    } finally {
+      this.bounceBusy = false;
+    }
+    if (this.bounceAgain) {
+      this.bounceAgain = false;
+      await this.captureBounce();
     }
   }
 
@@ -190,10 +294,23 @@ export class SceneRenderer {
   setLights(s: LightSettings = DEFAULT_LIGHTS) {
     this.lightSettings = s;
     this.env.applySettings(s);
+    SHARED.uBounce.value = s.bounceOn ? BOUNCE_GAIN * s.bounce : 0;
+    // the room's light changed: recapture what it bounces (once the sliders settle)
+    if (this.hands) {
+      clearTimeout(this.bounceTimer);
+      this.bounceTimer = window.setTimeout(() => {
+        this.captureHandReflections();
+        void this.captureBounce().then(() => this.onRelit?.());
+      }, 300);
+    }
   }
+
+  /** called when a recapture of the room's light has finished (to redraw a paused frame) */
+  onRelit?: () => void;
 
   setQuality(q: Quality) {
     this.post.setQuality(q);
+    this.sizeMirror();
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.env.lights.sun.shadow.mapSize.set(q === 'high' ? 4096 : 2048, q === 'high' ? 4096 : 2048);
     this.env.lights.sun.shadow.map?.dispose();
@@ -208,8 +325,93 @@ export class SceneRenderer {
     this.renderer.setSize(w, h, false);
     const pr = this.renderer.getPixelRatio();
     this.post.setSize(Math.floor(w * pr), Math.floor(h * pr));
+    this.sizeMirror();
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * For motion blur: the performance and camera as the shutter opened (a
+   * moment before the frame drawn next). Records where everything was;
+   * update() then poses the instant itself.
+   */
+  setPrevious(frame: FrameState, cam: CameraState) {
+    this.piano.setKeys(frame.keys);
+    this.hands.L.apply(frame.hands.L);
+    this.hands.R.apply(frame.hands.R);
+    this.scene.updateMatrixWorld();
+    for (const o of this.moving) ((o.userData.prevMW ??= new THREE.Matrix4()) as THREE.Matrix4).copy(o.matrixWorld);
+    const c = this.prevCam;
+    c.copy(this.camera, false);
+    c.position.copy(cam.position);
+    c.up.set(Math.sin(cam.roll), Math.cos(cam.roll), 0);
+    c.lookAt(cam.target);
+    c.setFocalLength(cam.focalLength);
+    c.updateProjectionMatrix();
+    c.updateMatrixWorld();
+    this.prevViewProj.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse);
+    this.hasPrev = true;
+  }
+
+  private sizeMirror() {
+    const k = this.post.quality === 'high' ? 0.5 : 0.25;
+    this.mirrorRT.setSize(Math.max(2, Math.round(this.post.width * k)), Math.max(2, Math.round(this.post.height * k)));
+  }
+
+  /**
+   * The scene mirrored in the plane of the lacquer behind the keys (z =
+   * MIRROR_UNIFORMS.uMirrorZ, facing the player), drawn from the reflected
+   * camera with its near plane on the mirror (Lengyel's oblique clipping), so
+   * nothing behind the board can show.
+   */
+  private renderMirror() {
+    const z0 = MIRROR_UNIFORMS.uMirrorZ.value;
+    const cam = this.camera;
+    const mc = this.mirrorCam;
+    if (cam.position.z < z0 + 0.01) return false;
+    const reflect = (v: THREE.Vector3) => v.set(v.x, v.y, 2 * z0 - v.z);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
+    mc.position.copy(cam.position);
+    reflect(mc.position);
+    const target = reflect(cam.position.clone().add(dir));
+    mc.up.set(up.x, up.y, -up.z);
+    mc.lookAt(target);
+    mc.near = cam.near;
+    mc.far = cam.far;
+    mc.updateMatrixWorld();
+    mc.projectionMatrix.copy(cam.projectionMatrix);
+    mc.projectionMatrixInverse.copy(cam.projectionMatrixInverse);
+    // oblique near plane on the mirror
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, z0));
+    plane.applyMatrix4(mc.matrixWorldInverse);
+    const clip = new THREE.Vector4(plane.normal.x, plane.normal.y, plane.normal.z, plane.constant);
+    const e = mc.projectionMatrix.elements;
+    const q = new THREE.Vector4((Math.sign(clip.x) + e[8]) / e[0], (Math.sign(clip.y) + e[9]) / e[5], -1, (1 + e[10]) / e[14]);
+    clip.multiplyScalar(2 / clip.dot(q));
+    e[2] = clip.x;
+    e[6] = clip.y;
+    e[10] = clip.z + 1 - 0.0005;
+    e[14] = clip.w;
+    // world -> mirror texture
+    MIRROR_UNIFORMS.uMirrorMatrix.value
+      .set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1)
+      .multiply(cam.projectionMatrix)
+      .multiply(mc.matrixWorldInverse);
+    const r = this.renderer;
+    for (const o of this.mirrorHidden) o.visible = false;
+    const dbg = this.debugLayer.visible;
+    this.debugLayer.visible = false;
+    // the rest of the lacquer, seen in the mirror, must not read the image being drawn
+    MIRROR_UNIFORMS.uMirrorOn.value = 0;
+    MIRROR_UNIFORMS.uMirror.value = this.mirrorBlank;
+    r.setRenderTarget(this.mirrorRT);
+    r.clear();
+    r.render(this.scene, mc);
+    MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
+    for (const o of this.mirrorHidden) o.visible = true;
+    this.debugLayer.visible = dbg;
+    return true;
   }
 
   /** draw the performance at one instant */
@@ -252,7 +454,8 @@ export class SceneRenderer {
       fstop: cam.fstop / Math.max(0.05, L.dofScale),
       focus: cam.focus,
       dof: L.dof,
-      exposure: L.exposure * 0.82,
+      // with bounced light the room is a little brighter: stop down to keep its level
+      exposure: L.exposure * 0.82 * (ls.bounceOn ? 1 - 0.05 * Math.min(1, ls.bounce) : 1),
       bloomStrength: 0.3 * L.bloom,
       bloomRadius: 0.5,
       bloomThreshold: 1.6,
@@ -276,6 +479,8 @@ export class SceneRenderer {
       blackTint: w >= 0 ? [0.03 * w, 0.015 * w, 0] : [0, 0.008 * -w, 0.028 * -w],
       streaks: L.streaksOn ? 0.18 * L.streaks : 0,
       letterbox: L.letterboxOn ? L.letterbox : 0,
+      motion: this.hasPrev && shutterTime(L) > 0 ? { prevViewProj: this.prevViewProj } : null,
+      ao: L.aoOn ? L.ao : 0,
       shafts:
         ls.shaftsOn && ls.shafts > 0.001
           ? {
@@ -289,6 +494,15 @@ export class SceneRenderer {
             }
           : null,
     };
+    // the mirror first: it draws the shadow maps, which the main passes then reuse
+    const r = this.renderer;
+    const shadows = r.shadowMap.autoUpdate;
+    this.camera.updateMatrixWorld();
+    const mirrored = this.post.quality !== 'low' && L.reflectionsOn && this.renderMirror();
+    MIRROR_UNIFORMS.uMirrorOn.value = mirrored ? 1 : 0;
+    if (mirrored) r.shadowMap.autoUpdate = false;
     this.post.render(this.scene, this.camera, params);
+    r.shadowMap.autoUpdate = shadows;
+    this.hasPrev = false;
   }
 }

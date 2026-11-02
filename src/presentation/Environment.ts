@@ -36,6 +36,9 @@ export interface LightSettings {
   rake: number;
   rakeAngle: number; // degrees above the keys
   rakeDir: number; // degrees: 0 = along the keyboard from the bass end, positive = more from the player's side
+  /** light bounced off the room itself (captured from the lit scene) in place of most of the flat ambient fill */
+  bounceOn: boolean;
+  bounce: number;
 }
 
 export const DEFAULT_LIGHTS: LightSettings = {
@@ -49,13 +52,15 @@ export const DEFAULT_LIGHTS: LightSettings = {
   rake: 0.8,
   rakeAngle: 9,
   rakeDir: 25,
+  bounceOn: true,
+  bounce: 1,
 };
 
 export class Environment {
   readonly root = new THREE.Group();
   readonly lights: LightRig;
   readonly sunDir = new THREE.Vector3();
-  private dust: THREE.Points;
+  readonly dust: THREE.Points;
   private dustMat: THREE.ShaderMaterial;
   private soft!: THREE.DirectionalLight;
   private rakeKey = '';
@@ -142,7 +147,8 @@ export class Environment {
       s.warmth >= 0 ? new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xffc488), s.warmth) : new THREE.Color(0xfff0dc).lerp(new THREE.Color(0xa4bcff), -s.warmth),
     );
     this.aimRake(s.rakeAngle, s.rakeDir);
-    this.lights.fill.intensity = 0.45 * s.fill;
+    // with bounced light on, the flat sky/ground fill gives way to light from the room itself
+    this.lights.fill.intensity = 0.45 * s.fill * (s.bounceOn ? 1 - 0.85 * Math.min(1, s.bounce) : 1);
     this.soft.intensity = 1.35 * s.fill;
     this.lights.rim.intensity = 0.7 * s.rim;
     this.shaftColor.copy(warm);

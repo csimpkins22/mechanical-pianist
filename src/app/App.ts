@@ -12,7 +12,7 @@ import { PerformanceTimeline, type FrameState } from '../performance/Performance
 import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
 import { DEFAULT_LIGHTS, type LightSettings } from '../presentation/Environment';
-import { SceneRenderer } from '../presentation/SceneRenderer';
+import { SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 
@@ -91,6 +91,10 @@ export class App {
 
   constructor(readonly canvas: HTMLCanvasElement, readonly uiRoot: HTMLElement) {
     this.view = new SceneRenderer(canvas);
+    // a recapture of the room's bounced light finished: show it on a paused frame too
+    this.view.onRelit = () => {
+      if (!this.playing) this.renderNow();
+    };
     this.audio = new AudioEngine(import.meta.env.BASE_URL);
     this.audio.onStatus = () => this.emit('audio');
     // the viewer's own settings from last time (ignored with ?settings=default, for tools)
@@ -144,7 +148,9 @@ export class App {
   }
 
   async start(onProgress?: (f: number, label: string) => void) {
-    const q = (this.params.get('quality') as Quality) || 'high';
+    // phones and tablets start a step down (the realism passes are heavy); playback lowers it further if it stutters
+    const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+    const q = (this.params.get('quality') as Quality) || (touch ? 'medium' : 'high');
     this.view.setQuality(q);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -476,10 +482,18 @@ export class App {
 
   renderNow() {
     if (!this.piece) return;
+    const cam = this.cameraAt(this.t);
+    // motion blur: where everything was as the shutter opened (in performance
+    // time, so slow motion blurs less); a cut is never blurred across
+    const open = shutterTime(this.view.look) * this.speed;
+    if (open > 0 && this.view.post.quality !== 'low') {
+      const t0 = Math.max(0, this.t - open);
+      const cut = this.mode === 'cinematic' && this.piece.camera.director.shotAt(this.t).start > t0;
+      this.view.setPrevious(this.piece.timeline.evaluate(t0), cut ? cam : this.cameraAt(t0));
+    }
     const frame = this.piece.timeline.evaluate(this.t);
     this.frame = frame;
     this.view.update(frame);
-    const cam = this.cameraAt(this.t);
     this.view.camera.position.copy(cam.position);
     this.view.camera.lookAt(cam.target);
     this.view.camera.updateMatrixWorld();

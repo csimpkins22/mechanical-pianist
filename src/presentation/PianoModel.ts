@@ -148,11 +148,23 @@ function tint(g: THREE.BufferGeometry, k: KeyInfo) {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
 }
 
+/**
+ * No two keys of a real piano sit quite alike: each rests a fraction of a
+ * millimetre higher or lower, a hair to one side, turned the slightest bit.
+ * Kept well under the 2 mm the fingertips are checked against, and below
+ * anything that reads as wear (radians and metres).
+ */
+function irregularity(k: KeyInfo) {
+  const c = (seed: number) => hash01(k.midi, seed) * 2 - 1;
+  return { x: 0.00006 * c(11), y: 0.00011 * c(12), yaw: 0.0007 * c(13), tilt: 0.0006 * c(14) };
+}
+
 export class PianoModel {
   readonly root = new THREE.Group();
   readonly pivots: THREE.Group[] = [];
   readonly keyMeshes: THREE.Mesh[] = [];
   private angles = new Float32Array(KEYS.length).fill(-1);
+  private restTilt = new Float32Array(KEYS.length);
 
   constructor(caseScene: THREE.Object3D | null, palette: Palette) {
     this.root.name = 'Piano';
@@ -166,7 +178,10 @@ export class PianoModel {
       tint(geo, k);
       const mesh = new THREE.Mesh(geo, k.black ? palette.ebony : palette.ivory);
       mesh.name = `Key${k.midi}`;
-      mesh.position.set(k.x, -PIVOT_Y, -k.pivotZ);
+      const irr = irregularity(k);
+      mesh.position.set(k.x + irr.x, -PIVOT_Y + irr.y, -k.pivotZ);
+      mesh.rotation.y = irr.yaw;
+      this.restTilt[this.pivots.length] = irr.tilt;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       pivot.add(mesh);
@@ -182,7 +197,7 @@ export class PianoModel {
       const a = keyAngle(KEYS[i], depression[i]);
       if (a !== this.angles[i]) {
         this.angles[i] = a;
-        this.pivots[i].rotation.x = a;
+        this.pivots[i].rotation.x = a + this.restTilt[i];
       }
     }
   }

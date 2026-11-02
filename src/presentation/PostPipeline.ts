@@ -1,7 +1,9 @@
-// Post-processing: HDR scene (MSAA, depth) -> volumetric light shafts from
-// the window (raymarched at half resolution against the scene depth and the
-// sun's shadow map) -> physical thin-lens depth of field (bokeh gather at
-// half resolution) -> bloom -> anamorphic streaks (bright parts smeared
+// Post-processing: HDR scene (MSAA, depth) -> a prepass of per-pixel motion,
+// depth and normals -> volumetric light shafts from the window (raymarched at
+// half resolution against the scene depth and the sun's shadow map) ->
+// physical thin-lens depth of field (bokeh gather at half resolution) ->
+// motion blur (a shutter's worth of movement, reconstructed per pixel) ->
+// bloom -> anamorphic streaks (bright parts smeared
 // horizontally) -> filmic grade (highlight roll-off, ACES, lift/gamma/gain,
 // split toning, warm blacks, vignette, gentle chromatic aberration,
 // frame-seeded grain, letterbox). Every parameter arrives per frame in
@@ -47,6 +49,10 @@ export interface PostParams {
   /** letterbox aspect ratio (0 = off) */
   letterbox: number;
   shafts: Shafts | null;
+  /** motion blur: the camera's view-projection at the start of the shutter (objects carry theirs in userData.prevMW) */
+  motion: { prevViewProj: THREE.Matrix4 } | null;
+  /** ambient occlusion strength (0 = off) */
+  ao: number;
 }
 
 export interface Shafts {
@@ -83,6 +89,8 @@ float cocOf(float z) {
 const prefilterFS = /* glsl */ `
 uniform sampler2D tColor;
 uniform sampler2D tDepth;
+uniform sampler2D tAO;
+uniform float uAO;
 uniform vec2 uTexel;
 varying vec2 vUv;
 ${depthFns}
@@ -103,6 +111,7 @@ void main() {
     }
   }
   c /= wsum;
+  if (uAO > 0.0) c *= mix(1.0, texture2D(tAO, vUv).r, uAO);
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c *= min(1.0, 16.0 / max(l, 1e-4));
   gl_FragColor = vec4(c, linearDepth(d));
@@ -263,8 +272,186 @@ void main() {
 }
 `;
 
+// the prepass: screen-space motion over the shutter (uv), linear depth, and the view-space normal
+const prepassVS = /* glsl */ `
+uniform mat4 uPrevModel;
+uniform mat4 uPrevViewProj;
+out vec4 vCur;
+out vec4 vPrev;
+out float vDepth;
+out vec3 vNormal;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec4 mv = viewMatrix * wp;
+  gl_Position = projectionMatrix * mv;
+  vCur = gl_Position;
+  vPrev = uPrevViewProj * (uPrevModel * vec4(position, 1.0));
+  vDepth = -mv.z;
+  vNormal = normalize(normalMatrix * normal);
+}
+`;
+const prepassFS = /* glsl */ `
+in vec4 vCur;
+in vec4 vPrev;
+in float vDepth;
+in vec3 vNormal;
+layout(location = 0) out vec4 outMotion;
+layout(location = 1) out vec4 outNormal;
+void main() {
+  vec2 a = vCur.xy / vCur.w;
+  vec2 b = vPrev.xy / max(vPrev.w, 1e-5);
+  outMotion = vec4((a - b) * 0.5, vDepth, 1.0);
+  vec3 n = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+  outNormal = vec4(n, 1.0);
+}
+`;
+
+// motion blur after McGuire et al., "A Reconstruction Filter for Plausible
+// Motion Blur" (2012): the largest motion per tile, then per neighbourhood,
+// then a depth-aware gather along it. Velocities are half the shutter's
+// displacement, in pixels, at most one tile.
+const tileMaxFS = /* glsl */ `
+uniform sampler2D tMotion;
+uniform vec2 uRes;
+uniform float uK;
+void main() {
+  vec2 origin = floor(gl_FragCoord.xy) * uK;
+  vec2 best = vec2(0.0);
+  float bl = 0.0;
+  for (int y = 0; y < 64; y += 2) {
+    if (float(y) >= uK) break;
+    for (int x = 0; x < 64; x += 2) {
+      if (float(x) >= uK) break;
+      vec2 v = texture2D(tMotion, (origin + vec2(float(x), float(y)) + 1.0) / uRes).xy * uRes * 0.5;
+      float l = dot(v, v);
+      if (l > bl) { bl = l; best = v; }
+    }
+  }
+  float L = sqrt(bl);
+  if (L > uK) best *= uK / L;
+  gl_FragColor = vec4(best, 0.0, 1.0);
+}
+`;
+const neighborMaxFS = /* glsl */ `
+uniform sampler2D tTile;
+uniform vec2 uTileRes;
+void main() {
+  vec2 best = vec2(0.0);
+  float bl = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 v = texture2D(tTile, (floor(gl_FragCoord.xy) + vec2(float(x), float(y)) + 0.5) / uTileRes).xy;
+      float l = dot(v, v);
+      if (l > bl) { bl = l; best = v; }
+    }
+  }
+  gl_FragColor = vec4(best, 0.0, 1.0);
+}
+`;
+const motionBlurFS = /* glsl */ `
+uniform sampler2D tColor;
+uniform sampler2D tMotion;
+uniform sampler2D tNeighbor;
+uniform vec2 uRes;
+uniform float uK;
+varying vec2 vUv;
+const float SOFT_Z = 0.015;
+vec2 velPx(vec2 uv) {
+  vec2 v = texture2D(tMotion, uv).xy * uRes * 0.5;
+  float l = length(v);
+  return l > uK ? v * (uK / l) : v;
+}
+float cone(float d, float v) { return clamp(1.0 - d / v, 0.0, 1.0); }
+float cylinder(float d, float v) { return 1.0 - smoothstep(0.95 * v, 1.05 * v, d); }
+// 1 where depth a is in front of (or level with) depth b
+float inFront(float za, float zb) { return clamp(1.0 - (za - zb) / SOFT_Z, 0.0, 1.0); }
+void main() {
+  vec3 cX = texture2D(tColor, vUv).rgb;
+  vec2 vN = texture2D(tNeighbor, vUv).xy;
+  float lN = length(vN);
+  if (lN < 0.5) { gl_FragColor = vec4(cX, 1.0); return; }
+  vec2 vX = velPx(vUv);
+  float lX = max(length(vX), 0.5);
+  float zX = texture2D(tMotion, vUv).z;
+  float w = 1.0 / lX;
+  vec3 sum = cX * w;
+  float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
+  for (int i = 0; i < SAMPLES; i++) {
+    if (i == (SAMPLES - 1) / 2) continue;
+    float t = mix(-1.0, 1.0, (float(i) + j + 1.0) / float(SAMPLES + 1));
+    vec2 uvY = vUv + vN * t / uRes;
+    float d = abs(t) * lN;
+    float lY = max(length(velPx(uvY)), 0.5);
+    float zY = texture2D(tMotion, uvY).z;
+    float a = inFront(zY, zX) * cone(d, lY) + inFront(zX, zY) * cone(d, lX) + cylinder(d, lY) * cylinder(d, lX) * 2.0;
+    w += a;
+    sum += a * texture2D(tColor, uvY).rgb;
+  }
+  gl_FragColor = vec4(sum / w, 1.0);
+}
+`;
+
+// ambient occlusion: a normal-oriented hemisphere of samples a few centimetres
+// across, tested against the prepass depth (view space rebuilt from it)
+const aoFS = /* glsl */ `
+uniform sampler2D tMotion;
+uniform sampler2D tNormal;
+uniform vec2 uProj; // projection [0][0], [1][1]
+uniform float uRadius;
+varying vec2 vUv;
+vec3 viewPos(vec2 uv, float d) { return vec3((uv * 2.0 - 1.0) / uProj * d, -d); }
+void main() {
+  float d = texture2D(tMotion, vUv).z;
+  if (d > 500.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 P = viewPos(vUv, d);
+  vec3 N = normalize(texture2D(tNormal, vUv).xyz);
+  float a = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  vec3 r = vec3(cos(a), sin(a), 0.0);
+  vec3 T = normalize(r - N * dot(r, N));
+  vec3 B = cross(N, T);
+  float occ = 0.0;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i);
+    float u = (fi + 0.5) / 12.0;
+    float phi = fi * 2.3999632;
+    float cr = sqrt(u);
+    vec3 k = vec3(cos(phi) * cr, sin(phi) * cr, sqrt(1.0 - u));
+    float scale = mix(0.2, 1.0, u * u);
+    vec3 S = P + (T * k.x + B * k.y + N * k.z) * uRadius * scale;
+    vec2 suv = (S.xy * uProj / -S.z) * 0.5 + 0.5;
+    if (suv.x < 0.0 || suv.y < 0.0 || suv.x > 1.0 || suv.y > 1.0) continue;
+    float sd = texture2D(tMotion, suv).z;
+    float range = smoothstep(0.0, 1.0, uRadius / max(abs(d - sd), 1e-4));
+    occ += (sd < -S.z - 0.0015 ? 1.0 : 0.0) * range;
+  }
+  gl_FragColor = vec4(vec3(clamp(1.0 - occ / 12.0, 0.0, 1.0)), 1.0);
+}
+`;
+// depth-aware blur of the occlusion, one axis at a time
+const aoBlurFS = /* glsl */ `
+uniform sampler2D tAO;
+uniform sampler2D tMotion;
+uniform vec2 uStep;
+varying vec2 vUv;
+void main() {
+  float d0 = texture2D(tMotion, vUv).z;
+  float s = 0.0;
+  float w = 0.0;
+  for (int i = -3; i <= 3; i++) {
+    vec2 uv = vUv + uStep * float(i);
+    float d = texture2D(tMotion, uv).z;
+    float k = exp(-abs(d - d0) / max(0.004 * d0, 1e-4)) * (1.0 - abs(float(i)) / 4.0);
+    s += texture2D(tAO, uv).r * k;
+    w += k;
+  }
+  gl_FragColor = vec4(vec3(s / max(w, 1e-4)), 1.0);
+}
+`;
+
 const compositeFS = /* glsl */ `
 uniform sampler2D tColor;
+uniform sampler2D tAO;
+uniform float uAO;
 uniform sampler2D tDepth;
 uniform sampler2D tBlur;
 uniform sampler2D tShafts;
@@ -276,6 +463,7 @@ varying vec2 vUv;
 ${depthFns}
 void main() {
   vec3 sharp = texture2D(tColor, vUv).rgb;
+  if (uAO > 0.0) sharp *= mix(1.0, texture2D(tAO, vUv).r, uAO);
   vec3 outc = sharp;
   if (uDofOn > 0.5) {
     vec4 blur = texture2D(tBlur, vUv);
@@ -406,6 +594,23 @@ export class PostPipeline {
   private composite: FullScreenQuad;
   private grade: FullScreenQuad;
   private bloom: UnrealBloomPass;
+  // prepass (motion + depth, normals) and motion blur
+  readonly rtPre: THREE.WebGLRenderTarget;
+  private rtTile: THREE.WebGLRenderTarget;
+  private rtNeighbor: THREE.WebGLRenderTarget;
+  private rtBlurred: THREE.WebGLRenderTarget;
+  private preMat: THREE.ShaderMaterial;
+  private tileMax: FullScreenQuad;
+  private neighborMax: FullScreenQuad;
+  private motionBlur: Record<number, FullScreenQuad> = {};
+  private tileK = 24;
+  private rtAO: THREE.WebGLRenderTarget;
+  private rtAOBlur: THREE.WebGLRenderTarget;
+  private aoQ: FullScreenQuad;
+  private aoBlur: FullScreenQuad;
+  /** objects the prepass leaves out (points, sprites) */
+  prepassHidden: THREE.Object3D[] = [];
+  private still = new THREE.Matrix4();
 
   constructor(private renderer: THREE.WebGLRenderer) {
     const half = () =>
@@ -422,10 +627,12 @@ export class PostPipeline {
     const depthU = () => ({ uNear: { value: 0.05 }, uFar: { value: 50 }, uCocScale: { value: 0 }, uFocus: { value: 1 }, uMaxCoc: { value: 20 } });
     const q = (fs: string, uniforms: Record<string, THREE.IUniform>) =>
       new FullScreenQuad(new THREE.ShaderMaterial({ uniforms, vertexShader: quadVS, fragmentShader: fs, depthTest: false, depthWrite: false }));
-    this.prefilter = q(prefilterFS, { tColor: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() }, ...depthU() });
+    this.prefilter = q(prefilterFS, { tColor: { value: null }, tDepth: { value: null }, tAO: { value: null }, uAO: { value: 0 }, uTexel: { value: new THREE.Vector2() }, ...depthU() });
     this.bokeh = q(bokehFS, { tHalf: { value: null }, uHalfTexel: { value: new THREE.Vector2() }, uRadScale: { value: 0.9 }, ...depthU() });
     this.composite = q(compositeFS, {
       tColor: { value: null },
+      tAO: { value: null },
+      uAO: { value: 0 },
       tDepth: { value: null },
       tBlur: { value: null },
       tShafts: { value: null },
@@ -479,6 +686,50 @@ export class PostPipeline {
       uLetterbox: { value: 0 },
     });
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.5, 0.6, 0.9);
+
+    this.rtPre = new THREE.WebGLRenderTarget(2, 2, { count: 2, type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    const nearest = () =>
+      new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false });
+    this.rtTile = nearest();
+    this.rtNeighbor = nearest();
+    this.rtBlurred = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.preMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: { uPrevModel: { value: new THREE.Matrix4() }, uPrevViewProj: { value: new THREE.Matrix4() } },
+      vertexShader: prepassVS,
+      fragmentShader: prepassFS,
+      side: THREE.DoubleSide,
+    });
+    // each object's own previous transform (static ones: the current)
+    this.preMat.onBeforeRender = (_r, _s, _c, _g, object) => {
+      const prev = object.userData.prevMW as THREE.Matrix4 | undefined;
+      this.preMat.uniforms.uPrevModel.value.copy(prev ?? object.matrixWorld);
+      this.preMat.uniformsNeedUpdate = true;
+    };
+    const linear = () => new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false });
+    this.rtAO = linear();
+    this.rtAOBlur = linear();
+    this.aoQ = q(aoFS, { tMotion: { value: null }, tNormal: { value: null }, uProj: { value: new THREE.Vector2() }, uRadius: { value: 0.03 } });
+    this.aoBlur = q(aoBlurFS, { tAO: { value: null }, tMotion: { value: null }, uStep: { value: new THREE.Vector2() } });
+    this.tileMax = q(tileMaxFS, { tMotion: { value: null }, uRes: { value: new THREE.Vector2() }, uK: { value: 24 } });
+    this.neighborMax = q(neighborMaxFS, { tTile: { value: null }, uTileRes: { value: new THREE.Vector2() } });
+    for (const n of [9, 15]) {
+      this.motionBlur[n] = new FullScreenQuad(
+        new THREE.ShaderMaterial({
+          defines: { SAMPLES: n },
+          uniforms: { tColor: { value: null }, tMotion: { value: null }, tNeighbor: { value: null }, uRes: { value: new THREE.Vector2() }, uK: { value: 24 } },
+          vertexShader: quadVS,
+          fragmentShader: motionBlurFS,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+    }
+  }
+
+  /** the prepass resolution: full on high quality, half on medium */
+  private preScale() {
+    return this.quality === 'high' ? 1 : 0.5;
   }
 
   setQuality(q: Quality) {
@@ -488,6 +739,7 @@ export class PostPipeline {
       this.rtScene.samples = samples;
       this.rtScene.dispose();
     }
+    this.sizePrepass();
   }
 
   setSize(w: number, h: number) {
@@ -510,6 +762,46 @@ export class PostPipeline {
     (this.prefilter.material as THREE.ShaderMaterial).uniforms.uTexel.value.set(1 / w, 1 / h);
     (this.bokeh.material as THREE.ShaderMaterial).uniforms.uHalfTexel.value.set(1 / hw, 1 / hh);
     (this.grade.material as THREE.ShaderMaterial).uniforms.uRes.value.set(w, h);
+    this.sizePrepass();
+  }
+
+  private sizePrepass() {
+    const w = this.width;
+    const h = this.height;
+    const k = this.preScale();
+    this.rtPre.setSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+    this.rtBlurred.setSize(w, h);
+    // tiles about a thirtieth of the picture's height: the longest blur
+    this.tileK = Math.max(8, Math.min(48, Math.round(h / 30)));
+    this.rtTile.setSize(Math.ceil(w / this.tileK), Math.ceil(h / this.tileK));
+    this.rtAO.setSize(Math.max(1, Math.round(w * k * 0.5)), Math.max(1, Math.round(h * k * 0.5)));
+    this.rtAOBlur.setSize(this.rtAO.width, this.rtAO.height);
+    this.rtNeighbor.setSize(Math.ceil(w / this.tileK), Math.ceil(h / this.tileK));
+  }
+
+  /** motion, depth and normals for every pixel (MRT); shadows are not redrawn */
+  private prepass(scene: THREE.Scene, camera: THREE.PerspectiveCamera, prevViewProj: THREE.Matrix4) {
+    const r = this.renderer;
+    const bg = scene.background;
+    const override = scene.overrideMaterial;
+    const shadows = r.shadowMap.autoUpdate;
+    const clear = r.getClearColor(new THREE.Color());
+    const alpha = r.getClearAlpha();
+    const hidden = this.prepassHidden.filter((o) => o.visible);
+    for (const o of hidden) o.visible = false;
+    scene.background = null;
+    scene.overrideMaterial = this.preMat;
+    r.shadowMap.autoUpdate = false;
+    this.preMat.uniforms.uPrevViewProj.value.copy(prevViewProj);
+    r.setClearColor(new THREE.Color(0, 0, 1000), 1);
+    r.setRenderTarget(this.rtPre);
+    r.clear();
+    r.render(scene, camera);
+    r.setClearColor(clear, alpha);
+    r.shadowMap.autoUpdate = shadows;
+    scene.overrideMaterial = override;
+    scene.background = bg;
+    for (const o of hidden) o.visible = true;
   }
 
   /** thin-lens circle of confusion scale, in full-resolution pixels */
@@ -525,6 +817,37 @@ export class PostPipeline {
     r.setRenderTarget(this.rtScene);
     r.clear();
     r.render(scene, camera);
+    const motionOn = !!p.motion && this.quality !== 'low';
+    const aoOn = p.ao > 0.001 && this.quality !== 'low';
+    if (motionOn || aoOn) {
+      // without motion blur the prepass still gives depth and normals: no motion
+      if (!motionOn) this.still.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      this.prepass(scene, camera, motionOn ? p.motion!.prevViewProj : this.still);
+    }
+    const U0 = (q: FullScreenQuad) => (q.material as THREE.ShaderMaterial).uniforms;
+    if (aoOn) {
+      const au = U0(this.aoQ);
+      au.tMotion.value = this.rtPre.textures[0];
+      au.tNormal.value = this.rtPre.textures[1];
+      au.uProj.value.set(camera.projectionMatrix.elements[0], camera.projectionMatrix.elements[5]);
+      au.uRadius.value = 0.03;
+      r.setRenderTarget(this.rtAO);
+      this.aoQ.render(r);
+      const bu = U0(this.aoBlur);
+      bu.tMotion.value = this.rtPre.textures[0];
+      bu.tAO.value = this.rtAO.texture;
+      bu.uStep.value.set(1 / this.rtAO.width, 0);
+      r.setRenderTarget(this.rtAOBlur);
+      this.aoBlur.render(r);
+      bu.tAO.value = this.rtAOBlur.texture;
+      bu.uStep.value.set(0, 1 / this.rtAO.height);
+      r.setRenderTarget(this.rtAO);
+      this.aoBlur.render(r);
+    }
+    for (const qd of [this.prefilter, this.composite]) {
+      U0(qd).tAO.value = this.rtAO.texture;
+      U0(qd).uAO.value = aoOn ? p.ao : 0;
+    }
     const dofOn = p.dof && this.quality !== 'low';
     const U = (q: FullScreenQuad) => (q.material as THREE.ShaderMaterial).uniforms;
     const cocScale = dofOn ? this.cocScale(p.focalLength, p.fstop, p.focus) : 0;
@@ -579,15 +902,39 @@ export class PostPipeline {
     cu.uDofOn.value = dofOn ? 1 : 0;
     r.setRenderTarget(this.rtFull);
     this.composite.render(r);
+    let color = this.rtFull;
+    if (motionOn) {
+      const tu = U(this.tileMax);
+      tu.tMotion.value = this.rtPre.textures[0];
+      tu.uRes.value.set(this.width, this.height);
+      tu.uK.value = this.tileK;
+      r.setRenderTarget(this.rtTile);
+      this.tileMax.render(r);
+      const nu = U(this.neighborMax);
+      nu.tTile.value = this.rtTile.texture;
+      nu.uTileRes.value.set(this.rtTile.width, this.rtTile.height);
+      r.setRenderTarget(this.rtNeighbor);
+      this.neighborMax.render(r);
+      const mb = this.motionBlur[this.quality === 'high' ? 15 : 9];
+      const mu = U(mb);
+      mu.tColor.value = this.rtFull.texture;
+      mu.tMotion.value = this.rtPre.textures[0];
+      mu.tNeighbor.value = this.rtNeighbor.texture;
+      mu.uRes.value.set(this.width, this.height);
+      mu.uK.value = this.tileK;
+      r.setRenderTarget(this.rtBlurred);
+      mb.render(r);
+      color = this.rtBlurred;
+    }
     if (p.bloomStrength > 0.001) {
       this.bloom.strength = p.bloomStrength;
       this.bloom.radius = p.bloomRadius;
       this.bloom.threshold = p.bloomThreshold;
-      this.bloom.render(r, null as unknown as THREE.WebGLRenderTarget, this.rtFull, 0, false);
+      this.bloom.render(r, null as unknown as THREE.WebGLRenderTarget, color, 0, false);
     }
     if (p.streaks > 0.001) {
       const eu = U(this.streakExtract);
-      eu.tColor.value = this.rtFull.texture;
+      eu.tColor.value = color.texture;
       r.setRenderTarget(this.rtStreakA);
       this.streakExtract.render(r);
       const bu = U(this.streakBlur);
@@ -612,7 +959,7 @@ export class PostPipeline {
     g.uAccent.value = p.accent;
     g.uBlackTint.value.fromArray(p.blackTint);
     g.uLetterbox.value = p.letterbox;
-    g.tColor.value = this.rtFull.texture;
+    g.tColor.value = color.texture;
     g.uSaturation.value = p.saturation;
     g.uContrast.value = p.contrast;
     g.uLift.value.fromArray(p.lift);

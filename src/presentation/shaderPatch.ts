@@ -19,7 +19,34 @@ float mpFbm(vec3 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s +=
 /** Uniforms shared by all patched materials, updated once per frame. */
 export const SHARED_UNIFORMS = {
   uFingertips: { value: Array.from({ length: 10 }, () => new THREE.Vector4(0, -10, 0, 0)) },
+  // bounced light: three spherical-harmonic irradiance probes captured from
+  // the lit room (low, at the keys, high; see SceneRenderer.captureBounce),
+  // blended by height
+  uBounceSH: { value: Array.from({ length: 27 }, () => new THREE.Vector3()) },
+  uBounceY: { value: new THREE.Vector3(-0.45, 0.07, 0.45) },
+  uBounce: { value: 0 },
 };
+
+/** GLSL: irradiance from probe o (three's shGetIrradianceAt), and the height blend of the three */
+const BOUNCE_GLSL = /* glsl */ `
+vec3 mpSH(int o, vec3 n) {
+  vec3 r = uBounceSH[o] * 0.886227;
+  r += uBounceSH[o + 1] * 1.023328 * n.y;
+  r += uBounceSH[o + 2] * 1.023328 * n.z;
+  r += uBounceSH[o + 3] * 1.023328 * n.x;
+  r += uBounceSH[o + 4] * 0.858086 * n.x * n.y;
+  r += uBounceSH[o + 5] * 0.858086 * n.y * n.z;
+  r += uBounceSH[o + 6] * (0.743125 * n.z * n.z - 0.247708);
+  r += uBounceSH[o + 7] * 0.858086 * n.x * n.z;
+  r += uBounceSH[o + 8] * 0.429043 * (n.x * n.x - n.y * n.y);
+  return max(r, vec3(0.0));
+}
+vec3 mpBounce(vec3 p, vec3 n) {
+  float a = clamp((p.y - uBounceY.x) / (uBounceY.y - uBounceY.x), 0.0, 1.0);
+  float b = clamp((p.y - uBounceY.y) / (uBounceY.z - uBounceY.y), 0.0, 1.0);
+  return p.y < uBounceY.y ? mix(mpSH(0, n), mpSH(9, n), a) : mix(mpSH(9, n), mpSH(18, n), b);
+}
+`;
 
 export interface PatchOptions {
   uniforms?: Record<string, THREE.IUniform>;
@@ -37,6 +64,8 @@ export interface PatchOptions {
   beforeOpaque?: string;
   /** read the Blender masks from the vertex colour attribute (not as albedo) */
   masks?: boolean;
+  /** how much bounced light from the room probes this surface takes (default 1) */
+  bounce?: number;
 }
 
 let nextId = 0;
@@ -46,6 +75,7 @@ function glslType(v: unknown): string {
   if (v instanceof THREE.Vector2) return 'vec2';
   if (v instanceof THREE.Vector3 || v instanceof THREE.Color) return 'vec3';
   if (v instanceof THREE.Vector4) return 'vec4';
+  if (v instanceof THREE.Matrix4) return 'mat4';
   if (v instanceof THREE.Texture) return 'sampler2D';
   return 'float';
 }
@@ -90,7 +120,11 @@ varying vec3 vWNormal;
 varying vec3 vOPos;
 ${o.masks ? 'varying vec3 vMask;' : ''}
 uniform vec4 uFingertips[10];
+uniform vec3 uBounceSH[27];
+uniform vec3 uBounceY;
+uniform float uBounce;
 ${NOISE_GLSL}
+${BOUNCE_GLSL}
 ${decl}
 ${o.fragHead ?? ''}`,
     );
@@ -102,6 +136,14 @@ ${o.fragHead ?? ''}`,
     after('metalnessmap_fragment', o.afterMetal);
     after('normal_fragment_maps', o.afterNormal);
     after('emissivemap_fragment', o.afterEmissive);
+    // light bounced off the room, before any ambient occlusion darkens it
+    const bounce = o.bounce ?? 1;
+    if (bounce > 0)
+      fs = fs.replace(
+        '#include <aomap_fragment>',
+        `if (uBounce > 0.0) reflectedLight.indirectDiffuse += uBounce * ${bounce.toFixed(3)} * mpBounce(vWPos, normalize(vWNormal)) * BRDF_Lambert(material.diffuseColor);
+#include <aomap_fragment>`,
+      );
     after('aomap_fragment', o.afterAO);
     if (o.beforeOpaque) fs = fs.replace('#include <opaque_fragment>', `${o.beforeOpaque}\n#include <opaque_fragment>`);
     shader.vertexShader = vs;
