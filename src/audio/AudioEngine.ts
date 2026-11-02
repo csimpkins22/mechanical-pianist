@@ -102,20 +102,7 @@ export class AudioEngine {
     this.ctx = ctx;
     // mobile browsers can create it suspended even inside the tap: resume before anything awaits
     const resumed = ctx.state === 'running' ? Promise.resolve() : ctx.resume().catch(() => {});
-    this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : this.volume;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -10;
-    comp.ratio.value = 3;
-    comp.attack.value = 0.01;
-    comp.release.value = 0.2;
-    this.master.connect(comp).connect(ctx.destination);
-    this.dry = ctx.createGain();
-    this.wet = ctx.createGain();
-    this.dry.connect(this.master);
-    this.send = ctx.createGain();
-    this.send.connect(this.wet);
-    this.applyReverb(true);
+    this.buildGraph(ctx, this.muted ? 0 : this.volume);
     this.setStatus('loading');
     await resumed;
     try {
@@ -127,6 +114,68 @@ export class AudioEngine {
       this.layers = [{ vel: 0.55, zones: [...synth].map(([root, buf]) => ({ root, cents: 0, keys: [root, root] as [number, number], buf })) }];
       this.gain = 1;
       this.setStatus('synth');
+    }
+  }
+
+  /** the output chain on a context: voices -> dry and room sends -> master -> compressor -> out */
+  private buildGraph(ctx: BaseAudioContext, level: number) {
+    this.master = ctx.createGain();
+    this.master.gain.value = level;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -10;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.01;
+    comp.release.value = 0.2;
+    this.master.connect(comp).connect(ctx.destination);
+    this.dry = ctx.createGain();
+    this.wet = ctx.createGain();
+    this.dry.connect(this.master);
+    this.send = ctx.createGain();
+    this.send.connect(this.wet);
+    this.verb = null;
+    this.applyReverb(true);
+  }
+
+  /**
+   * The performance from t0 to t1 rendered offline (for a video export): the
+   * same voices, room, pedal halo and key noises as live playback, scheduled
+   * all at once on an OfflineAudioContext and rendered faster than real
+   * time; stereo at 48 kHz, peaks kept under -1 dBFS. The live chain is put
+   * back afterwards untouched.
+   */
+  async renderOffline(tl: PerformanceTimeline, t0: number, t1: number): Promise<AudioBuffer> {
+    if (!this.ready) throw new Error('the piano sound is not loaded');
+    const rate = 48000;
+    const off = new OfflineAudioContext(2, Math.max(1, Math.ceil((t1 - t0) * rate)), rate);
+    const live = {
+      ctx: this.ctx, master: this.master, dry: this.dry, wet: this.wet, send: this.send, verb: this.verb, voices: this.voices,
+      anchorAudio: this.anchorAudio, anchorT: this.anchorT, speed: this.speed, running: this.running, haloUntil: this.haloUntil,
+    };
+    try {
+      this.ctx = off as unknown as AudioContext;
+      this.buildGraph(off, 0.85);
+      this.voices = [];
+      this.anchorAudio = 0;
+      this.anchorT = t0;
+      this.speed = 1;
+      // notes already sounding at t0 come in part-way through, as after a seek
+      for (const n of tl.sounding(t0)) if (n.start < t0 - 0.005) this.voice(n, tl.releaseOf(n), t0 - n.start);
+      for (const n of tl.perf.notes) {
+        if (n.start >= t0 - 0.005 && n.start < t1) this.voice(n, tl.releaseOf(n), 0);
+        if (n.keyEnd >= t0 && n.keyEnd < t1) this.releaseNoise(n);
+      }
+      this.send.gain.setValueAtTime(1 + HALO * tl.pedalAt(t0), 0);
+      for (let t = t0; t < t1; t += 0.04) this.send.gain.setTargetAtTime(1 + HALO * tl.pedalAt(t), t - t0, 0.05);
+      const buf = await off.startRendering();
+      let peak = 0;
+      for (let c = 0; c < buf.numberOfChannels; c++) for (const v of buf.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
+      if (peak > 0.89) for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < d.length; i++) d[i] *= 0.89 / peak;
+      }
+      return buf;
+    } finally {
+      Object.assign(this, live);
     }
   }
 

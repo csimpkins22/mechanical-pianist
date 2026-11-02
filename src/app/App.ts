@@ -206,7 +206,54 @@ export class App {
     document.body.appendChild(div);
   }
 
+  /** a video export is drawing frames: the live loop and window resizes leave the view alone */
+  exporting = false;
+
+  /**
+   * Set the view up for exporting frames of width x height (high quality,
+   * one pixel per pixel, no letterbox bars since the frame is the shape, no
+   * debug drawing, normal speed); the returned function puts everything back.
+   * The on-screen canvas shows the frames as they are drawn, fitted.
+   */
+  beginExport(width: number, height: number): () => void {
+    if (this.playing) this.pause();
+    const before = {
+      t: this.t,
+      speed: this.speed,
+      quality: this.view.post.quality,
+      autoQuality: this.autoQuality,
+      letterbox: this.view.look.letterboxOn,
+      debug: this.debug?.visible ?? false,
+      pixelRatio: this.view.renderer.getPixelRatio(),
+      fit: this.view.canvas.style.objectFit,
+    };
+    this.exporting = true;
+    this.modeFrom = null;
+    this.speed = 1;
+    this.autoQuality = false;
+    if (before.debug) this.setDebug(false);
+    this.view.look.letterboxOn = false;
+    this.view.setQuality('high');
+    this.view.renderer.setPixelRatio(1);
+    this.view.setSize(width, height);
+    this.view.canvas.style.objectFit = 'contain';
+    return () => {
+      this.exporting = false;
+      this.view.canvas.style.objectFit = before.fit;
+      this.view.renderer.setPixelRatio(before.pixelRatio);
+      this.view.look.letterboxOn = before.letterbox;
+      this.view.setQuality(before.quality);
+      this.autoQuality = before.autoQuality;
+      this.speed = before.speed;
+      if (before.debug) this.setDebug(true);
+      this.t = before.t;
+      this.resize();
+      this.renderNow();
+    };
+  }
+
   resize() {
+    if (this.exporting) return;
     this.view.setSize(window.innerWidth, window.innerHeight);
     this.dirty = true;
     if (this.ready) this.renderNow();
@@ -534,6 +581,7 @@ export class App {
 
   private loopFrame = (now: number) => {
     this.raf = requestAnimationFrame(this.loopFrame);
+    if (this.exporting) return;
     const dt = Math.min(0.1, (now - this.lastWall) / 1000);
     this.lastWall = now;
     if (dt > 0) this.frameDt += (dt - this.frameDt) * 0.1;

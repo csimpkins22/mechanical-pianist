@@ -20,6 +20,7 @@
   "dependencies": {
     "@audio-samples/piano-mp3-release": "1.0.5",
     "@tonejs/midi": "2.0.28",
+    "mp4-muxer": "^5.2.1",
     "three": "0.186.1"
   },
   "devDependencies": {

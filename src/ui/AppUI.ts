@@ -4,6 +4,7 @@ import { FRAME_STEP, SPEEDS, type App } from '../app/App';
 import { entryById } from '../app/library';
 import { el, escapeHtml, fmt, svg } from './dom';
 import { LibrarySheet, NOTE_ICON } from './LibrarySheet';
+import { exportSize, exportSupport, exportVideo } from '../app/VideoExport';
 import { noteName } from '../core/keyboard';
 import type { Finger, Hand, PerformanceNote, TrackInfo } from '../core/types';
 import type { ParsedMidi } from '../interpretation/MidiEngine';
@@ -41,7 +42,12 @@ export class AppUI {
   private title!: HTMLDivElement;
   private drawer!: HTMLDivElement;
   private drawerBody!: HTMLDivElement;
-  private tab: 'fingering' | 'light' | 'camera' | 'sound' | 'debug' = 'fingering';
+  private tab: 'fingering' | 'light' | 'camera' | 'sound' | 'export' | 'debug' = 'fingering';
+  /** the film export's choices (kept while the page is open) and the export under way */
+  private film = { aspect: 16 / 9, longSide: 1920, fps: 30, range: 'all' as 'all' | 'here' };
+  private filming: AbortController | null = null;
+  private filmState: { f: number; text: string } | null = null;
+  private paintFilm: (() => void) | null = null;
   private camBtns: Record<CameraMode, HTMLButtonElement> = {} as never;
   private volBtn!: HTMLButtonElement;
   private loopBtn!: HTMLButtonElement;
@@ -137,6 +143,7 @@ export class AppUI {
       ['light', 'Light'],
       ['camera', 'Camera'],
       ['sound', 'Sound'],
+      ['export', 'Export'],
       ['debug', 'Debug'],
     ] as const) {
       const b = el('button', 'tab', label);
@@ -499,6 +506,7 @@ export class AppUI {
     else if (this.tab === 'light') this.renderLight(body);
     else if (this.tab === 'camera') this.renderCamera(body);
     else if (this.tab === 'sound') this.renderSound(body);
+    else if (this.tab === 'export') this.renderExport(body);
     else this.renderDebugTab(body);
   }
 
@@ -720,6 +728,136 @@ export class AppUI {
     });
   }
 
+  /** a finished film of the performance: shape, size, frame rate, range; rendered offline, offered as an MP4 */
+  private renderExport(body: HTMLElement) {
+    const a = this.app;
+    const p = a.piece;
+    if (!p) return;
+    const film = this.film;
+    body.appendChild(
+      el(
+        'p',
+        'note',
+        'Renders the performance as a film: every frame at full quality, drawn at its exact time (a slower computer only takes longer), with the piano, into an MP4. It uses the current camera, style and look; the controls, title and this panel never appear in it.',
+      ),
+    );
+    body.appendChild(el('div', 'sec', 'Shape'));
+    const chips = el('div', 'chips');
+    for (const [v, label] of [
+      [16 / 9, '16:9'],
+      [2.39, '2.39:1 scope'],
+      [1.85, '1.85:1'],
+      [4 / 3, '4:3'],
+      [1, '1:1'],
+      [4 / 5, '4:5'],
+      [9 / 16, '9:16 vertical'],
+    ] as [number, string][]) {
+      const b = el('button', 'chip', label);
+      b.classList.toggle('on', Math.abs(film.aspect - v) < 1e-3);
+      b.onclick = () => {
+        film.aspect = v;
+        this.renderDrawer();
+      };
+      chips.appendChild(b);
+    }
+    body.appendChild(chips);
+    const row = (label: string, ctl: HTMLElement) => {
+      const r = el('label', 'slider');
+      r.append(el('span', '', label), ctl);
+      body.appendChild(r);
+      return r;
+    };
+    const select = (opts: [string, string][], value: string, set: (v: string) => void) => {
+      const s = el('select') as HTMLSelectElement;
+      for (const [v, l] of opts) s.appendChild(new Option(l, v, v === value, v === value));
+      s.onchange = () => {
+        set(s.value);
+        this.renderDrawer();
+      };
+      return s;
+    };
+    body.appendChild(el('div', 'sec', 'Film'));
+    row('Size', select([['1920', '1080p (HD)'], ['2560', '1440p'], ['3840', '4K (UHD)']], String(film.longSide), (v) => (film.longSide = +v)));
+    row('Frame rate', select([['24', '24 fps (film)'], ['30', '30 fps'], ['60', '60 fps']], String(film.fps), (v) => (film.fps = +v)));
+    row(
+      'Range',
+      select(
+        [
+          ['all', 'The whole piece'],
+          ['here', `From the playhead (${fmt(a.t, false)})`],
+        ],
+        film.range,
+        (v) => (film.range = v as 'all' | 'here'),
+      ),
+    );
+    const { width, height } = exportSize(film.aspect, film.longSide);
+    const t0 = film.range === 'here' ? a.t : 0;
+    const t1 = a.duration;
+    const mb = ((width * height * film.fps * 0.35 + 320000) * (t1 - t0)) / 8 / 1e6;
+    body.appendChild(el('p', 'note', `${width} × ${height}, ${fmt(t1 - t0, false)} long, about ${mb < 1000 ? `${Math.round(mb)} MB` : `${(mb / 1000).toFixed(1)} GB`}.`));
+
+    const status = el('div', 'export-status');
+    const bar = el('div', 'export-bar', '<i></i>');
+    const label = el('div', 'export-label');
+    status.append(bar, label);
+    const acts = el('div', 'actions');
+    const go = el('button', 'primary', this.filming ? 'Exporting…' : 'Export MP4');
+    go.disabled = !!this.filming;
+    const cancel = el('button', '', 'Cancel');
+    cancel.hidden = !this.filming;
+    cancel.onclick = () => this.filming?.abort();
+    acts.append(cancel, go);
+    body.append(acts, status);
+    // the export outlives this panel (switching tabs redraws it): its state is kept apart
+    this.paintFilm = () => {
+      const st = this.filmState;
+      status.hidden = !st;
+      if (!st) return;
+      (bar.firstChild as HTMLElement).style.width = `${(Math.max(0.01, Math.min(1, st.f)) * 100).toFixed(1)}%`;
+      label.textContent = st.text;
+    };
+    this.paintFilm();
+    const show = (f: number, text: string) => {
+      this.filmState = { f, text };
+      this.paintFilm?.();
+    };
+    go.onclick = async () => {
+      if (this.filming) return;
+      const support = await exportSupport(width, height, film.fps);
+      if (!support.video) {
+        show(0, `This browser cannot encode ${width} × ${height} H.264 video. Try a smaller size, or Chrome, Edge or Safari.`);
+        return;
+      }
+      const ac = new AbortController();
+      this.filming = ac;
+      go.disabled = true;
+      go.textContent = 'Exporting…';
+      cancel.hidden = false;
+      const name = `${p.artist} - ${p.title}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+      try {
+        const res = await exportVideo(
+          a,
+          { aspect: film.aspect, longSide: film.longSide, fps: film.fps, t0, t1 },
+          (pr) => {
+            if (pr.stage === 'sound') show(0.01, 'Rendering the piano…');
+            else if (pr.stage === 'finishing') show(1, 'Finishing the file…');
+            else show(pr.frame / pr.frames, `Frame ${pr.frame} of ${pr.frames}${pr.eta !== null ? ` · about ${fmt(pr.eta, false)} left` : ''}`);
+          },
+          ac.signal,
+        );
+        const filename = `${name} (${res.width}x${res.height} ${film.fps}fps).mp4`;
+        show(1, `Done: ${(res.blob.size / 1e6).toFixed(0)} MB${res.audio ? '' : ' (no sound: this browser cannot encode audio)'}. Saving…`);
+        const saved = await saveFile(filename, res.blob);
+        show(1, saved ? `Saved ${filename}` : 'Not saved.');
+      } catch (e) {
+        show(0, (e as Error)?.name === 'AbortError' ? 'Export cancelled.' : `Export failed: ${e instanceof Error ? e.message : e}`);
+      } finally {
+        this.filming = null;
+        if (this.tab === 'export' && this.drawer.classList.contains('open')) this.renderDrawer();
+      }
+    };
+  }
+
   private renderCamera(body: HTMLElement) {
     const a = this.app;
     const look = a.view.look;
@@ -860,3 +998,29 @@ const FLAG_LABEL: Record<string, string> = {
 
 
 export { FRAME_STEP };
+
+/**
+ * Offer a finished file: through the page's downloads capability where it
+ * runs as a published artifact (the viewer confirms the save), else as an
+ * ordinary browser download.
+ */
+async function saveFile(filename: string, blob: Blob): Promise<boolean> {
+  const claude = (window as unknown as { claude?: { use(name: string): Promise<unknown> } }).claude;
+  const downloads = claude ? ((await claude.use('downloads')) as { save(r: { filename: string; data: Blob }): Promise<unknown> } | null) : null;
+  if (downloads) {
+    try {
+      await downloads.save({ filename, data: blob });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  return true;
+}

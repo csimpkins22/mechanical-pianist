@@ -33,6 +33,10 @@ Choose a piece from the **Library** (the button in the control bar, the title, o
 
 URL options for development: `?demo=<library id>` (for example `son-of-sam`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
+### Exporting a film
+
+⚙ → **Export** renders the performance as an MP4: choose its shape (16:9, 2.39:1 scope, 1.85:1, 4:3, 1:1, 4:5 or 9:16 vertical), its size (1080p, 1440p or 4K on the long side), 24, 30 or 60 fps, and the whole piece or from the playhead. Every frame is drawn offline at its exact time at high quality, so a slower computer only takes longer, never drops a frame; the piano is rendered offline too (`AudioEngine.renderOffline`), with the same room, pedal halo and key noises. Both are encoded in the browser with WebCodecs (H.264 at a generous bitrate; AAC, or Opus where the browser has no AAC encoder) and muxed with `mp4-muxer` into a file streamed out as it is written (`app/VideoExport.ts`). The camera, style and look are the current ones; the interface is HTML over the canvas, so it never appears in the film, and the letterbox bars are left off because the frame itself has the chosen shape. In the published artifact the page offers the file through its `downloads` capability (the viewer confirms the save); elsewhere it is an ordinary download. `tools/render-video.cjs` renders a stretch to video from the command line instead (silent).
+
 ### Controls
 
 | Action | Control |
