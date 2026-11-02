@@ -182,6 +182,8 @@ export interface HandTrack {
   notes: PlannedNote[];
   /** where the hand waits when it has nothing to play */
   home: number;
+  /** 0..1: how far a free thumb tucks in under the palm, out of the other hand's way */
+  thumbTuck?: Signal;
 }
 
 export interface MotionPlan {
@@ -559,6 +561,50 @@ function separateHands(L: HandTrack, R: HandTrack) {
 }
 
 /**
+ * When the hands play close together their thumbs reach toward each other.
+ * A pianist tucks a free thumb in under the palm; so do these: for each hand,
+ * how near its thumb comes to the other hand's thumb or palm (estimated from
+ * the wrist paths), taken a little ahead of time and eased, becomes how far a
+ * free thumb tucks (HandPoser moves the thumb's resting place; a thumb that is
+ * playing, or about to, goes to its key as before).
+ */
+function tuckThumbs(L: HandTrack, R: HandTrack) {
+  const n = L.x.data.length;
+  // thumb tip at rest and the palm's centre, in the right hand's frame (x mirrored for the left)
+  const tip = REST_TIPS[1];
+  const palm: V3 = [0, -0.003, -0.055];
+  const at = (tr: HandTrack, k: number, p: V3): V3 => {
+    const yaw = tr.yaw.data[k];
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    const x = tr.sx * (c * p[0] + s * p[2]);
+    const z = -s * p[0] + c * p[2];
+    return [tr.x.data[k] + x, tr.y.data[k] + p[1], tr.z.data[k] + z];
+  };
+  const dist = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const near = { L: new Float32Array(n), R: new Float32Array(n) };
+  for (let k = 0; k < n; k++) {
+    const tl = at(L, k, tip);
+    const tr = at(R, k, tip);
+    const thumbs = dist(tl, tr) - 0.03;
+    near.L[k] = 1 - smoothstep(0, 0.035, Math.min(thumbs, dist(tl, at(R, k, palm)) - 0.045));
+    near.R[k] = 1 - smoothstep(0, 0.035, Math.min(thumbs, dist(tr, at(L, k, palm)) - 0.045));
+  }
+  // tuck a little ahead of time and stay tucked through short gaps
+  const hold = Math.round(0.15 * RATE);
+  for (const tr of [L, R]) {
+    const a = near[tr.hand];
+    const held = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      let m = 0;
+      for (let j = Math.max(0, k - hold); j <= Math.min(n - 1, k + hold); j++) m = Math.max(m, a[j]);
+      held[k] = m;
+    }
+    tr.thumbTuck = new Signal(L.x.t0, RATE, gaussianBlur(held, 0.05 * RATE));
+  }
+}
+
+/**
  * Mechanical give: the arm's joints are stiff, not rigid. The wrist follows
  * its planned path through a light spring and damper (natural frequency hz,
  * damping ratio zeta), so where a fast move stops it carries on a hair and
@@ -593,6 +639,7 @@ export function planMotion(perf: Performance): MotionPlan {
   const L = planHand(perf, 'L', t0, n);
   const R = planHand(perf, 'R', t0, n);
   separateHands(L, R);
+  tuckThumbs(L, R);
   for (const tr of [L, R]) {
     for (const s of [tr.x, tr.y, tr.z]) give(s, 7, 0.42, 0.6, 0.0025);
     for (const s of [tr.yaw, tr.pitch, tr.roll]) give(s, 6, 0.4, 0.6, 0.02);

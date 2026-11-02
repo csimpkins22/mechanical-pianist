@@ -126,6 +126,8 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
 
 The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender build, the IK and the fingering model alike. The keyboard layout in `src/core/keyboard.ts` is shared by the planner, the IK and the piano model.
 
+* **Hands playing close together.** The two hands are checked against each other as sets of capsules (each thumb and finger segment, three across the palm; `HandCollision.ts`). In practice they meet thumb to thumb, or a thumb against the other hand's index finger or palm, when both play in the same octave. Two things keep them apart, as a pianist's would. A free thumb tucks in and up under its palm when the other hand comes near (a little ahead of time, eased; a thumb that is playing or about to goes to its key as before). Where tucking is not enough, the hand already a little higher where they meet rides over the other, by the height it needs to clear (side by side that is more than their overlap) and a little further in toward the fallboard; the contact refinement then runs once more so the lifted hand still holds its keys. On the library's songs this cuts the time the hands spend inside each other by 50 to 90 percent; what remains is mostly both thumbs pressing neighbouring keys at once, which these thumbs, wider than a key, cannot do without touching.
+
 ### Presentation
 
 * **Robot hands** are modelled in Blender by script (`tools/blender/build_hand.py`). Each finger segment is a smooth porcelain capsule between exposed chrome joint barrels, with cyan rings on the barrel ends at the knuckles and middle joints. Fingertips are long and rounded, with a pale matte pad underneath. One porcelain shell covers the back of the hand and carries a thin cyan circle. Iridescent glass on the thumb side and around the wrist shows lit mechanics behind it, and a chrome collar joins the hand to a plain porcelain forearm. The thumb has a ball-joint CMC, and the wrist is a segmented spine that shares the bend. Ambient occlusion and curvature are baked into vertex colours. The left hand is the right mirrored at runtime.
@@ -153,7 +155,7 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
 
   Every slider still applies after choosing one.
 * **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. There are four modes:
-  * **Cinematic** is the director (`ShotDirector.ts`): eighteen designed camera moves cut together at musical moments, described below.
+  * **Cinematic** is the director (`ShotDirector.ts`): nineteen designed camera moves cut together at musical moments, described below.
   * **Follow** is one continuous treble-end three-quarter view down the keyboard.
   * **Overhead** looks over the player's shoulder.
   * **Macro** is low and close at the right hand's fingertips.
@@ -161,9 +163,10 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
   Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous modes. Switching modes blends over 1.8 s; cuts within Cinematic are hard cuts.
 * **`ShotDirector`** edits the piece like a concert film.
   * **Cutting:** every onset is a candidate cut, scored for attack strength, a breath before it, a bar line and a new bass note. A cut in the middle of a fast run is penalised. Dynamic programming chooses cuts that aim for shots of 6–9 s in calm passages and 3–5 s as the music builds. Each cut falls 50 ms before an attack, so the new shot sees it land.
-  * **Shot choice:** shots are assigned by film grammar. The edit opens on an establishing shot and ends on a pull-back reveal. It alternates wide, medium, close and detail, never repeats a recent shot, and gives close-ups to the leading hand.
+  * **Shot choice:** shots are assigned by film grammar. The edit opens low along the keys into the light (from the treble end, the hands backlit by the window, a slow push-in with the keys falling into soft focus) and ends on a pull-back reveal. It alternates wide, medium, close and detail, never repeats a recent shot, and gives close-ups to the leading hand.
   * **The shots:**
-    * establishing
+    * along the keys, into the light (the opening)
+    * establishing (a crane down from above the player)
     * crane up
     * into the light
     * overhead turning

@@ -92,6 +92,13 @@ function fingerTarget(track: HandTrack, f: number, t: number, keys: KeyMechanics
     REST_TIPS[f][1] + 0.0016 * drift(t * 0.27 + 5, seed),
     REST_TIPS[f][2] + 0.0012 * drift(t * 0.23 + 9, seed),
   ];
+  // with the other hand close, a free thumb rests tucked in and up under the palm
+  if (f === 1 && track.thumbTuck) {
+    const w = track.thumbTuck.at(t);
+    restC[0] += 0.033 * w;
+    restC[1] += 0.02 * w;
+    restC[2] += 0.009 * w;
+  }
   const restW = toWorld(wrist, R, track.sx, restC);
   const tr = cur ? liftoff(cur) : -Infinity;
   const tc = nxt ? nxt.stroke.contact : Infinity;

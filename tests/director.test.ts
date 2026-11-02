@@ -15,13 +15,13 @@ const cams = (() => {
 })();
 
 describe('director', { timeout: 120000 }, () => {
-  test('the edit opens wide, ends on the pull-back, and never repeats a shot back to back', () => {
+  test('the edit opens along the keys into the light, ends on the pull-back, and never repeats a shot back to back', () => {
     for (const { cam, duration } of cams()) {
       const segs = cam.director.segments;
       expect(segs.length).toBeGreaterThan(5);
       expect(segs[0].a).toBe(0);
       expect(segs[segs.length - 1].b).toBeCloseTo(duration, 6);
-      expect(segs[0].shot.id).toBe('establishing');
+      expect(segs[0].shot.id).toBe('opening');
       expect(segs[segs.length - 1].shot.id).toBe('pullback');
       for (let i = 1; i < segs.length; i++) {
         expect(segs[i].a).toBeCloseTo(segs[i - 1].b, 9);

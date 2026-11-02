@@ -98,10 +98,26 @@ function subject(ctx: DirectorContext, h: Hand | 'both', t: number, s: Segment, 
 
 const SHOTS: Shot[] = [
   {
+    id: 'opening',
+    name: 'Along the keys, into the light',
+    scale: 'medium',
+    fit: (f) => (f.first ? 10 : -1),
+    frame(ctx, t, s) {
+      // the opening: low from the treble end, looking down the keyboard
+      // toward the window, so the hands are lit from behind; a slow push in on
+      // a fairly long lens with the keys falling away into soft focus
+      const u = ease((t - s.a) / (s.b - s.a));
+      const c = subject(ctx, 'both', t, s, 0.4);
+      const target = V(c.x - 0.03, 0.03, -0.04);
+      // focus stays on the nearer (right) hand: the far one softens with the keys
+      return state(around(target, 1.22, lerp(1.05, 0.84, u), lerp(0.2, 0.155, u)), target, lerp(50, 60, u), 4, ctx.tip('R', t), -0.008);
+    },
+  },
+  {
     id: 'establishing',
     name: 'Establishing',
     scale: 'wide',
-    fit: (f) => (f.first ? 10 : 0.2 - f.intensity),
+    fit: (f) => (f.first ? 0 : 0.2 - f.intensity),
     frame(ctx, t, s) {
       // a crane down from high over the player's place: from the score on the
       // desk and the piano's face, tilting down to the hands; the forearms run

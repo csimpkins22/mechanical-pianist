@@ -14,6 +14,7 @@ import { poseHand, type HandPose } from './HandPoser';
 /** spacing of the moments refine checks through a held note (s) */
 const HOLD_PROBE = 0.2;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
+import { handOverlap, liftToClear } from './HandCollision';
 import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
 
 export interface FrameState {
@@ -63,6 +64,7 @@ export class PerformanceTimeline {
     });
     this.keys = new KeyMechanics(perf.notes);
     this.plan = planMotion(perf);
+    this.clearHands();
     // Plan, check every held key against the hand that holds it, and where the
     // hand must leave before the notated release, let that key come up as it
     // goes (the sound still lasts the full note); then plan again.
@@ -74,7 +76,78 @@ export class PerformanceTimeline {
       if (round === 3 || !this.releaseUnheldKeys()) break;
       this.keys = new KeyMechanics(perf.notes);
       this.plan = planMotion(perf);
+      this.clearHands();
     }
+    // the contact corrections can pull a lifted hand back into the other:
+    // alternate the two so they settle on a pose that keeps both
+    for (let i = 0; i < 1; i++) {
+      if (!this.clearHands()) break;
+      for (const hand of ['L', 'R'] as Hand[]) this.refine(this.plan.hands[hand]);
+    }
+  }
+
+  /**
+   * Keep the hands out of each other. Where, posed, they would pass through
+   * one another (HandCollision; in practice a thumb against the other thumb,
+   * index finger or palm when the hands play close together and a tucked
+   * thumb is not enough), one hand rides over the other: the one already a
+   * little higher where they meet. It rises by the height it needs to clear
+   * by a few millimetres (side by side, more than their overlap) and moves a
+   * little further in toward the fallboard, easing in a little before and out
+   * after. Up to three passes, since a lifted hand can bring another part close.
+   */
+  private clearHands(): boolean {
+    const { L, R } = this.plan.hands;
+    const n = L.y.data.length;
+    const t0 = L.y.t0;
+    const step = Math.round(RATE / 30);
+    let moved = false;
+    // only where the wrists come within reach of each other (the thumbs meet below about 16 cm)
+    let todo: number[] = [];
+    for (let k = 0; k < n; k += step) if (Math.abs(L.x.data[k] - R.x.data[k]) < 0.19) todo.push(k);
+    for (let pass = 0; pass < 3 && todo.length; pass++) {
+      const lift = { L: new Float32Array(n), R: new Float32Array(n) };
+      let any = false;
+      const hits: number[] = [];
+      for (const k of todo) {
+        const t = t0 + k / RATE;
+        const pl = poseHand(L, this.keys, t, false);
+        const pr = poseHand(R, this.keys, t, false);
+        const o = handOverlap(pl, pr);
+        if (o.depth < -0.003) continue;
+        const up: Hand = o.pa[1] > o.pb[1] ? 'L' : 'R';
+        const need = Math.min(0.045, liftToClear(o, up === 'L', 0.004));
+        if (need <= 0) continue;
+        for (let j = Math.max(0, k - step); j <= Math.min(n - 1, k + step); j++) lift[up][j] = Math.max(lift[up][j], need);
+        hits.push(k);
+        any = true;
+      }
+      // the next pass looks again only around what was found
+      const near = new Set<number>();
+      const w = Math.round(0.3 * RATE);
+      for (const k of hits) for (let j = Math.max(0, k - w); j <= Math.min(n - 1, k + w); j += step) near.add(j - (j % step));
+      todo = [...near].sort((a, b) => a - b);
+      if (!any) break;
+      moved = true;
+      const hold = Math.round(0.12 * RATE);
+      for (const h of ['L', 'R'] as Hand[]) {
+        const a = lift[h];
+        const held = new Float32Array(n);
+        for (let k = 0; k < n; k++) {
+          if (!a[k]) continue;
+          for (let j = Math.max(0, k - hold); j <= Math.min(n - 1, k + hold); j++) held[j] = Math.max(held[j], a[k]);
+        }
+        const s = gaussianBlur(held, 0.06 * RATE);
+        const y = this.plan.hands[h].y.data as Float32Array;
+        // the upper hand also plays a little further in on the keys, as a pianist's does: its thumb passes behind the other's
+        const z = this.plan.hands[h].z.data as Float32Array;
+        for (let k = 0; k < n; k++) {
+          y[k] += s[k];
+          z[k] -= Math.min(0.015, 0.4 * s[k]);
+        }
+      }
+    }
+    return moved;
   }
 
   /** shorten key holds the hand cannot keep; returns whether anything changed */

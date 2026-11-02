@@ -6,8 +6,10 @@ import { solveFinger, solveThumb } from '../src/performance/HandIK';
 import { PerformanceTimeline } from '../src/performance/PerformanceTimeline';
 import { RATE, give } from '../src/performance/MotionPlanner';
 import { Signal } from '../src/core/math';
+import { handOverlap } from '../src/performance/HandCollision';
 import { planPerformance } from '../src/interpretation/PerformancePlanner';
-import { buildScore, readMidi } from '../src/interpretation/MidiEngine';
+import { buildScore, defaultTrackSelection, readMidi } from '../src/interpretation/MidiEngine';
+import { readFileSync } from 'node:fs';
 import { composeNocturne, composePhrase, midiBytes } from '../src/interpretation/demoPiece';
 import { line, scoreOf } from './helpers';
 import { planChecked } from '../src/app/plan';
@@ -236,5 +238,30 @@ describe('mechanical give', () => {
     const ramp = new Signal(0, RATE, Float32Array.from({ length: n }, (_, k) => 0.2 * (k / RATE)));
     give(ramp, 7, 0.42, 0.6, 0.0025);
     expect(Math.abs((ramp.data as Float32Array)[RATE] - 0.2)).toBeLessThan(1e-6);
+  });
+});
+
+describe('hands playing close together', { timeout: 120000 }, () => {
+  test('the thumbs tuck and one hand rides over: the hands barely touch', () => {
+    // the opening of 1979, where the hands play in the same octave (without
+    // the tucking and riding over, about a third of it has them interpenetrating)
+    const parsed = readMidi(new Uint8Array(readFileSync('src/music/smashing-pumpkins-1979.mid')), '1979.mid');
+    const full = buildScore(parsed, defaultTrackSelection(parsed.tracks));
+    const [a, b] = [3, 8];
+    const notes = full.notes.filter((n) => n.start >= a && n.start < b).map((n, id) => ({ ...n, id, start: n.start - a, end: Math.min(n.end, b) - a }));
+    const score = { ...full, notes, pedal: full.pedal.filter((p) => p.time >= a && p.time < b).map((p) => ({ ...p, time: p.time - a })), duration: b - a + 1 };
+    const { timeline: tl } = planChecked(score);
+    let deep = 0;
+    let n = 0;
+    let worst = 0;
+    for (let t = 0; t < score.duration - 1; t += 1 / 60) {
+      const f = tl.evaluate(t);
+      const o = handOverlap(f.hands.L, f.hands.R);
+      n++;
+      if (o.depth > 0.001) deep++;
+      worst = Math.max(worst, o.depth);
+    }
+    expect(deep / n).toBeLessThan(0.08);
+    expect(worst).toBeLessThan(0.012);
   });
 });
