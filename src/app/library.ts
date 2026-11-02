@@ -96,6 +96,6 @@ export const LIBRARY: LibraryEntry[] = [
 ];
 
 /** what plays first */
-export const DEFAULT_PIECE = 'nocturne-op9-2';
+export const DEFAULT_PIECE = 'gnossienne';
 
 export const entryById = (id: string) => LIBRARY.find((e) => e.id === id);

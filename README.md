@@ -62,7 +62,7 @@ URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`,
 
 ## The library
 
-The library is laid out like a concert programme, in groups, each in order of year. The Nocturne in E♭ plays first.
+The library is laid out like a concert programme, in groups, each in order of year. Satie's Gnossienne No. 1 plays first.
 
 | Piece | Composer | |
 |---|---|---|
