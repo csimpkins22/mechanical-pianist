@@ -558,6 +558,34 @@ function separateHands(L: HandTrack, R: HandTrack) {
   }
 }
 
+/**
+ * Mechanical give: the arm's joints are stiff, not rigid. The wrist follows
+ * its planned path through a light spring and damper (natural frequency hz,
+ * damping ratio zeta), so where a fast move stops it carries on a hair and
+ * settles, and where it sets off it trails a little. The deviation obeys
+ * e'' + 2 zeta w e' + w^2 e = path'' and so comes only from acceleration
+ * (none in steady motion); it is scaled by gain and softly capped, small
+ * enough for the fingers' IK to absorb at the keys.
+ */
+export function give(sig: Signal, hz: number, zeta: number, gain: number, cap: number) {
+  const x = sig.data as Float32Array;
+  const n = x.length;
+  const w = 2 * Math.PI * hz;
+  const h = 1 / RATE / 4; // four sub-steps per sample keep the integration stable
+  const dev = new Float32Array(n);
+  let e = 0;
+  let v = 0;
+  for (let k = 1; k < n - 1; k++) {
+    const acc = (x[k + 1] - 2 * x[k] + x[k - 1]) * RATE * RATE;
+    for (let s = 0; s < 4; s++) {
+      v += (acc - 2 * zeta * w * v - w * w * e) * h;
+      e += v * h;
+    }
+    dev[k] = e;
+  }
+  for (let k = 0; k < n; k++) x[k] -= cap * Math.tanh((gain * dev[k]) / cap);
+}
+
 export function planMotion(perf: Performance): MotionPlan {
   const t0 = -1;
   const t1 = perf.score.duration + 1;
@@ -565,6 +593,10 @@ export function planMotion(perf: Performance): MotionPlan {
   const L = planHand(perf, 'L', t0, n);
   const R = planHand(perf, 'R', t0, n);
   separateHands(L, R);
+  for (const tr of [L, R]) {
+    for (const s of [tr.x, tr.y, tr.z]) give(s, 7, 0.42, 0.6, 0.0025);
+    for (const s of [tr.yaw, tr.pitch, tr.roll]) give(s, 6, 0.4, 0.6, 0.02);
+  }
   return { hands: { L, R }, t0, t1 };
 }
 

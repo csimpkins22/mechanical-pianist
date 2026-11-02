@@ -129,13 +129,31 @@ export class App {
   }
 
   get sound(): SoundSettings {
-    return { reverb: this.audio.reverb, room: this.audio.room, volume: this.audio.volume, muted: this.audio.muted };
+    return { reverb: this.audio.reverb, room: this.audio.room, volume: this.audio.volume, muted: this.audio.muted, syncMs: this.syncMs };
   }
 
   applySound(s: SoundSettings = DEFAULT_SOUND) {
     this.audio.setReverb(s.reverb, s.room);
     this.audio.setVolume(s.volume);
     this.audio.setMuted(s.muted);
+    this.syncMs = s.syncMs;
+  }
+
+  /** the viewer's own picture timing correction (ms, positive = earlier) */
+  syncMs = 0;
+  /** the time between frames, smoothed: about how long a frame takes to reach the screen */
+  private frameDt = 1 / 60;
+
+  /**
+   * While playing, the picture is drawn for the moment it will be seen: a
+   * frame drawn now reaches the screen about one frame later (longer when
+   * frames are heavy), while the audio clock already allows for the sound's
+   * own output delay. Paused frames, scrubbing and tools draw the exact time.
+   */
+  private viewTime() {
+    if (!this.playing) return this.t;
+    const lead = Math.min(0.05, this.frameDt) + this.syncMs / 1000;
+    return Math.max(0, Math.min(this.duration, this.t + lead * this.speed));
   }
 
   on(fn: Listener) {
@@ -482,16 +500,17 @@ export class App {
 
   renderNow() {
     if (!this.piece) return;
-    const cam = this.cameraAt(this.t);
+    const t = this.viewTime();
+    const cam = this.cameraAt(t);
     // motion blur: where everything was as the shutter opened (in performance
     // time, so slow motion blurs less); a cut is never blurred across
     const open = shutterTime(this.view.look) * this.speed;
     if (open > 0 && this.view.post.quality !== 'low') {
-      const t0 = Math.max(0, this.t - open);
-      const cut = this.mode === 'cinematic' && this.piece.camera.director.shotAt(this.t).start > t0;
+      const t0 = Math.max(0, t - open);
+      const cut = this.mode === 'cinematic' && this.piece.camera.director.shotAt(t).start > t0;
       this.view.setPrevious(this.piece.timeline.evaluate(t0), cut ? cam : this.cameraAt(t0));
     }
-    const frame = this.piece.timeline.evaluate(this.t);
+    const frame = this.piece.timeline.evaluate(t);
     this.frame = frame;
     this.view.update(frame);
     this.view.camera.position.copy(cam.position);
@@ -499,7 +518,7 @@ export class App {
     this.view.camera.updateMatrixWorld();
     if (this.debug?.visible)
       this.debug.update(frame, this.piece.timeline.plan.hands, this.view.hands, this.view.camera, window.innerWidth, window.innerHeight);
-    this.view.render(cam, this.t);
+    this.view.render(cam, t);
     this.dirty = false;
   }
 
@@ -517,6 +536,7 @@ export class App {
     this.raf = requestAnimationFrame(this.loopFrame);
     const dt = Math.min(0.1, (now - this.lastWall) / 1000);
     this.lastWall = now;
+    if (dt > 0) this.frameDt += (dt - this.frameDt) * 0.1;
     this.fpsAcc.n++;
     this.fpsAcc.t += dt;
     if (this.fpsAcc.t > 0.5) {

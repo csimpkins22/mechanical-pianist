@@ -36,7 +36,11 @@ export interface HandPose {
   states: FingerState[]; // 1..5 (0 unused)
 }
 
-const easeOut3 = (u: number) => 1 - Math.pow(1 - clamp(u, 0, 1), 3);
+/** a quick rise that carries on about 5% past its end and settles back, arriving at rest (mechanical give) */
+const easeOutGive = (u: number) => {
+  const v = clamp(u, 0, 1) - 1;
+  return 1 + 2.2 * v * v * v + 1.2 * v * v;
+};
 
 /** When the fingertip leaves a key after release (planned: see PlannedNote.leave). */
 function liftoff(pn: PlannedNote): number {
@@ -121,7 +125,8 @@ function fingerTarget(track: HandTrack, f: number, t: number, keys: KeyMechanics
     const rho = clamp(avail * 0.35, 0.02, 0.09);
     if (t < tr + rho) {
       const y0 = surfaceY(cur, keys.depression(cur.note.midi, tr)) + r;
-      y = Math.min(y, y0 + (plateau - y0) * easeOut3((t - tr) / rho));
+      const rise = y0 + (plateau - y0) * easeOutGive((t - tr) / rho);
+      y = plateau > y0 ? rise : Math.min(y, rise);
       phase = 'release';
     }
     // never sink into the key that is still rising beneath

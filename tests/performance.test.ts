@@ -4,6 +4,8 @@ import { KEY_COUNT, LOWEST_MIDI, keySurfacePoint, noteName } from '../src/core/k
 import type { Hand } from '../src/core/types';
 import { solveFinger, solveThumb } from '../src/performance/HandIK';
 import { PerformanceTimeline } from '../src/performance/PerformanceTimeline';
+import { RATE, give } from '../src/performance/MotionPlanner';
+import { Signal } from '../src/core/math';
 import { planPerformance } from '../src/interpretation/PerformancePlanner';
 import { buildScore, readMidi } from '../src/interpretation/MidiEngine';
 import { composeNocturne, composePhrase, midiBytes } from '../src/interpretation/demoPiece';
@@ -208,5 +210,31 @@ describe('motion', { timeout: 120000 }, () => {
       expect(m.speed, `${hand} peak wrist speed`).toBeLessThan(2.5);
       expect(m.accel, `${hand} peak wrist acceleration`).toBeLessThan(150);
     }
+  });
+});
+
+describe('mechanical give', () => {
+  test('a fast leap carries on a little past its end and settles; steady motion is untouched', () => {
+    // a minimum-jerk leap of 30 cm in a quarter of a second, then rest
+    const n = RATE * 2;
+    const data = new Float32Array(n);
+    const t0 = 0.5;
+    const T = 0.25;
+    for (let k = 0; k < n; k++) {
+      const u = Math.min(1, Math.max(0, (k / RATE - t0) / T));
+      data[k] = 0.3 * (10 * u ** 3 - 15 * u ** 4 + 6 * u ** 5);
+    }
+    const sig = new Signal(0, RATE, data.slice());
+    give(sig, 7, 0.42, 0.6, 0.0025);
+    const out = sig.data as Float32Array;
+    let over = 0;
+    for (let k = Math.round((t0 + T) * RATE); k < n; k++) over = Math.max(over, out[k] - 0.3);
+    expect(over).toBeGreaterThan(0.0004);
+    expect(over).toBeLessThan(0.0026);
+    expect(Math.abs(out[Math.round((t0 + T + 0.45) * RATE)] - 0.3)).toBeLessThan(0.0001);
+    // constant velocity: no acceleration, no deviation
+    const ramp = new Signal(0, RATE, Float32Array.from({ length: n }, (_, k) => 0.2 * (k / RATE)));
+    give(ramp, 7, 0.42, 0.6, 0.0025);
+    expect(Math.abs((ramp.data as Float32Array)[RATE] - 0.2)).toBeLessThan(1e-6);
   });
 });

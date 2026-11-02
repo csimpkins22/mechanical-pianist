@@ -651,6 +651,8 @@ export class AppUI {
     this.slider(body, 'Reverb', 0, 1, 0.01, () => audio.reverb, (v) => audio.setReverb(v), (v) => `${Math.round(v * 100)}%`);
     body.appendChild(el('div', 'sec', 'Output'));
     this.slider(body, 'Volume', 0, 1, 0.01, () => audio.volume, (v) => audio.setVolume(v), (v) => `${Math.round(v * 100)}%`);
+    this.slider(body, 'Picture sync', -150, 150, 5, () => a.syncMs, (v) => (a.syncMs = v), (v) => (v === 0 ? '0' : `${v > 0 ? '+' : ''}${v.toFixed(0)} ms`));
+    body.appendChild(el('p', 'note', 'If the hands look late against the sound (common with Bluetooth headphones), move Picture sync right; if early, left.'));
     body.appendChild(
       el('p', 'note', 'The piano is FreePats\' Upright Piano KW, recorded in a living room, so a little of that room is always there. The reverb adds the chosen space on top.'),
     );

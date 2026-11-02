@@ -13,9 +13,11 @@ export interface SoundSettings {
   room: RoomId;
   volume: number;
   muted: boolean;
+  /** picture timing against the sound, ms: positive shows the picture earlier */
+  syncMs: number;
 }
 
-export const DEFAULT_SOUND: SoundSettings = { reverb: 0.3, room: 'parlour', volume: 0.8, muted: false };
+export const DEFAULT_SOUND: SoundSettings = { reverb: 0.3, room: 'parlour', volume: 0.8, muted: false, syncMs: 0 };
 
 export interface Settings {
   look: Look;
