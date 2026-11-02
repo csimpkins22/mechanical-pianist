@@ -31,7 +31,11 @@ To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.
 
 Choose a piece from the **Library** (the button in the control bar, the title, or `O`). To perform your own `.mid` file, use **Open a MIDI file** there or drop the file anywhere on the window. Files with several parts ask which tracks to perform, with piano parts preselected. Your files are kept under "Your files" in this browser (IndexedDB), along with the parts you chose.
 
-URL options for development: `?demo=<library id>` (for example `son-of-sam`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+
+### Publishing on GitHub Pages
+
+`.github/workflows/pages.yml` builds the site (including the prepared library performances, cached between runs) and publishes it to GitHub Pages on every push to `main`. Once, in the repository's Settings → Pages, set **Source** to **GitHub Actions**. The site is then at `https://<user>.github.io/mechanical-pianist/`. Everything is relative to the page, so it works under any path.
 
 ### Exporting a film
 
@@ -58,25 +62,19 @@ URL options for development: `?demo=<library id>` (for example `son-of-sam`, `ra
 
 ## The library
 
-The library is laid out like a concert programme, in three groups, each in order of year. Son of Sam plays first.
+The library is laid out like a concert programme, in groups, each in order of year. The Nocturne in E♭ plays first.
 
-| Piece | Artist | |
+| Piece | Composer | |
 |---|---|---|
-| Black Hole Sun | Soundgarden | 1994 |
-| 1979 | The Smashing Pumpkins | 1995 |
-| Between the Bars | Elliott Smith | 1997 |
-| Paranoid Android | Radiohead | 1997 |
-| Son of Sam | Elliott Smith | 2000 |
-| There There | Radiohead | 2003 |
 | Nocturne in E♭ major, Op. 9 No. 2 | Frédéric Chopin | 1832 |
 | Prelude in D♭ major, Op. 28 No. 15 “Raindrop” | Frédéric Chopin | 1839 |
 | Gnossienne No. 1 | Erik Satie | 1890 |
 | Maple Leaf Rag | Scott Joplin | 1899 |
 | Nocturne for Mechanical Hands, Études, Five-Note Phrase | The Mechanical Pianist | |
 
-The songs and classical pieces are piano MIDI performances supplied with the project, in `src/music/`, and inlined into the build (nothing is fetched). Two were trimmed with `tools/trim-midi.cjs`: 1979 lost four stray notes and twenty seconds of silence before the song begins, and There There lost eight seconds of leading silence. The song arrangements are transcriptions of copyrighted songs; check the rights before distributing the app publicly with them.
+The classical pieces are public-domain compositions, played from piano MIDI performances in `src/music/` that are inlined into the build (nothing is fetched). To add a piece, put its `.mid` in `src/music/` and an entry in `src/app/library.ts`; `tools/trim-midi.cjs` cuts stray notes or silence from the start of a file. Your own files can also be opened in the app at any time (they stay in your browser).
 
-**Prepared at build time.** Interpreting a long piece takes a while: about 10 to 40 seconds for the songs. So `npm run build` plans every library piece in advance (`tools/plan-library.cjs`, one process per core, about a minute) and ships the results in `public/plans/`, gzipped (1 to 2.5 MB each). A visitor downloads the finished performance, which opens in a fraction of a second. The plans are deterministic, so a prepared plan is exactly the one the browser would compute. Each carries the hash of the planner's source and a fingerprint of its MIDI file, and the app only uses a plan whose hash and fingerprint match its own code and file. A piece is re-planned at build time only when one of them changes (`npm run plans -- --force` redoes them all). The file format is in `src/app/planCodec.ts`.
+**Prepared at build time.** Interpreting a long piece takes a while: 10 to 40 seconds. So `npm run build` plans every library piece in advance (`tools/plan-library.cjs`, one process per core, about a minute) and ships the results in `public/plans/`, gzipped (1 to 2.5 MB each). A visitor downloads the finished performance, which opens in a fraction of a second. The plans are deterministic, so a prepared plan is exactly the one the browser would compute. Each carries the hash of the planner's source and a fingerprint of its MIDI file, and the app only uses a plan whose hash and fingerprint match its own code and file. A piece is re-planned at build time only when one of them changes (`npm run plans -- --force` redoes them all). The file format is in `src/app/planCodec.ts`.
 
 **Planning in the browser.** Your own files, other parts, fingering overrides, and the dev server (whose code is usually newer than the last build's plans) are planned in a Web Worker (`src/app/planner.worker.ts`). The current piece keeps playing meanwhile, and progress shows under the title. The result is kept in this browser (IndexedDB), keyed by the file, the chosen parts, the overrides and the planner hash, so a piece opens at once the second time. Where workers are unavailable, planning falls back to the page itself.
 
@@ -130,7 +128,7 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
 
 The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender build, the IK and the fingering model alike. The keyboard layout in `src/core/keyboard.ts` is shared by the planner, the IK and the piano model.
 
-* **Hands playing close together.** The two hands are checked against each other as sets of capsules (each thumb and finger segment, three across the palm; `HandCollision.ts`). In practice they meet thumb to thumb, or a thumb against the other hand's index finger or palm, when both play in the same octave. Two things keep them apart, as a pianist's would. A free thumb tucks in and up under its palm when the other hand comes near (a little ahead of time, eased; a thumb that is playing or about to goes to its key as before). Where tucking is not enough, the hand already a little higher where they meet rides over the other, by the height it needs to clear (side by side that is more than their overlap) and a little further in toward the fallboard; the contact refinement then runs once more so the lifted hand still holds its keys. On the library's songs this cuts the time the hands spend inside each other by 50 to 90 percent; what remains is mostly both thumbs pressing neighbouring keys at once, which these thumbs, wider than a key, cannot do without touching.
+* **Hands playing close together.** The two hands are checked against each other as sets of capsules (each thumb and finger segment, three across the palm; `HandCollision.ts`). In practice they meet thumb to thumb, or a thumb against the other hand's index finger or palm, when both play in the same octave. Two things keep them apart, as a pianist's would. A free thumb tucks in and up under its palm when the other hand comes near (a little ahead of time, eased; a thumb that is playing or about to goes to its key as before). Where tucking is not enough, the hand already a little higher where they meet rides over the other, by the height it needs to clear (side by side that is more than their overlap) and a little further in toward the fallboard; the contact refinement then runs once more so the lifted hand still holds its keys. On the pieces it was measured on (songs from an earlier, larger library) this cut the time the hands spend inside each other by 50 to 90 percent; what remains is mostly both thumbs pressing neighbouring keys at once, which these thumbs, wider than a key, cannot do without touching.
 
 ### Presentation
 
@@ -268,6 +266,7 @@ tests/             vitest suites
 
 * Piano: [Upright Piano KW](http://freepats.zenvoid.org/Piano/acoustic-grand-piano.html#UprightKW) from the FreePats project, recorded by Gonzalo and Roberto from Inma Martínez de Miguel's Kawai upright, CC0.
 * Key-release noises: [Salamander Grand Piano V3](https://archive.org/details/SalamanderGrandPianoV3) by Alexander Holm, CC BY 3.0, via `@audio-samples/piano-mp3-release`.
-* [three.js](https://threejs.org), [@tonejs/midi](https://github.com/Tonejs/Midi).
+* [three.js](https://threejs.org), [@tonejs/midi](https://github.com/Tonejs/Midi), [mp4-muxer](https://github.com/Vanilagy/mp4-muxer).
+* The classical pieces are public-domain compositions, played from MIDI performances.
 * Fingering rules after R. Parncutt, J. A. Sloboda, E. F. Clarke, M. Raekallio and P. Desain, "An ergonomic model of keyboard fingering for melodic fragments", *Music Perception* 14 (1997).
-* "Halloran & Vey" on the nameboard is an invented maker.
+* "Halloran & Vey" on the nameboard and "Vey Automata" on the robot's label are invented makers.

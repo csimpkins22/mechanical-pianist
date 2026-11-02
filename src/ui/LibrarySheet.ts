@@ -110,6 +110,7 @@ export class LibrarySheet {
     this.statusCells.clear();
     let n = 0;
     for (const g of GROUPS) {
+      if (!LIBRARY.some((x) => x.group === g.id)) continue;
       const sec = el('section', 'lib-sec');
       sec.appendChild(el('h3', 'sec', g.label));
       for (const e of LIBRARY.filter((x) => x.group === g.id)) sec.appendChild(this.entryRow(e, ++n));
@@ -125,6 +126,11 @@ export class LibrarySheet {
     }
     for (const f of this.files) mine.appendChild(this.fileRow(f));
     this.body.appendChild(mine);
+    const credits = el('section', 'lib-sec lib-credits');
+    credits.innerHTML = `<h3 class="sec">Credits</h3>
+      <p>Piano: <a href="https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html" target="_blank" rel="noopener">Upright Piano KW</a> from the FreePats project, CC0. Key-release noises: <a href="https://archive.org/details/SalamanderGrandPianoV3" target="_blank" rel="noopener">Salamander Grand Piano V3</a> by Alexander Holm, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.</p>
+      <p>The classical pieces are public-domain compositions, played from MIDI performances. Built with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>, <a href="https://github.com/Tonejs/Midi" target="_blank" rel="noopener">@tonejs/midi</a> and <a href="https://github.com/Vanilagy/mp4-muxer" target="_blank" rel="noopener">mp4-muxer</a>. "Halloran &amp; Vey" and "Vey Automata" are invented makers.</p>`;
+    this.body.appendChild(credits);
     await this.updateStatus();
   }
 

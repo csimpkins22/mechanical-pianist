@@ -243,11 +243,11 @@ describe('mechanical give', () => {
 
 describe('hands playing close together', { timeout: 120000 }, () => {
   test('the thumbs tuck and one hand rides over: the hands barely touch', () => {
-    // the opening of 1979, where the hands play in the same octave (without
-    // the tucking and riding over, about a third of it has them interpenetrating)
-    const parsed = readMidi(new Uint8Array(readFileSync('src/music/smashing-pumpkins-1979.mid')), '1979.mid');
+    // near the end of Chopin's Raindrop prelude the hands play close together
+    // (without the tucking and riding over, about a tenth of it has them interpenetrating)
+    const parsed = readMidi(new Uint8Array(readFileSync('src/music/chopin-raindrop-prelude.mid')), 'raindrop.mid');
     const full = buildScore(parsed, defaultTrackSelection(parsed.tracks));
-    const [a, b] = [3, 8];
+    const [a, b] = [218, 223];
     const notes = full.notes.filter((n) => n.start >= a && n.start < b).map((n, id) => ({ ...n, id, start: n.start - a, end: Math.min(n.end, b) - a }));
     const score = { ...full, notes, pedal: full.pedal.filter((p) => p.time >= a && p.time < b).map((p) => ({ ...p, time: p.time - a })), duration: b - a + 1 };
     const { timeline: tl } = planChecked(score);
@@ -261,7 +261,7 @@ describe('hands playing close together', { timeout: 120000 }, () => {
       if (o.depth > 0.001) deep++;
       worst = Math.max(worst, o.depth);
     }
-    expect(deep / n).toBeLessThan(0.08);
-    expect(worst).toBeLessThan(0.012);
+    expect(deep / n).toBeLessThan(0.05);
+    expect(worst).toBeLessThan(0.025);
   });
 });
