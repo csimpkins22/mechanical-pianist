@@ -21,6 +21,8 @@ import { releaseCurve, strokeDepth, strokeIndexAt, type KeyStroke } from './KeyM
 export const HAMMER_CHECK = 0.52;
 /** F6 and above have no dampers (matches the audio) */
 export const UNDAMPED_FROM = 89;
+/** a key starts to lift its damper off the strings this far down (and the damper is back on them when it rises past it) */
+export const DAMPER_LIFT_FROM = 0.35;
 
 /** the hammer's rebound from the string, `dt` after it struck: caught by the check with a little give */
 export function rebound(dt: number): number {
@@ -54,7 +56,7 @@ export function hammerAt(strokes: readonly KeyStroke[], t: number): number {
 /** how far a key's damper is off its strings, from the key's depression and the sustain pedal */
 export function damperAt(midi: number, depression: number, pedal: number): number {
   if (midi >= UNDAMPED_FROM) return 0;
-  const d = clamp((depression - 0.35) / 0.4, 0, 1);
+  const d = clamp((depression - DAMPER_LIFT_FROM) / 0.4, 0, 1);
   return Math.max(d * d * (3 - 2 * d), clamp(pedal, 0, 1));
 }
 

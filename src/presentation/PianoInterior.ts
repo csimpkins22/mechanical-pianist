@@ -9,8 +9,9 @@
 // pins, the bridges and the spruce soundboard behind.
 //
 // The hammers, dampers and wippens are instanced and posed every frame from
-// the FrameState (ActionMechanics.ts); struck strings shimmer while they
-// sound. The moving parts keep their transforms at the start of the shutter
+// the FrameState (ActionMechanics.ts); the strings show their swing as the
+// camera sees it, an exposure blur (StringMechanics.ts, and the string shaders
+// below). The moving parts keep their transforms at the start of the shutter
 // (prevInstanceMatrix) for motion blur.
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -32,12 +33,11 @@ import {
   SOUNDBOARD_Z,
   STRIKE_Y,
   STRINGS,
-  STRING_START,
   STRUT_X,
   stringRadius,
   stringSlope,
+  speakingLength,
   stringZ,
-  unisons,
 } from './ActionLayout';
 import { patch } from './shaderPatch';
 
@@ -121,6 +121,103 @@ function keepPrevious(m: THREE.InstancedMesh) {
   prev.needsUpdate = true;
 }
 
+// ---------------------------------------------------------------- strings
+// A string vibrates hundreds of times a second, so through a camera it is never
+// a moving wire: over the exposure it smears into the envelope of its swing, a
+// translucent band widest at mid-span and pinched at both ends, darker toward
+// the middle and brighter at its edges, where the wire lingers as it turns. Each
+// string is drawn as a ribbon facing the camera, as wide as the wire plus the
+// part of its swing seen across the line of sight, and every pixel takes the
+// share of the exposure the wire covers it (so the band holds exactly the wire's
+// light however wide it spreads). The same filter keeps distant strings, much
+// thinner than a pixel, a faint steady line rather than a broken, flickering one,
+// and the normal across the ribbon is the round wire's, so the light runs along
+// each string in a bright streak.
+const STRING_VS_HEAD = /* glsl */ `
+attribute vec2 aSwing;  // peak swing at mid-span (m): toward the soundboard, and across
+attribute vec2 aSpan;   // the speaking length, from the bridge to the top bearing (0..1 from the hitch pin)
+varying float vLat;
+varying float vHalfPx;
+varying float vRad;
+varying float vSwing;
+varying vec3 vSideV;
+varying vec3 vFrontV;
+`;
+const STRING_VS = /* glsl */ `
+{
+  vec3 mpL = transformed;
+  vec3 mpAx = instanceMatrix[1].xyz;
+  float mpR = length(instanceMatrix[0].xyz);
+  vec3 mpA = instanceMatrix[3].xyz + mpAx * mpL.y;
+  vec3 mpT = normalize(mpAx);
+  vec3 mpCam = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+  vec3 mpS = cross(mpT, mpCam - mpA);
+  float mpSl = length(mpS);
+  mpS = mpSl > 1e-6 ? mpS / mpSl : normalize(cross(mpT, vec3(0.0, 0.0, 1.0)));
+  vec3 mpF = cross(mpS, mpT);
+  // the swing here: the string's first mode between its bearings, in the
+  // hammer's plane (toward the soundboard) and, growing, across it
+  float mpEnv = sin(3.14159265 * clamp((mpL.y - aSpan.x) / (aSpan.y - aSpan.x), 0.0, 1.0));
+  vec3 mpPz = normalize(vec3(0.0, 0.0, 1.0) - mpT * mpT.z);
+  vec3 mpPx = cross(mpT, mpPz);
+  float mpSw = mpEnv * length(vec2(aSwing.x * dot(mpS, mpPz), aSwing.y * dot(mpS, mpPx)));
+  // a pixel at this distance (uViewH: the target's height in pixels)
+  vec4 mpV = modelViewMatrix * vec4(mpA, 1.0);
+  float mpPx1 = max(-mpV.z, 1e-4) * 2.0 / (projectionMatrix[1][1] * uViewH);
+  // the ribbon: the wire and its swing, at least a pixel wide, with room for the edge filter
+  float mpW = max(mpR + mpSw, 0.5 * mpPx1) + 0.75 * mpPx1;
+  vec3 mpQ = mpA + mpS * (mpW * mpL.x) + mpF * (mpR * mpL.z);
+  transformed = (inverse(instanceMatrix) * vec4(mpQ, 1.0)).xyz;
+  vLat = mpW * mpL.x;
+  vHalfPx = 0.5 * mpPx1;
+  vRad = mpR;
+  vSwing = mpSw;
+  vSideV = mat3(modelViewMatrix) * mpS;
+  vFrontV = mat3(modelViewMatrix) * mpF;
+}`;
+const STRING_FS_HEAD = /* glsl */ `
+varying float vLat;
+varying float vHalfPx;
+varying float vRad;
+varying float vSwing;
+varying vec3 vSideV;
+varying vec3 vFrontV;
+// the integral of asin(clamp(y / a)): over the swing, the share of time a point
+// at y is passed by the wire's centre, accumulated
+float mpG(float y, float a) {
+  return abs(y) >= a ? 1.5707963 * abs(y) : y * asin(y / a) + sqrt(a * a - y * y);
+}
+`;
+// how much of this pixel the swinging wire covers over the exposure: the wire
+// (radius r) swung sinusoidally over +-a, averaged over the pixel's width
+const STRING_COVERAGE = /* glsl */ `
+{
+  float mpH = max(vHalfPx, 1e-7);
+  float mpAa = max(vSwing, 1e-4 * vRad);
+  float mpR = vRad;
+  float mpC = ((mpG(vLat + mpH + mpR, mpAa) - mpG(vLat - mpH + mpR, mpAa)) - (mpG(vLat + mpH - mpR, mpAa) - mpG(vLat - mpH - mpR, mpAa))) / (3.14159265 * 2.0 * mpH);
+  mpC = clamp(mpC, 0.0, 1.0);
+  if (mpC < 0.003) discard;
+  diffuseColor.a *= mpC;
+}`;
+// the round wire's normal across the ribbon; where it is smeared into a band the
+// highlights average out toward the band's face. A wire only a pixel or two
+// wide shows its whole fan of normals within the pixel: there it faces the
+// camera with a correspondingly broader highlight (STRING_ROUGH), so the light
+// along it does not depend on where the pixel's centre happens to fall.
+const STRING_NORMAL = /* glsl */ `
+{
+  float mpE = vRad + vSwing;
+  float mpRes = smoothstep(0.75, 2.5, mpE / vHalfPx);
+  float mpX = clamp(vLat / mpE, -1.0, 1.0) * mix(1.0, 0.3, vSwing / mpE) * mpRes;
+  vec3 mpN = normalize(normalize(vSideV) * mpX + normalize(vFrontV) * sqrt(max(0.0, 1.0 - mpX * mpX)));
+  normal = mpN;
+  #ifdef USE_CLEARCOAT
+  clearcoatNormal = mpN;
+  #endif
+}`;
+const STRING_ROUGH = /* glsl */ `roughnessFactor = mix(max(roughnessFactor, 0.3), roughnessFactor, smoothstep(0.75, 2.5, (vRad + vSwing) / vHalfPx));`;
+
 // ---------------------------------------------------------------- materials
 function materials() {
   const felt = patch(
@@ -172,35 +269,33 @@ function materials() {
     bounce: 0.6,
   });
   const pins = patch(new THREE.MeshPhysicalMaterial({ color: 0xd2d6dc, metalness: 0.55, roughness: 0.3, clearcoat: 0.4, clearcoatRoughness: 0.2 }), { afterAO: CAVITY, bounce: 0.6 });
-  const stringTime = { value: 0 };
-  const vibrate = /* glsl */ `
-  {
-    // struck strings shimmer while they sound: a small sideways swing,
-    // fastest at their middles, as aVib (in units of the string's radius) says
-    float mpS = sin(3.14159265 * clamp(transformed.y, 0.0, 1.0));
-    float mpId = float(gl_InstanceID);
-    float mpW = 6.2831853 * (17.0 + mod(mpId * 7.0, 11.0));
-    transformed.x += aVib * mpS * sin(uStringTime * mpW + mpId * 2.399);
-    transformed.z += aVib * mpS * 0.6 * cos(uStringTime * mpW * 1.31 + mpId);
-  }`;
-  const steel = patch(new THREE.MeshPhysicalMaterial({ color: 0xdadce0, metalness: 1, roughness: 0.24 }), {
-    uniforms: { uStringTime: stringTime },
-    vertexHead: 'attribute float aVib;',
-    afterBegin: vibrate,
+  const viewH = { value: 1080 };
+  const steel = patch(new THREE.MeshPhysicalMaterial({ color: 0xdadce0, metalness: 1, roughness: 0.16, transparent: true, depthWrite: false }), {
+    uniforms: { uViewH: viewH },
+    vertexHead: STRING_VS_HEAD,
+    afterBegin: STRING_VS,
+    fragHead: STRING_FS_HEAD,
+    afterMap: STRING_COVERAGE,
+    afterRough: STRING_ROUGH,
+    afterNormal: STRING_NORMAL,
     afterAO: CAVITY,
     bounce: 0.5,
   });
-  const copper = patch(new THREE.MeshPhysicalMaterial({ color: 0xb4703c, metalness: 1, roughness: 0.34 }), {
-    uniforms: { uStringTime: stringTime },
-    vertexHead: 'attribute float aVib;',
-    afterBegin: vibrate,
+  const copper = patch(new THREE.MeshPhysicalMaterial({ color: 0xb4703c, metalness: 1, roughness: 0.3, transparent: true, depthWrite: false }), {
+    uniforms: { uViewH: viewH },
+    vertexHead: STRING_VS_HEAD,
+    afterBegin: STRING_VS,
+    fragHead: STRING_FS_HEAD,
     // the winding: fine helical grooves, faded out where they would only shimmer
     afterMap: /* glsl */ `
     {
       float mpA = vWPos.y * 5200.0 + vWPos.x * 2100.0;
-      float mpFade = 1.0 - smoothstep(0.4, 1.6, fwidth(mpA));
+      float mpFade = (1.0 - smoothstep(0.4, 1.6, fwidth(mpA))) * (1.0 - smoothstep(0.3, 1.0, vSwing / vRad));
       diffuseColor.rgb *= 1.0 - 0.35 * mpFade * smoothstep(0.3, 1.0, 0.5 + 0.5 * sin(mpA));
-    }`,
+    }
+    ${STRING_COVERAGE}`,
+    afterRough: STRING_ROUGH,
+    afterNormal: STRING_NORMAL,
     afterAO: CAVITY,
     bounce: 0.5,
   });
@@ -222,7 +317,7 @@ function materials() {
     afterAO: CAVITY,
     bounce: 0.6,
   });
-  return { felt, underfelt, damperFelt, wood, plate, pins, steel, copper, soundboard, bridge, stringTime };
+  return { felt, underfelt, damperFelt, wood, plate, pins, steel, copper, soundboard, bridge, viewH };
 }
 
 // ---------------------------------------------------------------- geometry
@@ -330,9 +425,10 @@ export class PianoInterior {
   private copper: THREE.InstancedMesh;
   /** per string: its mesh and index there */
   private stringSlot: { wound: boolean; index: number }[] = [];
-  private vibSteel: THREE.InstancedBufferAttribute;
-  private vibCopper: THREE.InstancedBufferAttribute;
-  private stringTime: { value: number };
+  private swingSteel: THREE.InstancedBufferAttribute;
+  private swingCopper: THREE.InstancedBufferAttribute;
+  /** per string: its swing as a share of its key's (unisons differ a little) */
+  private swingShare: Float32Array;
   private leans: THREE.Quaternion[] = [];
   private dampPivot: C3[] = [];
   private m4 = new THREE.Matrix4();
@@ -341,11 +437,11 @@ export class PianoInterior {
   private p = new THREE.Vector3();
   private one = new THREE.Vector3(1, 1, 1);
   private xAxis = new THREE.Vector3(1, 0, 0);
+  private size = new THREE.Vector2();
 
   constructor() {
     this.root.name = 'Interior';
     const M = materials();
-    this.stringTime = M.stringTime;
 
     // the action, posed every frame
     this.hammerFelt = instanced(hammerHead(), M.felt, KEY_COUNT);
@@ -370,12 +466,25 @@ export class PianoInterior {
     const cyl = new THREE.CylinderGeometry(1, 1, 1, 6, 8, true).translate(0, 0.5, 0);
     this.steel = instanced(cyl, M.steel, nPlain);
     this.copper = instanced(cyl, M.copper, nWound);
-    this.vibSteel = new THREE.InstancedBufferAttribute(new Float32Array(nPlain), 1);
-    this.vibCopper = new THREE.InstancedBufferAttribute(new Float32Array(nWound), 1);
-    this.vibSteel.setUsage(THREE.DynamicDrawUsage);
-    this.vibCopper.setUsage(THREE.DynamicDrawUsage);
-    this.steel.geometry.setAttribute('aVib', this.vibSteel);
-    this.copper.geometry.setAttribute('aVib', this.vibCopper);
+    this.swingSteel = new THREE.InstancedBufferAttribute(new Float32Array(nPlain * 2), 2);
+    this.swingCopper = new THREE.InstancedBufferAttribute(new Float32Array(nWound * 2), 2);
+    this.swingSteel.setUsage(THREE.DynamicDrawUsage);
+    this.swingCopper.setUsage(THREE.DynamicDrawUsage);
+    this.steel.geometry.setAttribute('aSwing', this.swingSteel);
+    this.copper.geometry.setAttribute('aSwing', this.swingCopper);
+    // each string's speaking length, from the bridge up to the bearing an eighth above the strike line
+    const spanSteel = new Float32Array(nPlain * 2);
+    const spanCopper = new Float32Array(nWound * 2);
+    this.swingShare = new Float32Array(STRINGS.length);
+    // the strings are drawn after everything opaque and before the glass of the hands, back (steel) to front (copper)
+    this.steel.renderOrder = -2;
+    this.copper.renderOrder = -1;
+    for (const m of [this.steel, this.copper]) {
+      m.onBeforeRender = (renderer) => {
+        const rt = renderer.getRenderTarget();
+        M.viewH.value = rt ? rt.height : renderer.getDrawingBufferSize(this.size).y;
+      };
+    }
     const up = new THREE.Vector3(0, 1, 0);
     let ip = 0;
     let iw = 0;
@@ -385,14 +494,22 @@ export class PianoInterior {
       const len = a.distanceTo(b);
       const q = new THREE.Quaternion().setFromUnitVectors(up, b.clone().sub(a).normalize());
       const m = new THREE.Matrix4().compose(a, q, new THREE.Vector3(s.radius, len, s.radius));
+      const L = speakingLength(s.key);
+      const at = (p: number[]) => Math.hypot(p[0] - s.hitch[0], p[1] - s.hitch[1]) / len;
+      const span = [at(s.bridge), at([s.strike[0] + s.dir[0] * L / 8, s.strike[1] + s.dir[1] * L / 8])];
+      this.swingShare[this.stringSlot.length] = 0.88 + 0.24 * hash01(this.stringSlot.length, 9);
       if (s.wound) {
         this.copper.setMatrixAt(iw, m);
+        spanCopper.set(span, iw * 2);
         this.stringSlot.push({ wound: true, index: iw++ });
       } else {
         this.steel.setMatrixAt(ip, m);
+        spanSteel.set(span, ip * 2);
         this.stringSlot.push({ wound: false, index: ip++ });
       }
     }
+    this.steel.geometry.setAttribute('aSpan', new THREE.InstancedBufferAttribute(spanSteel, 2));
+    this.copper.geometry.setAttribute('aSpan', new THREE.InstancedBufferAttribute(spanCopper, 2));
     for (const m of [this.steel, this.copper]) {
       m.castShadow = true;
       keepPrevious(m);
@@ -547,28 +664,20 @@ export class PianoInterior {
     this.vibrate(f);
   }
 
-  /** the strings of sounding notes swing a little, more in the bass, dying away */
+  /** each string's swing, from its key's (StringMechanics) */
   private vibrate(f: FrameState) {
-    const vs = this.vibSteel.array as Float32Array;
-    const vc = this.vibCopper.array as Float32Array;
-    vs.fill(0);
-    vc.fill(0);
-    for (const n of f.sounding) {
-      const i = n.midi - LOWEST_MIDI;
-      const dt = f.t - n.start;
-      if (i < 0 || i >= KEY_COUNT || dt < 0) continue;
-      const u = i / (KEY_COUNT - 1);
-      const amp = n.velocity * (0.0012 - 0.0009 * u) * Math.exp(-dt / (0.35 + 2.2 * (1 - u))) * (1 - Math.exp(-dt / 0.004));
-      for (let k = 0; k < unisons(i); k++) {
-        const j = STRING_START[i] + k;
-        const slot = this.stringSlot[j];
-        const a = (amp * (0.85 + 0.3 * hash01(j, 9))) / STRINGS[j].radius;
-        (slot.wound ? vc : vs)[slot.index] = a;
-      }
+    const vs = this.swingSteel.array as Float32Array;
+    const vc = this.swingCopper.array as Float32Array;
+    for (let j = 0; j < STRINGS.length; j++) {
+      const i = STRINGS[j].key;
+      const k = this.swingShare[j];
+      const slot = this.stringSlot[j];
+      const out = slot.wound ? vc : vs;
+      out[slot.index * 2] = f.strings[2 * i] * k;
+      out[slot.index * 2 + 1] = f.strings[2 * i + 1] * (2 - k);
     }
-    this.vibSteel.needsUpdate = true;
-    this.vibCopper.needsUpdate = true;
-    this.stringTime.value = f.t;
+    this.swingSteel.needsUpdate = true;
+    this.swingCopper.needsUpdate = true;
   }
 
   /** remember the moving parts' transforms as they were when the shutter opened (call after update with that frame) */

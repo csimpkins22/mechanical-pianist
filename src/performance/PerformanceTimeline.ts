@@ -15,8 +15,11 @@ import { poseHand, type HandPose } from './HandPoser';
 const HOLD_PROBE = 0.2;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
 import { dampersAt, hammersAt } from './ActionMechanics';
+import { StringMechanics } from './StringMechanics';
 import { handOverlap, liftToClear } from './HandCollision';
 import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
+
+const STRINGS = new WeakMap<KeyMechanics, StringMechanics>();
 
 export interface FrameState {
   t: number;
@@ -27,6 +30,8 @@ export interface FrameState {
   /** inside the piano, per key: hammer 0 (rest) .. 1 (at the string), damper 0 (on) .. 1 (off) */
   hammers: Float32Array;
   dampers: Float32Array;
+  /** per key, the swing of its strings (m, peak at mid-span): [2i] toward the soundboard, [2i+1] across */
+  strings: Float32Array;
   /** per hand, per finger (1..5): how hard and how recently it struck, 0..1 (lights the servo rings) */
   effort: Record<Hand, number[]>;
   /** notes whose keys are down or still sounding (pedal) */
@@ -308,6 +313,13 @@ export class PerformanceTimeline {
     return out;
   }
 
+  /** the strings' swing, built on first use for the final key strokes (and kept out of the plan's data) */
+  stringMechanics(): StringMechanics {
+    let s = STRINGS.get(this.keys);
+    if (!s) STRINGS.set(this.keys, (s = new StringMechanics(this.keys.strokes, this.perf.score.pedal)));
+    return s;
+  }
+
   pedalAt(t: number): number {
     // the foot takes ~60 ms to press or lift the pedal
     const ped = this.perf.score.pedal;
@@ -340,6 +352,7 @@ export class PerformanceTimeline {
       pedal,
       hammers: hammersAt(this.keys.strokes, t),
       dampers: dampersAt(keys, pedal),
+      strings: this.stringMechanics().evaluate(t),
       effort: { L: this.effort('L', t), R: this.effort('R', t) },
       sounding: this.sounding(t),
     };
