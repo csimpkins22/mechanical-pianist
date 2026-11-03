@@ -14,7 +14,7 @@ import { poseHand, type HandPose } from './HandPoser';
 /** spacing of the moments refine checks through a held note (s) */
 const HOLD_PROBE = 0.2;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
-import { dampersAt, hammersAt } from './ActionMechanics';
+import { bridlesAt, dampersAt, hammersAt, jacksAt } from './ActionMechanics';
 import { StringMechanics } from './StringMechanics';
 import { SOFT_BLOW, SOFT_RAMP, SUSTAIN_RAMP, levelAt, railTravel, sustainLevels } from './Pedals';
 import { handOverlap, liftToClear } from './HandCollision';
@@ -38,6 +38,10 @@ export interface FrameState {
   damperRail: number;
   /** the soft pedal 0..1 (it brings the hammer rest rail toward the strings) */
   softPedal: number;
+  /** per key, how far its jack has slipped out from under the hammer butt (0..1) */
+  jacks: Float32Array;
+  /** per key, the bridle tape's sideways sway (m) */
+  bridles: Float32Array;
   /** per hand, per finger (1..5): how hard and how recently it struck, 0..1 (lights the servo rings) */
   effort: Record<Hand, number[]>;
   /** notes whose keys are down or still sounding (pedal) */
@@ -372,6 +376,8 @@ export class PerformanceTimeline {
       strings: this.stringMechanics().evaluate(t),
       damperRail: rail,
       softPedal,
+      jacks: jacksAt(this.keys.strokes, t),
+      bridles: bridlesAt(this.keys.strokes, t),
       effort: { L: this.effort('L', t), R: this.effort('R', t) },
       sounding: this.sounding(t),
     };

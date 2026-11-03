@@ -53,7 +53,14 @@ The repository carries only music that can be shared freely. To build a version 
 
 * a hammer per key, with a white felt head over a red underfelt and a mahogany moulding. The head has a rounded crown, worn flat with string grooves at the strike line, and tapers toward the string. It sits on a maple shank and a buckskin butt.
 * a damper per key up to E6 (F6 and above have none, as in the sound), with felt on a wooden head and a wire running down beside the hammer.
-* wippens on the key backs, and the flange, rest and damper rails on cast brackets.
+* the mechanism below them, built in `presentation/ActionParts.ts` so the chain from key to hammer can be followed part by part:
+  * each key pivots on its balance pin on the balance rail, on a felt punching, and runs on under the action, cranked toward its hammer, to rest on the back rail's cloth;
+  * a brass capstan on the key's back lifts the heel of its wippen, which turns in its flange on the wippen rail;
+  * the jack stands on the wippen and pushes the hammer butt's buckskin heel round. At let-off its toe meets the let-off button on the let-off rail, and it slips forward from under the butt, springing back under it as the key rises;
+  * a white bridle tape runs from the hammer's catcher to the bridle wire on the front of the wippen. It hangs slack and sways a little after each blow;
+  * a brass spoon on the wippen pushes the damper lever's tail toward the strings, taking the damper off them;
+  * there are centre pins at every pivot, a flange screw for each hammer and damper, and bolts through the cast brackets that carry the main, rest and damper rails.
+  * The key's back moves only as much as the keyboard's lever allows (a millimetre or two at the capstan), and the action takes it from there. Each jack keeps its foot on the wippen and its head on the butt while driving it, so its length follows the two by a few percent rather than opening a gap.
 * 236 strings: steel trichords in the treble and tenor, and copper-wound bichords and single strings in the bass, overstrung on a steep diagonal across the tenor.
 * a gilded cast-iron plate with its pin field, struts, bolts and a hitch-pin rail; tuning pins with their coils of string, and hitch pins.
 * the treble and bass bridges on a spruce soundboard.

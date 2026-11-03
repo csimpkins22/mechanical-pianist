@@ -33,7 +33,7 @@
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { clamp } from '../core/math';
 import { hash01 } from '../core/random';
-import { depressionAt, releaseCurve, strokeIndexAt, type KeyStroke } from './KeyMechanics';
+import { depressionAt, depthBefore, releaseCurve, strokeIndexAt, type KeyStroke } from './KeyMechanics';
 
 /** where the jack trips: about 3 mm short of the string, of a 45 mm blow */
 export const HAMMER_LETOFF = 0.935;
@@ -204,5 +204,85 @@ export function damperAt(midi: number, strokes: readonly KeyStroke[], t: number,
 /** all 88 dampers at t, with the damper lift rail at `rail` */
 export function dampersAt(strokes: readonly (readonly KeyStroke[])[], t: number, rail: number, out = new Float32Array(KEY_COUNT)): Float32Array {
   for (let i = 0; i < KEY_COUNT; i++) out[i] = damperAt(LOWEST_MIDI + i, strokes[i], t, rail);
+  return out;
+}
+
+// ---------------------------------------------------------------- the jack and the bridle
+
+/** the key's depression at which the jack trips (let-off), and at which it is back under the butt as the key rises */
+export const JACK_TRIP_AT = 0.9;
+export const JACK_RESET_AT = 0.6;
+/** how long the jack takes to slip out from under the butt, and to spring back under it */
+const TRIP_T = 0.005;
+const RESET_T = 0.018;
+
+/** how long after its release a key has risen past JACK_RESET_AT */
+export const RELEASE_TO_JACK = (() => {
+  let lo = 0;
+  let hi = 0.085;
+  for (let k = 0; k < 40; k++) {
+    const m = (lo + hi) / 2;
+    if (releaseCurve(1, m) > JACK_RESET_AT) lo = m;
+    else hi = m;
+  }
+  return hi;
+})();
+
+const ramp = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+
+/** when stroke j's key reaches let-off depth (KeyMechanics presses as u^1.5 from where the key was) */
+function tripTime(strokes: readonly KeyStroke[], j: number): number {
+  const s = strokes[j];
+  const d0 = j > 0 ? Math.max(0, depthBefore(strokes, j - 1, s.contact)) : 0;
+  if (d0 >= JACK_TRIP_AT) return s.contact;
+  const u = Math.pow((JACK_TRIP_AT - d0) / (1 - d0), 1 / 1.5);
+  return s.contact + u * (s.bottom - s.contact);
+}
+
+/**
+ * How far a key's jack has slipped out from under its hammer butt, 0..1: it
+ * trips as the key passes let-off depth, stays out while the key is down, and
+ * springs back under the butt as the key rises again (or when the next stroke
+ * begins, whichever is first).
+ */
+export function jackAt(strokes: readonly KeyStroke[], t: number): number {
+  const j = strokeIndexAt(strokes, t);
+  if (j < 0) return 0;
+  const out = (k: number) => {
+    const s = strokes[k];
+    const on = tripTime(strokes, k);
+    const next = k + 1 < strokes.length ? strokes[k + 1].contact : Infinity;
+    const off = Math.min(s.release + RELEASE_TO_JACK, next);
+    if (t < on) return 0;
+    return Math.min(ramp((t - on) / TRIP_T), 1 - ramp((t - off) / RESET_T));
+  };
+  return Math.max(out(j), j > 0 ? out(j - 1) : 0);
+}
+
+/** all 88 jacks at t */
+export function jacksAt(strokes: readonly (readonly KeyStroke[])[], t: number, out = new Float32Array(KEY_COUNT)): Float32Array {
+  for (let i = 0; i < KEY_COUNT; i++) out[i] = jackAt(strokes[i], t);
+  return out;
+}
+
+/**
+ * The bridle tape's sideways sway (m, at the middle of its slack): set
+ * fluttering by each strike, more by loud ones, and dying away over a few
+ * tenths of a second, with a very slow drift of the air inside the case.
+ */
+export function bridleAt(i: number, strokes: readonly KeyStroke[], t: number): number {
+  const drift = 0.00012 * Math.sin(0.9 * t + 2.3 * i) * Math.sin(0.37 * t + 1.1 * i);
+  const j = strokeIndexAt(strokes, t);
+  if (j < 0) return drift;
+  const s = strokes[j];
+  const dt = t - s.bottom;
+  if (dt <= 0) return drift;
+  const w = 2 * Math.PI * (3.5 + 1.5 * hash01(i, 31));
+  return drift + 0.0011 * s.note.velocity * Math.exp(-dt / 0.28) * Math.sin(w * dt + hash01(i, 32) * 6.28) * Math.min(1, dt / 0.01);
+}
+
+/** all 88 bridles at t */
+export function bridlesAt(strokes: readonly (readonly KeyStroke[])[], t: number, out = new Float32Array(KEY_COUNT)): Float32Array {
+  for (let i = 0; i < KEY_COUNT; i++) out[i] = bridleAt(i, strokes[i], t);
   return out;
 }

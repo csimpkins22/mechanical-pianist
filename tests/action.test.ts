@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { KeyMechanics, restrikeRepeats, type KeyStroke } from '../src/performance/KeyMechanics';
 import {
+  JACK_RESET_AT,
+  JACK_TRIP_AT,
+  RELEASE_TO_JACK,
+  bridleAt,
+  jackAt,
   DAMPER_LAG,
   DAMPER_SETTLE,
   HAMMER_LETOFF,
@@ -228,5 +233,59 @@ describe('the pedals', () => {
       prev = v;
     }
     expect(levelAt(levels, 2.2, 0.06)).toBe(0);
+  });
+});
+
+describe('the jack and the bridle', () => {
+  it('trips as the key passes let-off depth, stays out while it is held, and springs back as the key rises', () => {
+    const notes = [note(60, 1, 1.6, 0.6)];
+    const km = new KeyMechanics(notes);
+    const s = km.strokes[60 - 21];
+    const depth = (t: number) => km.depression(60, t);
+    // under the butt until the key is nearly down
+    let tTrip = 0;
+    for (let t = s[0].contact; t < 1; t += 0.0002) {
+      if (depth(t) < JACK_TRIP_AT - 0.01) expect(jackAt(s, t)).toBe(0);
+      if (!tTrip && jackAt(s, t) > 0) tTrip = t;
+    }
+    expect(depth(tTrip)).toBeGreaterThan(JACK_TRIP_AT - 0.02);
+    // slipping out as the hammer flies the last millimetres, fully out before it comes back from the string
+    expect(jackAt(s, 1.0)).toBeGreaterThan(0.1);
+    expect(jackAt(s, 1 + hammerShape(s[0]).linger)).toBeGreaterThan(0.95);
+    for (const t of [1.1, 1.3, 1.59]) expect(jackAt(s, t)).toBe(1);
+    // back under the butt once the key has risen past the reset depth
+    const back = 1.6 + RELEASE_TO_JACK;
+    expect(depth(back)).toBeLessThan(JACK_RESET_AT + 0.01);
+    expect(jackAt(s, back + 0.03)).toBe(0);
+    // moving smoothly both ways
+    let prev = 0;
+    for (let t = 0.97; t < 1.8; t += 0.0005) {
+      const j = jackAt(s, t);
+      expect(Math.abs(j - prev)).toBeLessThan(0.16); // a 5 ms slip, never a jump
+      prev = j;
+    }
+  });
+
+  it('resets for a quick repetition before the next stroke drives it again', () => {
+    const notes = [note(64, 1, 1.1), note(64, 1.15, 1.4)];
+    restrikeRepeats(notes);
+    const s = strokes(notes, 64);
+    // back under the butt by the time the finger lands again, out again after the second let-off
+    expect(jackAt(s, s[1].contact)).toBeLessThan(0.05);
+    expect(jackAt(s, 1.15 + hammerShape(s[1]).linger)).toBeGreaterThan(0.9);
+  });
+
+  it('sets the bridle tape swaying after a blow, more after a loud one, dying away', () => {
+    const loud = strokes([note(60, 1, 2, 0.95)], 60);
+    const soft = strokes([note(60, 1, 2, 0.2)], 60);
+    const peak = (s: KeyStroke[], a: number, b: number) => {
+      let m = 0;
+      for (let t = a; t < b; t += 0.001) m = Math.max(m, Math.abs(bridleAt(39, s, t)));
+      return m;
+    };
+    expect(peak(loud, 1, 1.3)).toBeGreaterThan(3 * peak(soft, 1, 1.3));
+    expect(peak(loud, 1, 1.3)).toBeLessThan(0.0015);
+    expect(peak(loud, 2.6, 2.9)).toBeLessThan(0.0003);
+    expect(bridleAt(39, loud, 1.234)).toBe(bridleAt(39, loud, 1.234));
   });
 });

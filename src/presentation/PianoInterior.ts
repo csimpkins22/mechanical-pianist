@@ -3,12 +3,13 @@
 // every hammer stands behind its key and every string runs where its hammer
 // strikes. The action: a hammer per key (felt head on a wooden moulding, maple
 // shank, buckskin butt), a damper per damped key (felt on a wooden head, a
-// wire down to its lever), wippens on the key backs, the rails and cast
-// brackets. The strings (steel, copper-wound in the bass and overstrung
-// across the tenor), the gilded cast-iron plate with its tuning and hitch
-// pins, the bridges and the spruce soundboard behind.
+// wire down to its lever), the rails and cast brackets; below them the
+// mechanism that drives them, from the keys' backs up (ActionParts.ts). The
+// strings (steel, copper-wound in the bass and overstrung across the tenor),
+// the gilded cast-iron plate with its tuning and hitch pins, the bridges and
+// the spruce soundboard behind.
 //
-// The hammers, dampers and wippens are instanced and posed every frame from
+// The hammers, dampers and the mechanism are instanced and posed every frame from
 // the FrameState (ActionMechanics.ts); the strings show their swing as the
 // camera sees it, an exposure blur (StringMechanics.ts, and the string shaders
 // below). The moving parts keep their transforms at the start of the shutter
@@ -40,6 +41,7 @@ import {
   speakingLength,
   stringZ,
 } from './ActionLayout';
+import { ActionParts } from './ActionParts';
 import { patch } from './shaderPatch';
 
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
@@ -410,9 +412,6 @@ function damperWood(): THREE.BufferGeometry {
   ]);
 }
 
-function wippenGeo(): THREE.BufferGeometry {
-  return merged([box(0.0092, 0.05, 0.036, 0, 0, 0, MAPLE), box(0.0094, 0.004, 0.02, 0, 0.027, -0.004, RED_FELT)]);
-}
 
 /** a key's hammer pivot */
 function pivotOf(i: number): C3 {
@@ -426,7 +425,7 @@ export class PianoInterior {
   private hammerWood: THREE.InstancedMesh;
   private damperFelt: THREE.InstancedMesh;
   private damperWood: THREE.InstancedMesh;
-  private wippens: THREE.InstancedMesh;
+  private parts: ActionParts;
   private steel: THREE.InstancedMesh;
   private copper: THREE.InstancedMesh;
   /** per string: its mesh and index there */
@@ -458,8 +457,7 @@ export class PianoInterior {
     this.hammerWood = instanced(hammerWood(), M.wood, KEY_COUNT);
     this.damperFelt = instanced(damperFeltGeo(), M.damperFelt, N_DAMPED);
     this.damperWood = instanced(damperWood(), M.wood, N_DAMPED);
-    this.wippens = instanced(wippenGeo(), M.wood, KEY_COUNT);
-    this.root.add(this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wippens);
+    this.root.add(this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood);
     for (let i = 0; i < N_DAMPED; i++) {
       // the damper sits on its strings above the strike line, leaning with them in the bass
       const s = stringSlope(i);
@@ -468,6 +466,10 @@ export class PianoInterior {
       this.dampPivot.push([HAMMER_X[i] + s * dy, DAMPER_PIVOT_Y, stringZ(i) + r + 0.0215]);
       this.leans.push(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.atan(-s)));
     }
+
+    // the mechanism below the hammers: keys' backs, capstans, wippens, jacks, bridles, spoons (ActionParts.ts)
+    this.parts = new ActionParts({ wood: M.wood, steel: M.pins, cavity: CAVITY, dampPivot: this.dampPivot, leans: this.leans });
+    this.root.add(this.parts.root);
 
     // strings
     const nPlain = STRINGS.filter((s) => !s.wound).length;
@@ -626,8 +628,6 @@ export class PianoInterior {
     const w = x1 - x0 + 0.03;
     const zp = (pivotOf(30)[2] + pivotOf(10)[2]) / 2; // hammer pivots (the bass a little forward)
     const parts: THREE.BufferGeometry[] = [
-      box(2 * INNER_X, 0.006, 0.12, 0, -0.003, -0.29, [0.1, 0.07, 0.06]), // key frame, cloth
-      box(w, 0.018, 0.026, xm, 0.124, zp - 0.002, MAPLE.map((c) => c * 0.8) as C3), // flange rail
       box(w, 0.012, 0.02, xm, 0.165, zp - 0.012, WALNUT), // damper lever rail
     ];
     // cast brackets carrying the rails, in the gaps and at the ends
@@ -636,7 +636,7 @@ export class PianoInterior {
         box(0.008, 0.29, 0.016, x, 0.125, zp + 0.05, IRON),
         box(0.008, 0.016, 0.07, x, 0.124, zp + 0.018, IRON),
         box(0.008, 0.016, 0.05, x, 0.27, zp + 0.03, IRON),
-        box(0.008, 0.03, 0.03, x, 0.01, zp + 0.04, IRON),
+        box(0.008, 0.03, 0.03, x, 0.035, zp + 0.04, IRON),
       );
     }
     const m = new THREE.Mesh(merged(parts), wood);
@@ -700,10 +700,6 @@ export class PianoInterior {
       this.hammerFelt.setMatrixAt(i, m4);
       this.hammerUnder.setMatrixAt(i, m4);
       this.hammerWood.setMatrixAt(i, m4);
-      // the wippen rides on the key's back
-      q.identity();
-      m4.compose(p.set(x, 0.045 + 0.011 * Math.max(0, f.keys[i]), z + 0.032), q, one);
-      this.wippens.setMatrixAt(i, m4);
     }
     for (let i = 0; i < N_DAMPED; i++) {
       const [x, y, z] = this.dampPivot[i];
@@ -713,7 +709,8 @@ export class PianoInterior {
       this.damperFelt.setMatrixAt(i, m4);
       this.damperWood.setMatrixAt(i, m4);
     }
-    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wippens]) m.instanceMatrix.needsUpdate = true;
+    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood]) m.instanceMatrix.needsUpdate = true;
+    this.parts.update(f);
     this.vibrate(f);
     // the rails: the soft pedal's (toward the strings) and the sustain pedal's (toward the player)
     const softAngle = HAMMER_REST * (1 - SOFT_BLOW * f.softPedal);
@@ -739,7 +736,8 @@ export class PianoInterior {
 
   /** remember the moving parts' transforms as they were when the shutter opened (call after update with that frame) */
   keepPrevious() {
-    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wippens]) keepPrevious(m);
+    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood]) keepPrevious(m);
+    this.parts.keepPrevious();
   }
 }
 
