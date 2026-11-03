@@ -18,6 +18,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { hash01 } from '../core/random';
 import { UNDAMPED_FROM } from '../performance/ActionMechanics';
+import { SOFT_BLOW } from '../performance/Pedals';
 import type { FrameState } from '../performance/PerformanceTimeline';
 import {
   BASS_N,
@@ -42,6 +43,11 @@ import {
 import { patch } from './shaderPatch';
 
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
+/** the hammer rest rail is this far above the hammer pivots, which stand at about this depth */
+const RAIL_H = 0.045;
+const RAIL_PIVOT_Z = (pivotOf(30)[2] + pivotOf(10)[2]) / 2;
+/** the damper lift rail's height */
+const LIFT_RAIL_Y = DAMPER_PIVOT_Y + 0.03;
 const INNER_X = 0.665; // the case's side panels, inside
 const TOP_Y = 0.524; // under the lid
 
@@ -431,6 +437,9 @@ export class PianoInterior {
   private swingShare: Float32Array;
   private leans: THREE.Quaternion[] = [];
   private dampPivot: C3[] = [];
+  /** the hammer rest rail (moved toward the strings by the soft pedal) and the damper lift rail (the sustain pedal) */
+  private restRail: THREE.Object3D;
+  private liftRail: THREE.Object3D;
   private m4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private q2 = new THREE.Quaternion();
@@ -538,6 +547,9 @@ export class PianoInterior {
     this.root.add(this.buildPlate(M.plate, M.pins));
     this.root.add(this.buildSoundboard(M.soundboard, M.bridge));
     this.root.add(this.buildRails(M.wood));
+    this.restRail = this.buildRestRail(M.wood);
+    this.liftRail = this.buildLiftRail(M.wood);
+    this.root.add(this.restRail, this.liftRail);
   }
 
   private buildPlate(gold: THREE.Material, steel: THREE.Material): THREE.Object3D {
@@ -613,12 +625,9 @@ export class PianoInterior {
     const xm = (x0 + x1) / 2;
     const w = x1 - x0 + 0.03;
     const zp = (pivotOf(30)[2] + pivotOf(10)[2]) / 2; // hammer pivots (the bass a little forward)
-    const restZ = zp + 0.045 * Math.tan(HAMMER_REST) + 0.0027 + 0.007;
     const parts: THREE.BufferGeometry[] = [
       box(2 * INNER_X, 0.006, 0.12, 0, -0.003, -0.29, [0.1, 0.07, 0.06]), // key frame, cloth
       box(w, 0.018, 0.026, xm, 0.124, zp - 0.002, MAPLE.map((c) => c * 0.8) as C3), // flange rail
-      box(w, 0.014, 0.012, xm, 0.185, restZ, MAPLE.map((c) => c * 0.75) as C3), // hammer rest rail
-      box(w, 0.012, 0.003, xm, 0.185, restZ - 0.0075, GREEN_FELT),
       box(w, 0.012, 0.02, xm, 0.165, zp - 0.012, WALNUT), // damper lever rail
     ];
     // cast brackets carrying the rails, in the gaps and at the ends
@@ -634,6 +643,50 @@ export class PianoInterior {
     m.castShadow = true;
     m.receiveShadow = true;
     m.name = 'ActionRails';
+    return m;
+  }
+
+  /**
+   * The hammer rest rail: the shanks lie against its felt. The soft pedal
+   * swings it toward the strings, taking every hammer a part of the way with it.
+   */
+  private buildRestRail(wood: THREE.Material): THREE.Object3D {
+    const [x0, x1] = HAMMER_SPAN;
+    const xm = (x0 + x1) / 2;
+    const w = x1 - x0 + 0.03;
+    const restZ = RAIL_PIVOT_Z + RAIL_H * Math.tan(HAMMER_REST) + 0.0027 + 0.007;
+    const m = new THREE.Mesh(
+      merged([box(w, 0.014, 0.012, xm, 0.185, restZ, MAPLE.map((c) => c * 0.75) as C3), box(w, 0.012, 0.003, xm, 0.185, restZ - 0.0075, GREEN_FELT)]),
+      wood,
+    );
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.name = 'HammerRestRail';
+    return m;
+  }
+
+  /**
+   * The damper lift rail: a felt-faced rail behind the damper wires, a few
+   * centimetres above their pivots, in two runs (the bass dampers stand
+   * further forward with their strings). The sustain pedal pushes it toward
+   * the player, and every damper with it.
+   */
+  private buildLiftRail(wood: THREE.Material): THREE.Object3D {
+    const runs: [number, number, number][] = [];
+    const first = (i: number) => this.dampPivot[i];
+    // the bass run, and the rest up to the last damper
+    const bassEnd = BASS_N - 1;
+    const zOf = (i: number) => first(i)[2] - 0.004 - 0.0085;
+    runs.push([HAMMER_X[0] - 0.008, HAMMER_X[bassEnd] + 0.008, zOf(bassEnd)]);
+    runs.push([HAMMER_X[BASS_N] - 0.008, HAMMER_X[N_DAMPED - 1] + 0.008, zOf(BASS_N)]);
+    const parts: THREE.BufferGeometry[] = [];
+    for (const [a, b, z] of runs) {
+      parts.push(box(b - a, 0.012, 0.006, (a + b) / 2, LIFT_RAIL_Y, z, WALNUT), box(b - a, 0.01, 0.002, (a + b) / 2, LIFT_RAIL_Y, z + 0.004, RED_FELT));
+    }
+    const m = new THREE.Mesh(merged(parts), wood);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.name = 'DamperLiftRail';
     return m;
   }
 
@@ -662,6 +715,10 @@ export class PianoInterior {
     }
     for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wippens]) m.instanceMatrix.needsUpdate = true;
     this.vibrate(f);
+    // the rails: the soft pedal's (toward the strings) and the sustain pedal's (toward the player)
+    const softAngle = HAMMER_REST * (1 - SOFT_BLOW * f.softPedal);
+    this.restRail.position.z = RAIL_H * (Math.tan(softAngle) - Math.tan(HAMMER_REST));
+    this.liftRail.position.z = (LIFT_RAIL_Y - DAMPER_PIVOT_Y) * Math.sin(DAMPER_SWING * f.damperRail);
   }
 
   /** each string's swing, from its key's (StringMechanics) */

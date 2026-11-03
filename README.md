@@ -60,8 +60,19 @@ The repository carries only music that can be shared freely. To build a version 
 
 The moving parts are pure functions of time from the same key strokes that move the keys (`performance/ActionMechanics.ts`), as deterministic as everything else:
 
-* **Hammers:** the jack lifts each hammer in step with its key, and it reaches the string exactly at the note onset. It rebounds at once, the backcheck catches it about halfway back while the key is held, and it falls back to its rail as the key rises. A repeated note strikes again from the half-risen key.
-* **Dampers:** a damper lifts in the second half of its key's travel, or with every other damper when the sustain pedal goes down.
+* **Hammers** move as slow-motion footage of a real upright action shows them:
+  * Each hammer eases out of the resting row and accelerates under the jack, covering most of its travel in the second half of the rise.
+  * The jack trips a few millimetres short of the string (let-off), and the hammer flies the rest of the way on its own, slowing into the string.
+  * It reaches the string exactly at the note onset and lingers there, for contact and felt compression, for about a fifth of the rise, without bouncing off.
+  * It comes back about twice as fast as it rose and settles softly into the backcheck, a little over halfway back, with no jolt or overshoot. It then holds still while the key is down, and returns smoothly to its rail with the key.
+  * A soft note rises more slowly, rebounds more gently and is caught a little higher than a loud one.
+  * As in a real action, the hammers of a chord are never quite in unison. Each note has its own lost motion before the jack takes up, and its own small differences in linger, rebound and check. They all strike on their onsets but sit at different heights in between.
+  * A repeated note strikes again from wherever the half-risen key left it.
+* **Dampers:**
+  * A damper lifts in the second half of its key's travel, falls back a moment after the key rises, and its felt gives a little as it lands.
+  * The sustain pedal lifts every damper together on the damper lift rail, visible behind the damper wires. Each damper meets the rail at a slightly different point, and half-pedalling (the MIDI controller's in-between values) lifts them part of the way.
+  * The dampers clear the strings, and the strings ring, once the pedal is half down, matching where the sound counts it as down.
+* **Soft pedal** (CC67): it moves the hammer rest rail toward the strings, so every hammer rests, and starts its blow, a third of the way closer (`performance/Pedals.ts`). Satie's Gnossienne holds it throughout. The sound is unchanged.
 * **Strings** (`performance/StringMechanics.ts`): each string swings by a physical amount, set by velocity and register. That is a few millimetres at mid-span for a bass string struck hard, a few tenths in the middle and hundredths at the top. It dies away in two stages, the quick prompt sound and then the long aftersound, slowly in the bass and quickly in the treble. Once its damper is back on the strings (the key risen past where it lifts the damper, and the pedal up), the swing dies within tens of milliseconds in the treble and a few hundred in the bass, rather than stopping dead. The undamped top strings and pedalled strings ring on. While the dampers are off, strings that share a partial with a sounding note (octaves, twelfths, fifths) pick up a faint sympathetic swing. The swing starts in the hammer's plane, toward the soundboard, and turns partly into the other polarisation over a few tenths of a second.
 
 A string vibrates far faster than any frame rate, so a camera never sees a moving wire. It sees the envelope of the swing over the exposure, which is how the strings are drawn. Each string is a ribbon facing the camera, as wide as the wire plus the part of its swing seen across the line of sight, with the first mode's shape: widest at mid-span and pinched at the bridge and the top bearing. Every pixel takes the share of the exposure the wire covers it, so a swinging string becomes a translucent band, brightest at its edges where the wire lingers as it turns. The band holds exactly the wire's light, however wide it spreads. In practice only loud bass notes blur visibly, and mostly when seen from above or from the side. The same filter gives distant strings, thinner than a pixel, a steady faint line instead of a broken, flickering one. The normal across the ribbon is the round wire's, so light runs along each string in a bright streak; where a wire is only a pixel or two wide, its highlight broadens instead of depending on where the pixel falls.
@@ -282,7 +293,7 @@ Add `--preview out.png` to either script for a Cycles studio render. `tests/asse
 src/
   core/            keyboard layout, hand spec + forward kinematics, types, math, seeded noise
   interpretation/  MidiEngine, HandAssignment, Fingering, Patterns, Conventions, PerformancePlanner, demoPiece
-  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, ActionMechanics, StringMechanics, PerformanceTimeline
+  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, ActionMechanics, StringMechanics, Pedals, PerformanceTimeline
   presentation/    SceneRenderer, PianoModel, PianoInterior, ActionLayout, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
   audio/           AudioEngine, synthPiano

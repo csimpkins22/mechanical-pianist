@@ -1,7 +1,7 @@
 // MIDI file -> Score: tempo-aware, normalised note and pedal events.
 import { Midi } from '@tonejs/midi';
 import { HIGHEST_MIDI, LOWEST_MIDI } from '../core/keyboard';
-import type { PedalEvent, Score, ScoreNote, TempoEvent, TrackInfo } from '../core/types';
+import type { PedalEvent, PedalLevel, Score, ScoreNote, TempoEvent, TrackInfo } from '../core/types';
 
 const MIN_DURATION = 0.035;
 /** onsets closer than this on the same pitch are treated as one note */
@@ -112,6 +112,25 @@ export function buildScore(parsed: ParsedMidi, selectedTracks?: number[]): Score
     pedal.push(e);
   }
 
+  // the pedals' positions, half-pedalling included: the sustain pedal from the
+  // same tracks as above, the soft pedal (CC67) from any track
+  const levels = (num: number, tis: number[]) => {
+    const raw: PedalLevel[] = [];
+    for (const ti of tis) for (const c of midi.tracks[ti]?.controlChanges?.[num] ?? []) raw.push({ time: c.time, value: Math.max(0, Math.min(1, c.value)) });
+    raw.sort((a, b) => a.time - b.time);
+    const out: PedalLevel[] = [];
+    for (const e of raw) {
+      const last = out.length ? out[out.length - 1].value : 0;
+      if (Math.abs(e.value - last) < 1 / 254) continue;
+      if (out.length && out[out.length - 1].time === e.time) out[out.length - 1] = e;
+      else out.push(e);
+    }
+    return out;
+  };
+  const sustainTracks = pedalFrom(selected).length ? selected : midi.tracks.map((_, i) => i);
+  const pedalLevels = levels(64, sustainTracks);
+  const soft = levels(67, midi.tracks.map((_, i) => i));
+
   const tempos: TempoEvent[] = (midi.header.tempos.length ? midi.header.tempos : [{ bpm: 120, ticks: 0 }]).map((t) => ({
     time: midi.header.ticksToSeconds(t.ticks),
     bpm: t.bpm,
@@ -123,6 +142,8 @@ export function buildScore(parsed: ParsedMidi, selectedTracks?: number[]): Score
     name: parsed.name,
     notes,
     pedal,
+    pedalLevels,
+    ...(soft.length ? { soft } : {}),
     tempos,
     tracks: parsed.tracks,
     selectedTracks: selected,

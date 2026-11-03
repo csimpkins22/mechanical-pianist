@@ -21,12 +21,10 @@
 // fifths) take up a faint sympathetic swing of their own.
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { hash01 } from '../core/random';
-import type { PedalEvent } from '../core/types';
-import { DAMPER_LIFT_FROM, UNDAMPED_FROM } from './ActionMechanics';
-import { depthBefore, releaseCurve, type KeyStroke } from './KeyMechanics';
-
-/** the pedal takes this long to move (as PerformanceTimeline.pedalAt) */
-export const PEDAL_RAMP = 0.06;
+import type { PedalLevel } from '../core/types';
+import { DAMPER_LAG, DAMPER_LIFT_FROM, RELEASE_TO_DAMPER, UNDAMPED_FROM } from './ActionMechanics';
+import { depthBefore, type KeyStroke } from './KeyMechanics';
+import { railClearIntervals } from './Pedals';
 
 const NEVER = 1e6;
 const ALWAYS = -1e3;
@@ -56,18 +54,6 @@ export function naturalDecay(i: number, dt: number): number {
 /** the hammer is on the string for a few milliseconds: the swing builds over them */
 const onset = (dt: number) => (dt <= 0 ? 0 : 1 - Math.exp(-dt / 0.003));
 
-/** how long after its release a key has risen far enough for its damper to touch the strings */
-export const RELEASE_TO_DAMPER = (() => {
-  let lo = 0;
-  let hi = 0.085;
-  for (let k = 0; k < 40; k++) {
-    const m = (lo + hi) / 2;
-    if (releaseCurve(1, m) > DAMPER_LIFT_FROM) lo = m;
-    else hi = m;
-  }
-  return hi;
-})();
-
 /** sympathetic coupling: semitones from a sounding string to one that shares a partial, and how strongly */
 const SYMPATHY: [number, number][] = [
   [12, 0.06],
@@ -94,14 +80,9 @@ function merge(iv: [number, number][]): [number, number][] {
   return out;
 }
 
-/** when each key's damper is off its strings: lifted by the key (deep enough) or by the sustain pedal */
-export function damperLifts(strokes: readonly (readonly KeyStroke[])[], pedal: readonly PedalEvent[]): [number, number][][] {
-  const byPedal: [number, number][] = [];
-  for (let k = 0; k < pedal.length; k++) {
-    if (!pedal[k].down) continue;
-    const up = pedal.slice(k + 1).find((e) => !e.down);
-    byPedal.push([pedal[k].time, up ? up.time + PEDAL_RAMP : NEVER]);
-  }
+/** when each key's damper is off its strings: lifted by the key (deep enough), or by the sustain pedal's rail */
+export function damperLifts(strokes: readonly (readonly KeyStroke[])[], pedal: readonly PedalLevel[]): [number, number][][] {
+  const byPedal = railClearIntervals(pedal, NEVER);
   const out: [number, number][][] = [];
   for (let i = 0; i < KEY_COUNT; i++) {
     if (LOWEST_MIDI + i >= UNDAMPED_FROM) {
@@ -119,7 +100,7 @@ export function damperLifts(strokes: readonly (readonly KeyStroke[])[], pedal: r
         const u = Math.pow((DAMPER_LIFT_FROM - d0) / (1 - d0), 1 / 1.5);
         from = s.contact + u * (s.bottom - s.contact);
       }
-      iv.push([from, s.release + RELEASE_TO_DAMPER]);
+      iv.push([from, s.release + RELEASE_TO_DAMPER + DAMPER_LAG]);
     }
     out.push(merge(iv));
   }
@@ -141,7 +122,7 @@ export class StringMechanics {
   private strikeR: Float64Array[] = [];
   private own = new Float32Array(KEY_COUNT);
 
-  constructor(strokes: readonly (readonly KeyStroke[])[], pedal: readonly PedalEvent[]) {
+  constructor(strokes: readonly (readonly KeyStroke[])[], pedal: readonly PedalLevel[]) {
     const lifts = damperLifts(strokes, pedal);
     for (let i = 0; i < KEY_COUNT; i++) {
       const L = lifts[i];

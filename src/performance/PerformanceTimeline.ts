@@ -8,7 +8,7 @@ import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { add, scale, sub, len, type V3 } from '../core/handGeometry';
 import { clamp, gaussianBlur, lastAtOrBefore } from '../core/math';
 import { pedalDownAt } from '../interpretation/MidiEngine';
-import type { Hand, Performance, PerformanceNote } from '../core/types';
+import type { Hand, PedalLevel, Performance, PerformanceNote } from '../core/types';
 import { poseHand, type HandPose } from './HandPoser';
 
 /** spacing of the moments refine checks through a held note (s) */
@@ -16,10 +16,12 @@ const HOLD_PROBE = 0.2;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
 import { dampersAt, hammersAt } from './ActionMechanics';
 import { StringMechanics } from './StringMechanics';
+import { SOFT_BLOW, SOFT_RAMP, SUSTAIN_RAMP, levelAt, railTravel, sustainLevels } from './Pedals';
 import { handOverlap, liftToClear } from './HandCollision';
 import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
 
 const STRINGS = new WeakMap<KeyMechanics, StringMechanics>();
+const LEVELS = new WeakMap<object, PedalLevel[]>();
 
 export interface FrameState {
   t: number;
@@ -32,6 +34,10 @@ export interface FrameState {
   dampers: Float32Array;
   /** per key, the swing of its strings (m, peak at mid-span): [2i] toward the soundboard, [2i+1] across */
   strings: Float32Array;
+  /** the damper lift rail's travel 0..1 (the sustain pedal, half-pedalling included) */
+  damperRail: number;
+  /** the soft pedal 0..1 (it brings the hammer rest rail toward the strings) */
+  softPedal: number;
   /** per hand, per finger (1..5): how hard and how recently it struck, 0..1 (lights the servo rings) */
   effort: Record<Hand, number[]>;
   /** notes whose keys are down or still sounding (pedal) */
@@ -316,8 +322,15 @@ export class PerformanceTimeline {
   /** the strings' swing, built on first use for the final key strokes (and kept out of the plan's data) */
   stringMechanics(): StringMechanics {
     let s = STRINGS.get(this.keys);
-    if (!s) STRINGS.set(this.keys, (s = new StringMechanics(this.keys.strokes, this.perf.score.pedal)));
+    if (!s) STRINGS.set(this.keys, (s = new StringMechanics(this.keys.strokes, this.sustain())));
     return s;
+  }
+
+  /** the sustain pedal's positions, half-pedalling included */
+  private sustain() {
+    let l = LEVELS.get(this.perf.score);
+    if (!l) LEVELS.set(this.perf.score, (l = sustainLevels(this.perf.score)));
+    return l;
   }
 
   pedalAt(t: number): number {
@@ -345,14 +358,20 @@ export class PerformanceTimeline {
   evaluate(t: number): FrameState {
     const keys = this.keys.evaluate(t, new Float32Array(KEY_COUNT));
     const pedal = this.pedalAt(t);
+    const rail = railTravel(levelAt(this.sustain(), t, SUSTAIN_RAMP));
+    const soft = this.perf.score.soft;
+    const softPedal = soft ? levelAt(soft, t, SOFT_RAMP) : 0;
+    const rest = soft ? (x: number) => SOFT_BLOW * levelAt(soft, x, SOFT_RAMP) : undefined;
     return {
       t,
       keys,
       hands: { L: poseHand(this.plan.hands.L, this.keys, t), R: poseHand(this.plan.hands.R, this.keys, t) },
       pedal,
-      hammers: hammersAt(this.keys.strokes, t),
-      dampers: dampersAt(keys, pedal),
+      hammers: hammersAt(this.keys.strokes, t, rest),
+      dampers: dampersAt(this.keys.strokes, t, rail),
       strings: this.stringMechanics().evaluate(t),
+      damperRail: rail,
+      softPedal,
       effort: { L: this.effort('L', t), R: this.effort('R', t) },
       sounding: this.sounding(t),
     };

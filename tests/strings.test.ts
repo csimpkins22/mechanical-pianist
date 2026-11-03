@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { KEY_COUNT } from '../src/core/keyboard';
-import type { PedalEvent, PerformanceNote } from '../src/core/types';
-import { UNDAMPED_FROM } from '../src/performance/ActionMechanics';
+import type { PedalLevel, PerformanceNote } from '../src/core/types';
+import { DAMPER_LAG, RELEASE_TO_DAMPER, UNDAMPED_FROM } from '../src/performance/ActionMechanics';
 import { KeyMechanics, restrikeRepeats } from '../src/performance/KeyMechanics';
-import { PEDAL_RAMP, RELEASE_TO_DAMPER, StringMechanics, dampTime, naturalDecay, strikeAmplitude } from '../src/performance/StringMechanics';
+import { railClearIntervals } from '../src/performance/Pedals';
+import { StringMechanics, dampTime, naturalDecay, strikeAmplitude } from '../src/performance/StringMechanics';
 
 let id = 0;
 const note = (midi: number, start: number, end: number, velocity = 0.7): PerformanceNote => ({
@@ -18,7 +19,7 @@ const note = (midi: number, start: number, end: number, velocity = 0.7): Perform
   keyEnd: end,
   flags: [],
 });
-const build = (notes: PerformanceNote[], pedal: PedalEvent[] = []) => new StringMechanics(new KeyMechanics(notes).strokes, pedal);
+const build = (notes: PerformanceNote[], pedal: PedalLevel[] = []) => new StringMechanics(new KeyMechanics(notes).strokes, pedal);
 
 describe('the strings', () => {
   it('swing by physical amounts: millimetres in the bass struck hard, hundredths of one at the top', () => {
@@ -47,7 +48,7 @@ describe('the strings', () => {
   it('die quickly but smoothly once the damper is back on them, the treble faster than the bass', () => {
     for (const i of [8, 40, 64]) {
       const s = build([note(21 + i, 1, 2)]);
-      const land = 2 + RELEASE_TO_DAMPER;
+      const land = 2 + RELEASE_TO_DAMPER + DAMPER_LAG;
       const before = s.amplitude(i, land);
       expect(before).toBeCloseTo(strikeAmplitude(i, 0.7) * naturalDecay(i, land - 1), 9);
       // one damping time after the felt lands: about 1/e of it (with the string's own decay on top)
@@ -70,15 +71,17 @@ describe('the strings', () => {
 
   it('ring on under the sustain pedal, and are damped when it comes up', () => {
     const i = 30;
-    const pedal: PedalEvent[] = [
-      { time: 0.5, down: true },
-      { time: 3, down: false },
+    const pedal: PedalLevel[] = [
+      { time: 0.5, value: 1 },
+      { time: 3, value: 0 },
     ];
     const s = build([note(21 + i, 1, 1.4)], pedal);
     const A = strikeAmplitude(i, 0.7);
     // the key is up long before the pedal: the string rings on as if held
     expect(s.amplitude(i, 2.5)).toBeCloseTo(A * naturalDecay(i, 1.5), 9);
-    const land = 3 + PEDAL_RAMP;
+    const land = railClearIntervals(pedal)[0][1];
+    expect(land).toBeGreaterThan(3);
+    expect(land).toBeLessThan(3.06);
     expect(s.amplitude(i, land)).toBeCloseTo(A * naturalDecay(i, land - 1), 9);
     expect(s.amplitude(i, land + 3 * dampTime(i))).toBeLessThan(0.06 * s.amplitude(i, land));
   });
@@ -92,7 +95,7 @@ describe('the strings', () => {
   it('pick up a faint sympathetic swing an octave up while the pedal holds the dampers off, and none without it', () => {
     const i = 20;
     const struck = [note(21 + i, 1, 1.5, 0.9)];
-    const withPedal = build(struck, [{ time: 0.5, down: true }]).evaluate(1.1);
+    const withPedal = build(struck, [{ time: 0.5, value: 1 }]).evaluate(1.1);
     const without = build([note(21 + i, 1, 1.5, 0.9)]).evaluate(1.1);
     const own = withPedal[2 * i];
     const octave = withPedal[2 * (i + 12)];
@@ -127,9 +130,9 @@ describe('the strings', () => {
   it('are a pure function of time', () => {
     const notes = [note(40, 1, 2.2), note(52, 1.5, 1.9), note(64, 1.7, 3), note(40, 2.6, 3.1)];
     restrikeRepeats(notes);
-    const pedal: PedalEvent[] = [
-      { time: 1.2, down: true },
-      { time: 2.4, down: false },
+    const pedal: PedalLevel[] = [
+      { time: 1.2, value: 1 },
+      { time: 2.4, value: 0 },
     ];
     const a = build(notes, pedal);
     const b = build(notes, pedal);

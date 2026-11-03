@@ -21,6 +21,12 @@ export interface PedalEvent {
   down: boolean;
 }
 
+/** a pedal's position from then on, 0 (up) .. 1 (fully down), as the MIDI controller gives it */
+export interface PedalLevel {
+  time: number;
+  value: number;
+}
+
 export interface TempoEvent {
   time: number;
   bpm: number;
@@ -41,6 +47,10 @@ export interface Score {
   name: string;
   notes: ScoreNote[];
   pedal: PedalEvent[];
+  /** the sustain pedal's position, half-pedalling included (absent in older plans: from \`pedal\`) */
+  pedalLevels?: PedalLevel[];
+  /** the soft pedal (CC67), when the file has one */
+  soft?: PedalLevel[];
   tempos: TempoEvent[];
   tracks: TrackInfo[];
   /** tracks selected for performance (others are ignored) */
