@@ -15,6 +15,7 @@
 // below). The moving parts keep their transforms at the start of the shutter
 // (prevInstanceMatrix) for motion blur.
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { hash01 } from '../core/random';
@@ -43,7 +44,26 @@ import {
 } from './ActionLayout';
 import { ActionParts, damperQuaternion, hammerQuaternion } from './ActionParts';
 import { CAVITY } from './InteriorLight';
+import {
+  DECAL_MAP,
+  DETAIL_GLSL,
+  FELT_GLSL,
+  FELT_NORMAL,
+  GOLD_GLSL,
+  GOLD_NORMAL,
+  GOLD_ROUGH,
+  HAMMER_GLSL,
+  LETTERING_MAP,
+  LETTERING_NORMAL,
+  WOOD_GLSL,
+  decalTexture,
+  feltify,
+  letteringTexture,
+} from './InteriorShading';
 import { patch } from './shaderPatch';
+
+/** the piano's (invented) maker, cast into the plate and on the soundboard's decal (as on the nameboard) */
+const MAKER = 'Halloran & Vey';
 
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
 /** the hammer rest rail is this far above the hammer pivots, which stand at about this depth */
@@ -221,51 +241,135 @@ const STRING_ROUGH = /* glsl */ `roughnessFactor = mix(max(roughnessFactor, 0.3)
 
 // ---------------------------------------------------------------- materials
 function materials() {
-  const felt = patch(
-    new THREE.MeshPhysicalMaterial({ color: 0xebe3d0, roughness: 0.93, sheen: 1, sheenRoughness: 0.55, sheenColor: new THREE.Color(0xffffff) }),
-    {
-      afterMap: /* glsl */ `
+  // each instance's number (hammer i is key i), and the object-space normal, for the felt's layers and stamp
+  const INSTANCE_VS_HEAD = 'flat varying float vHammer;\nvarying vec3 vONormal;';
+  const INSTANCE_VS = 'vHammer = float(gl_InstanceID);\nvONormal = objectNormal;';
+  // dust on what faces up: a grey film that also takes the gloss off
+  const DUST = /* glsl */ `
+  {
+    float mpD = mpDust(vWPos, vWNormal, mpFoot());
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.52, 0.5, 0.47), 0.2 * mpD);
+    roughnessFactor = mix(roughnessFactor, 1.0, 0.6 * mpD);
+  }`;
+  // The hammers' felt, as in the footage: warm cream wool, matte and soft,
+  // thick around a beech moulding; on the sides the layers show in section
+  // (the thin dark-red U of the underfelt inside the white felt, the wood
+  // inside that); the crown pressed smoother and a little yellowed along the
+  // strike line, the strings' grooves in it; and each head's number stamped
+  // in ink on its upper side, by the moulding.
+  const felt = feltify(
+    patch(
+      new THREE.MeshPhysicalMaterial({
+        color: 0xe6d1ae,
+        roughness: 1,
+        specularIntensity: 0.1,
+        sheen: 1,
+        sheenRoughness: 0.85,
+        sheenColor: new THREE.Color(0xa49a88),
+      }),
       {
-        // each hammer's felt a little different; the red underfelt shows as a
-        // band on the sides next to the moulding; the crown carries the
-        // grooves its strings have pressed into it
-        diffuseColor.rgb *= 0.9 + 0.14 * mpNoise(vWPos * 60.0) + 0.06 * mpNoise(vWPos * 2200.0);
-        // on the flat sides the layers show in section: the white felt, the
-        // red underfelt inside it, the mahogany moulding at the core
-        float side = smoothstep(0.55, 0.8, abs(vWNormal.x));
-        vec2 hc = vec2((vOPos.z - 0.0095) / 0.027, (vOPos.y - ${SHANK.toFixed(4)}) / 0.024);
-        float e = length(hc);
-        vec3 layer = e < 0.48 ? vec3(0.42, 0.24, 0.14) : e < 0.6 ? vec3(0.55, 0.1, 0.08) : diffuseColor.rgb;
-        diffuseColor.rgb = mix(diffuseColor.rgb, layer, side);
-        // the crown: worn flat and a little grey along the strike line, with the strings' grooves pressed in
-        float crown = smoothstep(-0.0125, -0.016, vOPos.z) * (1.0 - side);
-        float strike = exp(-pow((vOPos.y - ${SHANK.toFixed(4)}) / 0.0022, 2.0));
-        float g = 0.0;
-        for (int k = -1; k <= 1; k++) { float d = (vOPos.x - float(k) * 0.0024) / 0.0005; g += exp(-d * d); }
-        diffuseColor.rgb *= 1.0 - crown * strike * (0.12 + 0.42 * min(g, 1.0));
-      }`,
-      afterAO: CAVITY,
-      bounce: 0.7,
-    },
+        vertexHead: INSTANCE_VS_HEAD,
+        vertexEnd: INSTANCE_VS,
+        fragHead: DETAIL_GLSL + FELT_GLSL + HAMMER_GLSL,
+        afterMap: /* glsl */ `
+        float mpWoodIn = 0.0;
+        {
+          float mpF = mpFoot();
+          vec3 mpO = vOPos - vec3(0.0, ${SHANK.toFixed(4)}, 0.0);
+          float side = smoothstep(0.55, 0.85, abs(vONormal.x));
+          float back = smoothstep(0.6, 0.9, vONormal.z);
+          // the crown, where the strings strike
+          float crown = smoothstep(${(-CROWN + 0.007).toFixed(4)}, ${(-CROWN + 0.003).toFixed(4)}, mpO.z) * (1.0 - side);
+          float strike = exp(-pow(mpO.y / 0.0034, 2.0));
+          mpFeltSmooth = crown * strike;
+          // each head's felt a little different, the fibres moving with it
+          float a = mpFelt(vOPos + vec3(vHammer * 0.0371, vHammer * 0.0213, 0.0), mpF);
+          float h = mpHash(vec3(vHammer, 3.0, 7.0));
+          vec3 wool = diffuseColor.rgb * a * mix(vec3(0.97, 0.98, 1.0), vec3(1.03, 1.0, 0.95), h);
+          // the layers, on the sides and the back
+          vec2 u = mpU(mpO.y, mpO.z, vec4(${HEAD_BACK.toFixed(4)}, ${U_DEPTH.toFixed(4)}, ${U_HALF.toFixed(4)}, 0.0));
+          float layers = max(side, back);
+          float line = (1.0 - smoothstep(0.00045, 0.00045 + max(0.00025, 1.5 * mpF), u.x)) * layers;
+          mpWoodIn = u.y * layers * smoothstep(0.00025, 0.0006, u.x);
+          vec3 beech = vec3(0.72, 0.55, 0.35) * (0.94 + 0.08 * mpNoise(vec3(vOPos.x * 300.0, vOPos.y * 4000.0, vOPos.z * 300.0)));
+          vec3 c = mix(wool, beech, mpWoodIn);
+          c = mix(c, vec3(0.32, 0.05, 0.05) * (0.9 + 0.2 * a), line);
+          // the strike line, pressed smooth and a little yellowed, with three grooves
+          float g = 0.0;
+          for (int k = -1; k <= 1; k++) { float d = (mpO.x - float(k) * 0.0024) / 0.00045; g += exp(-d * d); }
+          c *= mix(vec3(1.0), vec3(0.95, 0.91, 0.8) * (1.0 - 0.28 * min(g, 1.0)), mpFeltSmooth);
+          // the number, stamped on the upper side by the moulding, upright to someone looking in from the keys
+          float top = smoothstep(0.4, 0.7, vONormal.y) * (1.0 - side);
+          float ink = top * mpStamp(vec2(mpO.x, ${(HEAD_BACK - 0.0058).toFixed(4)} - mpO.z), vHammer + 1.0, 0.00056, mpF);
+          c = mix(c, vec3(0.2, 0.185, 0.2), 0.62 * ink * (0.7 + 0.3 * mpNoise(vOPos * 3000.0)));
+          diffuseColor.rgb = c;
+          mpFeltH *= 1.0 - mpWoodIn;
+        }`,
+        afterRough: /* glsl */ `roughnessFactor = mix(roughnessFactor, 0.55, mpWoodIn);${DUST}`,
+        afterNormal: FELT_NORMAL,
+        afterAO: CAVITY,
+        bounce: 0.75,
+      },
+    ),
   );
+  // inside the felt now, where it belongs: what shows of it is the U on the sides
   const underfelt = patch(
     new THREE.MeshPhysicalMaterial({ color: 0x8e2019, roughness: 0.92, sheen: 1, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xd06050) }),
     { afterMap: /* glsl */ `diffuseColor.rgb *= 0.88 + 0.16 * mpNoise(vWPos * 2000.0);`, afterAO: CAVITY, bounce: 0.7 },
   );
-  const damperFelt = patch(
-    new THREE.MeshPhysicalMaterial({ color: 0xf1eee7, roughness: 0.95, sheen: 1, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff) }),
-    { afterMap: /* glsl */ `diffuseColor.rgb *= 0.9 + 0.12 * mpNoise(vWPos * 1800.0);`, afterAO: CAVITY, bounce: 0.7 },
+  const damperFelt = feltify(
+    patch(
+      new THREE.MeshPhysicalMaterial({ color: 0xece4d4, roughness: 1, specularIntensity: 0.1, sheen: 1, sheenRoughness: 0.85, sheenColor: new THREE.Color(0xa8a194) }),
+      {
+        vertexHead: INSTANCE_VS_HEAD,
+        vertexEnd: INSTANCE_VS,
+        fragHead: 'flat varying float vHammer;\n' + DETAIL_GLSL + FELT_GLSL,
+        afterMap: /* glsl */ `diffuseColor.rgb *= mpFelt(vOPos + vec3(vHammer * 0.0371, vHammer * 0.0213, 0.0), mpFoot()) * (0.97 + 0.06 * mpHash(vec3(vHammer, 5.0, 1.0)));`,
+        afterRough: DUST,
+        afterNormal: FELT_NORMAL,
+        afterAO: CAVITY,
+        bounce: 0.75,
+      },
+    ),
   );
-  // wood, buckskin, felt strips and painted iron, by vertex colour
+  // wood, buckskin, felt strips, cloth and painted iron, by vertex colour: the
+  // wood with a fine straight grain along each part, the felt and cloth with fibres
   const wood = patch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62 }), {
-    afterMap: /* glsl */ `diffuseColor.rgb *= 0.88 + 0.22 * mpNoise(vWPos * vec3(260.0, 18.0, 260.0)) + 0.06 * mpNoise(vWPos * 1500.0);`,
+    fragHead: DETAIL_GLSL + FELT_GLSL + WOOD_GLSL,
+    afterMap: /* glsl */ `
+    float mpCloth = 0.0;
+    {
+      float mpF = mpFoot();
+      #ifdef USE_INSTANCING
+      vec3 mpP = vOPos;
+      #else
+      vec3 mpP = vWPos;
+      #endif
+      float wd = mpWoodness(vColor.rgb);
+      mpCloth = mpClothness(vColor.rgb);
+      float other = 0.95 + 0.1 * mpNoise(vWPos * 1500.0) * mpRes(0.0007, mpF);
+      diffuseColor.rgb *= mix(mix(other, mpGrain(mpP, mpF), wd), mpFelt(mpP, mpF), mpCloth);
+      mpFeltH *= mpCloth;
+    }`,
+    afterRough: /* glsl */ `roughnessFactor = mix(roughnessFactor, 1.0, mpCloth);${DUST}`,
+    afterNormal: FELT_NORMAL,
     afterAO: CAVITY,
     bounce: 0.7,
   });
-  const plate = patch(new THREE.MeshPhysicalMaterial({ color: 0xdcb46a, metalness: 0.45, roughness: 0.4, clearcoat: 0.3, clearcoatRoughness: 0.3 }), {
-    // cast iron under gold paint: a sandy casting texture, the paint thinner on the edges
-    afterMap: /* glsl */ `diffuseColor.rgb *= 0.86 + 0.2 * mpFbm(vWPos * 140.0) - 0.05 * mpNoise(vWPos * 2600.0);`,
-    afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpFbm(vWPos * 220.0) - 0.5) * 0.25, 0.2, 0.8);`,
+  // The plate's gold paint: bronze powder in lacquer over sand-cast iron, so
+  // fine flakes catch the light up close and it reads as satin gold further
+  // off; the maker's name and the casting's legends raised across its top.
+  const plate = patch(new THREE.MeshPhysicalMaterial({ color: 0xecd384, metalness: 0.38, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.18, specularColor: new THREE.Color(0xffe2a0) }), {
+    uniforms: { uLetters: { value: letteringTexture(MAKER) } },
+    fragHead: DETAIL_GLSL + GOLD_GLSL,
+    afterMap: /* glsl */ `
+    {
+      float mpF = mpFoot();
+      diffuseColor.rgb *= 0.9 + 0.14 * mpFbm(vWPos * 140.0) - 0.05 * mpNoise(vWPos * 2600.0) * mpRes(0.0004, mpF);
+      ${LETTERING_MAP}
+    }`,
+    afterRough: GOLD_ROUGH + DUST,
+    afterNormal: GOLD_NORMAL + LETTERING_NORMAL,
     afterAO: CAVITY,
     bounce: 0.6,
   });
@@ -282,7 +386,10 @@ function materials() {
     afterAO: CAVITY,
     bounce: 0.5,
   });
-  const copper = patch(new THREE.MeshPhysicalMaterial({ color: 0xb4703c, metalness: 1, roughness: 0.3, transparent: true, depthWrite: false }), {
+  // copper winding: its turns face every way along the string, so it catches
+  // the light from far more directions than a smooth wire and never goes black
+  // just because it faces the dark cabinet
+  const copper = patch(new THREE.MeshPhysicalMaterial({ color: 0xc78150, metalness: 0.88, roughness: 0.42, transparent: true, depthWrite: false }), {
     uniforms: { uViewH: viewH },
     vertexHead: STRING_VS_HEAD,
     afterBegin: STRING_VS,
@@ -296,12 +403,25 @@ function materials() {
     }
     ${STRING_COVERAGE}`,
     afterRough: STRING_ROUGH,
-    afterNormal: STRING_NORMAL,
-    afterAO: CAVITY,
-    bounce: 0.5,
+    afterNormal: /* glsl */ `${STRING_NORMAL}
+    {
+      // the turns tilt the normal back and forth along the string
+      float mpA = vWPos.y * 5200.0 + vWPos.x * 2100.0;
+      float mpFade = (1.0 - smoothstep(0.4, 1.6, fwidth(mpA))) * (1.0 - smoothstep(0.3, 1.0, vSwing / vRad));
+      vec3 mpAx = normalize(cross(normalize(vSideV), normalize(vFrontV)));
+      normal = normalize(normal + mpAx * 0.5 * mpFade * cos(mpA));
+    }`,
+    // ... the room's bounced light comes back off the turns in the copper's own colour
+    afterAO: /* glsl */ `
+    if (uBounce > 0.0) reflectedLight.indirectSpecular += uBounce * 0.45 * mpBounce(vWPos, normalize(vWNormal)) * material.specularColor;
+    ${CAVITY}`,
+    bounce: 1,
   });
   const soundboard = patch(new THREE.MeshPhysicalMaterial({ color: 0xcc9e62, roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.3 }), {
-    // quarter-sawn spruce, its grain on the diagonal, under old varnish
+    uniforms: { uDecal: { value: decalTexture(MAKER) } },
+    fragHead: DETAIL_GLSL,
+    // quarter-sawn spruce, its grain on the diagonal, under old varnish; the
+    // maker's gold transfer in the treble; a film of dust over it all
     afterMap: /* glsl */ `
     {
       vec2 sp = vec2(vWPos.x * 0.83 + vWPos.y * 0.56, vWPos.y * 0.83 - vWPos.x * 0.56);
@@ -309,7 +429,15 @@ function materials() {
       float mpFade = 1.0 - smoothstep(0.5, 1.8, fwidth(mpA));
       float late = smoothstep(0.55, 1.0, 0.5 + 0.5 * sin(mpA));
       diffuseColor.rgb *= mix(0.93, mix(1.0, 0.82, late), mpFade) * (0.9 + 0.16 * mpFbm(vec3(sp * vec2(2.0, 30.0), 3.0)));
+    }
+    ${DECAL_MAP}
+    {
+      float mpF = mpFoot();
+      float mpD = (0.35 + 0.65 * smoothstep(0.3, 0.75, mpFbm(vWPos * 60.0))) * mix(0.5, step(0.82, mpHash(floor(vWPos * 2600.0))), mpRes(0.0004, mpF));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.5, 0.47, 0.43), 0.12 * mpD * (1.0 - mpDecal));
     }`,
+    afterRough: /* glsl */ `roughnessFactor = mix(roughnessFactor, 0.34, mpDecal);`,
+    afterMetal: /* glsl */ `metalnessFactor = mix(metalnessFactor, 0.3, mpDecal);`,
     afterAO: CAVITY,
     bounce: 0.6,
   });
@@ -331,30 +459,43 @@ const IRON: C3 = [0.07, 0.07, 0.075];
 const WIRE: C3 = [0.62, 0.62, 0.64];
 
 /**
+ * The hammer head, as in the footage: thick cream felt nearly as wide as the
+ * keys' spacing allows, longer from the moulding to the crown than it is
+ * tall, with a broad, round crown and soft, pillowy edges.
+ */
+const FELT_W = HEAD_W + 0.0002;
+/** how far the felt's back (where the moulding goes in) stands behind the head's centre, and its half-height there */
+const HEAD_BACK = 0.0125;
+const HEAD_HALF = 0.0165;
+/** the red underfelt's U, inside: from the back to its front, and the half-height of its arms */
+const U_DEPTH = 0.0235;
+const U_HALF = 0.0105;
+const BEECH: C3 = [0.72, 0.55, 0.35];
+
+/**
  * A hammer's felt, around its pivot: an egg-shaped profile from the back of
  * the head (zBack) over a broad rounded crown (`crown` toward the strings,
  * -z) whose height is 2h; tapering from wBack wide at the moulding to wCrown
- * at the crown, with softly rounded edges; the strike line worn flat and
- * pressed in by `flat`. Centred SHANK above the pivot.
+ * at the crown, with soft, rounded edges (bevel); the strike line worn flat
+ * and pressed in by `flat`. Centred SHANK above the pivot. The wool is a
+ * little uneven: every vertex sits a few hundredths of a millimetre in or out.
  */
-function feltShape(zBack: number, crown: number, h: number, wBack: number, wCrown: number, flat: number): THREE.BufferGeometry {
-  const K = 32;
+function feltShape(zBack: number, crown: number, h: number, wBack: number, wCrown: number, flat: number, bevel = 0.0021, K = 30, bevelSegments = 3): THREE.BufferGeometry {
   const D = zBack + crown;
   const pts: THREE.Vector2[] = [];
   for (let k = 0; k <= K; k++) {
     const th = -Math.PI / 2 + (Math.PI * k) / K;
     const y = h * Math.sin(th);
-    const z = zBack - D * Math.pow(Math.max(0, Math.cos(th)), 0.7) + flat * Math.exp(-((y / 0.0016) ** 2));
+    const z = zBack - D * Math.pow(Math.max(0, Math.cos(th)), 0.85) + flat * Math.exp(-((y / 0.0016) ** 2));
     pts.push(new THREE.Vector2(z, y));
   }
-  const bevel = 0.0009;
   const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts), {
     depth: wBack - 2 * bevel,
     bevelEnabled: true,
     bevelThickness: bevel,
     bevelSize: bevel,
     bevelOffset: -bevel,
-    bevelSegments: 3,
+    bevelSegments,
     curveSegments: 1,
   });
   // shape (x, y) = world (z, y); extruded along world x
@@ -369,18 +510,29 @@ function feltShape(zBack: number, crown: number, h: number, wBack: number, wCrow
   g.deleteAttribute('normal');
   const m = mergeVertices(g, 1e-7);
   m.computeVertexNormals();
+  // uneven wool, never at the crown's strike line
+  const p = m.getAttribute('position');
+  const n = m.getAttribute('normal');
+  for (let i = 0; i < p.count; i++) {
+    const q = [p.getX(i), p.getY(i), p.getZ(i)];
+    const cell = Math.imul(Math.floor(q[0] * 900), 73856093) ^ Math.imul(Math.floor(q[1] * 900), 19349663) ^ Math.imul(Math.floor(q[2] * 900), 83492791);
+    const atStrike = Math.exp(-(((q[1] - SHANK) / 0.004) ** 2)) * (q[2] < -crown + 0.004 ? 1 : 0);
+    const d = (hash01(cell, 5) - 0.5) * 0.00008 * (1 - atStrike);
+    p.setXYZ(i, q[0] + n.getX(i) * d, q[1] + n.getY(i) * d, q[2] + n.getZ(i) * d);
+  }
+  m.computeVertexNormals();
   return m;
 }
 
-/** the outer felt: white, wrapping the head, with the crown that meets the string */
-const hammerHead = () => feltShape(0.0085, CROWN, 0.024, HEAD_W, 0.0082, 0.00045);
-/** the underfelt: red, under the outer felt, stepping out behind it toward the moulding */
-const hammerUnderfelt = () => feltShape(0.0107, 0.0125, 0.0192, HEAD_W - 0.0004, 0.0084, 0);
+/** the outer felt: cream, wrapping the head, with the crown that meets the string */
+const hammerHead = () => feltShape(HEAD_BACK, CROWN, HEAD_HALF, FELT_W, FELT_W * 0.9, 0.00045);
+/** the underfelt, inside the outer felt: what shows of it is its U on the sides (the felt's shader) */
+const hammerUnderfelt = () => feltShape(HEAD_BACK - 0.0008, U_DEPTH - HEAD_BACK - 0.0005, U_HALF - 0.0006, FELT_W - 0.0018, FELT_W * 0.8, 0, 0.0008, 8, 1);
 
 function hammerWood(): THREE.BufferGeometry {
   return merged([
     rod([0, 0.012, 0.011], [0, 0.104, 0.011], 0.0027, MAPLE), // shank
-    box(HEAD_W * 0.86, 0.026, 0.005, 0, SHANK, 0.012, [0.42, 0.24, 0.14]), // moulding, mahogany
+    box(FELT_W - 0.0012, 0.015, 0.0095, 0, SHANK - 0.0035, HEAD_BACK + 0.0035, BEECH), // moulding, beech, its tail out behind the felt down to the shank
     box(0.01, 0.028, 0.03, 0, 0.008, 0.002, BUCKSKIN), // butt
     box(0.0102, 0.006, 0.03, 0, -0.008, 0.002, RED_FELT),
     rod([0, 0.03, 0.016], [0, 0.03, 0.04], 0.0019, MAPLE, 6), // backcheck catcher
@@ -390,14 +542,15 @@ function hammerWood(): THREE.BufferGeometry {
 
 /** damper around its lever pivot: felt pressing the strings (-z), head block, wire down to the lever beside the hammer */
 function damperFeltGeo(): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(0.0105, 0.03, 0.0115, 1, 1, 1).translate(0, 0.165, -0.0157);
-  const p = g.toNonIndexed();
-  p.deleteAttribute('uv');
-  return p;
+  // a soft block of felt with rounded edges, its face on the strings where it always was
+  const g = new RoundedBoxGeometry(0.0105, 0.03, 0.0105, 2, 0.0016).translate(0, 0.165, -0.01625);
+  g.deleteAttribute('uv');
+  return g;
 }
 
 function damperWood(): THREE.BufferGeometry {
   return merged([
+    box(0.0101, 0.029, 0.0013, 0, 0.165, -0.0104, RED_FELT), // the red cloth the felt is glued on with
     box(0.0098, 0.026, 0.011, 0, 0.165, -0.0045, WALNUT),
     box(0.003, 0.006, 0.006, 0.0058, 0.154, -0.004, WIRE),
     rod([0.0058, 0.0, -0.004], [0.0058, 0.155, -0.004], 0.0006, WIRE, 5),
