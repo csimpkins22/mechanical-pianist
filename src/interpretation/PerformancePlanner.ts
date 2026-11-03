@@ -7,11 +7,16 @@ import { keyOf } from '../core/keyboard';
 import { fingerHand, pairCost, type Bans } from './Fingering';
 import { assignHands, trackHands } from './HandAssignment';
 
-export function planPerformance(score: Score, overrides: Map<number, Override> = new Map(), bans: Bans = new Map()): Performance {
+export interface PlanOptions {
+  /** where the hands are before the first note (each hand's centre, x): live playing knows */
+  handsAt?: Partial<Record<Hand, number>>;
+}
+
+export function planPerformance(score: Score, overrides: Map<number, Override> = new Map(), bans: Bans = new Map(), opts: PlanOptions = {}): Performance {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const warnings: string[] = [];
   const tracks = trackHands(score.tracks, score.selectedTracks, score.notes);
-  const hands = assignHands(score.notes, overrides, tracks);
+  const hands = assignHands(score.notes, overrides, tracks, 40, opts.handsAt);
 
   const notes: PerformanceNote[] = score.notes.map((n) => {
     const flags: NoteFlag[] = [];

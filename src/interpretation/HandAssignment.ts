@@ -109,6 +109,8 @@ export function assignHands(
   overrides: Map<number, Override>,
   tracks: Map<number, Hand> | null,
   beamWidth = 40,
+  /** where the hands are before the first note (the centre of each hand, x), when that is known (live playing) */
+  from?: Partial<Record<Hand, number>>,
 ): Map<number, Hand> {
   const groups = groupOnsets(notes);
   const startL: HState = { pos: keyOf(48).x, last: -10, held: [] };
@@ -121,6 +123,8 @@ export function assignHands(
     startL.pos = Math.min(startL.pos, lo + 0.04);
     startR.pos = Math.max(startR.pos, hi - 0.04);
   }
+  if (from?.L !== undefined) startL.pos = from.L;
+  if (from?.R !== undefined) startR.pos = from.R;
   let beam: BeamState[] = [{ L: startL, R: startR, cost: 0, parent: null, assign: null }];
 
   for (const g of groups) {

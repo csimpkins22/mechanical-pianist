@@ -363,14 +363,24 @@ function beatTimes(tempos: { time: number; bpm: number }[], duration: number): n
   return out;
 }
 
+export interface DirectorOptions {
+  /** with nothing to cut to (no notes: live playing), a new shot every this many seconds */
+  cadence?: number;
+  /** the hand a shot is about, decided as it begins (live playing: whichever hand is playing then) */
+  handAt?: (t: number) => Hand;
+}
+
 export class ShotDirector {
   readonly segments: Segment[] = [];
+  private handAt?: (t: number) => Hand;
 
   constructor(
     private ctx: DirectorContext,
     notes: NoteRef[],
     tempos: { time: number; bpm: number }[],
+    opts: DirectorOptions = {},
   ) {
+    this.handAt = opts.handAt;
     const D = ctx.duration;
     const sorted = notes.slice().sort((a, b) => a.start - b.start);
     // onsets, chords merged
@@ -431,7 +441,11 @@ export class ShotDirector {
     }
     const cuts: number[] = [];
     if (isFinite(best[N - 1])) for (let j = N - 1; j > 0; j = from[j]) cuts.push(cands[j].t);
-    else for (let t = Math.floor((D - 0.01) / 6) * 6; t > 0; t -= 6) cuts.push(t); // pathological files: every 6 s
+    else {
+      // nothing to cut to (pathological files, live playing): every few seconds
+      const every = opts.cadence ?? 6;
+      for (let t = Math.floor((D - 0.01) / every) * every; t > 0; t -= every) cuts.push(t);
+    }
     cuts.push(0);
     cuts.reverse();
     if (cuts[cuts.length - 1] < D) cuts.push(D);
@@ -515,7 +529,11 @@ export class ShotDirector {
   }
 
   evaluate(t: number): CameraState {
-    const s = this.segAt(clamp(t, 0, this.ctx.duration));
+    let s = this.segAt(clamp(t, 0, this.ctx.duration));
+    if (this.handAt) {
+      const hand = this.handAt(s.a);
+      s = { ...s, hand, side: hand === 'R' ? 1 : -1 };
+    }
     return s.shot.frame(this.ctx, t, s);
   }
 

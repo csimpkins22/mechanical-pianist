@@ -43,6 +43,14 @@ URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`,
 
 ⚙ → **Export** renders the performance as an MP4: choose its shape (16:9, 2.39:1 scope, 1.85:1, 4:3, 1:1, 4:5 or 9:16 vertical), its size (1080p, 1440p or 4K on the long side), 24, 30 or 60 fps, and the whole piece or from the playhead. Every frame is drawn offline at its exact time at high quality, so a slower computer only takes longer, never drops a frame; the piano is rendered offline too (`AudioEngine.renderOffline`), with the same room, pedal halo and key noises. Both are encoded in the browser with WebCodecs (H.264 at a generous bitrate; AAC, or Opus where the browser has no AAC encoder) and muxed with `mp4-muxer` into a file streamed out as it is written (`app/VideoExport.ts`). The camera, style and look are the current ones; the interface is HTML over the canvas, so it never appears in the film, and the letterbox bars are left off because the frame itself has the chosen shape. In the published artifact the page offers the file through its `downloads` capability (the viewer confirms the save); elsewhere it is an ordinary download. `tools/render-video.cjs` renders a stretch to video from the command line instead (silent).
 
+### Playing live
+
+**Play live** (or **K**) hands the robot to you: play a MIDI keyboard, or the computer keyboard, and the hands play what you play a moment later. Any MIDI keyboard connected to the computer works (Chrome and Edge, through Web MIDI; plug it in or out at any time; the sustain pedal too). The computer keyboard is laid out the way music software lays it out: the middle row from **A** is the white keys from C, the row above (**W E T Y U O P**) the black keys, **Z** / **X** move an octave down or up, **C** / **V** play softer or louder, and the space bar is the sustain pedal. The small keyboard in the panel shows the layout, lights up with whatever is held, and can itself be played with a finger on a touch screen. Where the page cannot reach MIDI devices (some browsers, and the published artifact's frame), the computer keyboard and the touch keyboard still work.
+
+The robot plays each note a fixed delay after you (0.35 s by default; 0.2 to 1 s under **Robot follows**), which is how far ahead it can see: like a sight-reader, it reads that much of what is coming and moves its hands in time to play it. By default the piano sounds as the robot strikes, so picture and sound go together; **Hear my playing at once** plays your notes immediately and lets the robot follow. The camera keeps working (1–4 or the switch in the panel): the cinematic director, with no score to cut to, moves between calm shots every few seconds, opening along the keys into the light, with close-ups on whichever hand is playing. **Esc** or **Back to the piece** returns to the piece where it was.
+
+How it works (`src/live/`). A piece is planned ahead in one go; live playing is planned a few seconds at a time, by the same layers. On a fixed grid (every 1/30 s), whenever something was played (or a key is still held and its hold needs extending), a *window* is planned from everything known at that moment: the last second of what the robot has played and everything it has yet to play, with keys still held assumed held a little longer (`LivePlanner`). Hand assignment starts from where the hands actually are, and the hand and finger of every note the robot is already playing are fixed (committed), so later windows can only plan what has not yet been shown. Windows are planned in a worker with a lighter check of the contacts (one round instead of four: a window takes a few to a few tens of milliseconds), and each takes over 0.11 s after its grid moment. At a takeover the new window's wrist path is joined to the one on screen: the difference in position and speed fades out along a quintic, over longer when the hand has further to go, so the hands never jump; the fingers and keys cross-fade over 90 ms (`LivePerformer`). Nothing before a takeover is ever planned again. Planned synchronously (the tests), the robot is a pure function of the events: the same playing gives the same motion. The camera builds the cinematographer's curves (where the hands are, how far apart, which leads, how loud) as the music happens, from the hands as planned a moment ahead, smoothed causally (`LiveCamera`). The piano's sound is struck as each note is played and damped when it is let go, or when the pedal lifts (`LiveSession`, `AudioEngine.liveStrike`).
+
 ### Controls
 
 | Action | Control |
@@ -61,6 +69,7 @@ URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`,
 | Close the library, a dialog or the drawer | Esc |
 | Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
 | Kinematics overlay | D |
+| Play live (your MIDI keyboard, or the computer keyboard) | K, or Play live; then A–' and W–P as a piano, Z / X octave, C / V loudness, Space the pedal, 1–4 cameras, Esc to leave |
 
 ## The library
 
@@ -232,7 +241,8 @@ Nothing is integrated frame to frame. Planning happens once, and every frame is 
 * every key is down exactly at its onset and up after release;
 * every key that is going down or held down has its fingertip on it, within 2 mm, across the whole demo;
 * the state at any *t* is identical whatever order times are visited in;
-* scales, chords and leaps stay within reach.
+* scales, chords and leaps stay within reach;
+* playing live: every note played (a melody, a chord, fast repeats, both hands, a leap, the pedal) is struck the delay later with a fingertip on its key; the wrists never jump at a takeover; nothing already shown changes when more is played; the same playing gives the same robot; a note's hand and finger, once committed, are the ones it is played with.
 
 Tools: `node tools/shot.cjs out.png "?t=12&ui=0"` for stills, `node tools/render-video.cjs out.mp4 "?demo=phrase" 0 9.6` for frame-exact video, both against the dev server.
 
@@ -255,7 +265,9 @@ src/
   presentation/    SceneRenderer, PianoModel, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
   audio/           AudioEngine, synthPiano
-  ui/              AppUI, LibrarySheet, dom helpers, styles
+  ui/              AppUI, LibrarySheet, LivePanel, dom helpers, styles
+  live/            LivePlanner (a window of live playing), LivePerformer (windows on a grid, joined), LiveCamera,
+                   LiveInput (Web MIDI, computer keyboard), LiveSession, live.worker
   app/             App (master clock, transport, pieces), library, planner + planner.worker (worker + cache),
                    planCodec (prepared plan files), plan (IK-checked planning), settings
   music/           the bundled MIDI performances

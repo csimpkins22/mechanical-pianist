@@ -4,6 +4,7 @@ import { FRAME_STEP, SPEEDS, type App } from '../app/App';
 import { entryById } from '../app/library';
 import { el, escapeHtml, fmt, svg } from './dom';
 import { LibrarySheet, NOTE_ICON } from './LibrarySheet';
+import { KEYS_ICON, LivePanel } from './LivePanel';
 import { exportSize, exportSupport, exportVideo } from '../app/VideoExport';
 import { noteName } from '../core/keyboard';
 import type { Finger, Hand, PerformanceNote, TrackInfo } from '../core/types';
@@ -53,6 +54,7 @@ export class AppUI {
   private loopBtn!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
   private library!: LibrarySheet;
+  private livePanel!: LivePanel;
   private debugInfo!: HTMLDivElement;
   private toastEl!: HTMLDivElement;
   private idleTimer = 0;
@@ -129,7 +131,13 @@ export class AppUI {
       this.library.toggle();
     };
     const gear = this.btn(ICON.gear, 'Fingering, light, camera, sound and debug (A)', () => this.toggleDrawer());
-    right.append(this.speedSel, this.loopBtn, this.volBtn, vol, lib, gear);
+    const live = el('button', 'live-btn', `${svg(KEYS_ICON, 17)}<span>Play live</span>`);
+    live.title = 'Play a MIDI keyboard or the computer keyboard, and the robot plays it (K)';
+    live.onclick = (e) => {
+      e.stopPropagation();
+      this.livePanel.toggle(true);
+    };
+    right.append(this.speedSel, this.loopBtn, this.volBtn, vol, lib, live, gear);
     row.append(left, mid, right);
     this.bar.append(scrub, row);
     r.appendChild(this.bar);
@@ -167,6 +175,16 @@ export class AppUI {
     this.toastEl = el('div', 'toast');
     r.appendChild(this.toastEl);
     this.library = new LibrarySheet(this.app, r, { pickFile: () => this.pickFile(), toast: (m, ms) => this.toast(m, ms) });
+    this.livePanel = new LivePanel(this.app, r, {
+      openSettings: () => {
+        this.tab = 'light';
+        this.toggleDrawer(true);
+      },
+      closeOverlays: () => {
+        this.library.close();
+        this.toggleDrawer(false);
+      },
+    });
 
     this.bindDrop();
     this.bindKeys();
@@ -195,6 +213,7 @@ export class AppUI {
       this.lastFingerRefresh = -1;
     }
     if (what === 'loading') this.renderTitle();
+    if (what === 'live') this.livePanel?.sync();
     this.library.refresh(what);
     if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Camera)`, 6000);
     if (what === 'audio') {
@@ -389,9 +408,20 @@ export class AppUI {
   // ------------------------------------------------------------- keys & idle
   private bindKeys() {
     window.addEventListener('keydown', (e) => {
+      // playing live, the keyboard is a piano, even with a slider or switch in focus
+      // (Esc closes the drawer first, then leaves)
+      if (this.livePanel.active && !(e.target as HTMLElement).closest('select, textarea, input[type="text"]')) {
+        if (e.key === 'Escape' && this.drawer.classList.contains('open')) this.toggleDrawer(false);
+        else if (this.livePanel.onKey(e)) e.preventDefault();
+        return;
+      }
       if ((e.target as HTMLElement).closest('input, select, textarea')) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const a = this.app;
+      if (e.code === 'KeyK' && !this.library.isOpen && !document.querySelector('.modal-back')) {
+        this.livePanel.toggle(true);
+        return;
+      }
       if (e.key === 'Escape') {
         if (document.querySelector('.modal-back')) document.querySelector('.modal-back')!.remove();
         else if (this.library.isOpen) this.library.close();
@@ -486,7 +516,7 @@ export class AppUI {
     document.body.classList.remove('idle');
     clearTimeout(this.idleTimer);
     this.idleTimer = window.setTimeout(() => {
-      if (this.app.playing && !this.drawer.classList.contains('open')) document.body.classList.add('idle');
+      if (this.app.playing && !this.drawer.classList.contains('open') && !this.app.live) document.body.classList.add('idle');
     }, 2600);
   }
 
