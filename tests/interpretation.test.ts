@@ -127,6 +127,19 @@ describe('hand assignment', () => {
     expect(p.warnings.length).toBeGreaterThan(0);
   });
 
+  test('a bass note held under the pedal lets its hand go: the chord above is shared, not stretched over two octaves', () => {
+    // as in Debussy's Clair de lune, bar 15: a low octave caught by the pedal,
+    // then F-G♭-B♭ for the left hand and F-B♭-F an octave above for the right
+    // (with or without the pedal: a hand gives up a key rather than reach two octaves)
+    for (const pedalled of [true, false]) {
+      const s = scoreOf(line('D#1+D#2', { step: 2.5 }), line('F4+F#4+A#4+F5+A#5+F6', { start: 0.65, step: 1.4 }));
+      if (pedalled) s.pedal = [{ time: 0.15, down: true }, { time: 2.4, down: false }];
+      const p = planPerformance(s);
+      expect(p.notes.map((n) => `${noteName(n.midi)}${n.hand}`).join(' ')).toBe('D#1L D#2L F4L F#4L A#4L F5R A#5R F6R');
+      expect(p.notes.filter((n) => n.flags.includes('unreachable') || n.flags.includes('chord-overflow'))).toEqual([]);
+    }
+  });
+
   test('overrides are honoured', () => {
     const s = scoreOf(line('C4 D4 E4 F4 G4', { step: 0.25 }));
     const p = planPerformance(s, new Map([[2, { finger: 4 as const }]]));

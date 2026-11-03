@@ -13,6 +13,14 @@ import { poseHand, type HandPose } from './HandPoser';
 
 /** spacing of the moments refine checks through a held note (s) */
 const HOLD_PROBE = 0.2;
+/**
+ * The lowest the planned wrist may be brought to reach a key (m above the
+ * white key tops): about where the palm comes to rest on the keys. Ordinary
+ * playing keeps it near 6 cm; a chord that cannot be reached from here is left
+ * a fingertip short rather than pulling the hand down through the keyboard
+ * (and the pose solve keeps the palm itself clear of the keys: HandPoser).
+ */
+const WRIST_FLOOR = 0.036;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
 import { handOverlap, liftToClear } from './HandCollision';
 import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
@@ -282,7 +290,8 @@ export class PerformanceTimeline {
       const Z = track.z.data as Float32Array;
       for (let k = 0; k < n; k++) {
         X[k] += clamp(ax[k], -0.03, 0.03);
-        Y[k] += clamp(ay[k], -0.03, 0.03);
+        // reaching for a key may bring the hand down onto the keys, never into them
+        Y[k] = Math.max(Y[k] + clamp(ay[k], -0.03, 0.03), Math.min(Y[k], WRIST_FLOOR));
         Z[k] += clamp(az[k], -0.03, 0.03);
       }
     }

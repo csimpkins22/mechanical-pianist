@@ -7,6 +7,7 @@ import { PerformanceTimeline } from '../src/performance/PerformanceTimeline';
 import { RATE, give } from '../src/performance/MotionPlanner';
 import { Signal } from '../src/core/math';
 import { handOverlap } from '../src/performance/HandCollision';
+import { penetration } from '../src/performance/HandClearance';
 import { planPerformance } from '../src/interpretation/PerformancePlanner';
 import { buildScore, defaultTrackSelection, readMidi } from '../src/interpretation/MidiEngine';
 import { readFileSync } from 'node:fs';
@@ -263,5 +264,54 @@ describe('hands playing close together', { timeout: 120000 }, () => {
     }
     expect(deep / n).toBeLessThan(0.05);
     expect(worst).toBeLessThan(0.025);
+  });
+});
+
+describe('the keys are solid', { timeout: 120000 }, () => {
+  test('a chord beyond reach leaves a fingertip short: the hand never sinks into the keys', () => {
+    // two octaves for one hand (forced, as the left hand could not help): it
+    // reaches as far as it can and no further, rather than sinking through the
+    // keys toward the notes it cannot reach (as it once did in Clair de lune)
+    const s = scoreOf(
+      line('D#1+D#2', { step: 4, track: 1 }),
+      line('F4+F#4+A#4+F5+A#5+F6 r D#4+F#4+A#4+D#5+A#5+D#6', { start: 0.65, step: 0.7 }),
+    );
+    s.pedal = [{ time: 0.15, down: true }];
+    const overrides = new Map(s.notes.filter((n) => n.midi >= 60).map((n) => [n.id, { hand: 'R' as const }]));
+    const { timeline: tl, perf } = planChecked(s, overrides);
+    expect(perf.notes.some((n) => n.flags.includes('unreachable'))).toBe(true);
+    let worst = -1;
+    let lowest = 1;
+    for (let t = 0; t < tl.duration; t += 1 / 60) {
+      const f = tl.evaluate(t);
+      for (const hand of ['L', 'R'] as Hand[]) {
+        worst = Math.max(worst, penetration(f.hands[hand], f.keys).body);
+        lowest = Math.min(lowest, f.hands[hand].wrist[1]);
+      }
+    }
+    expect(worst, 'deepest the palm or knuckles go into the keys (m)').toBeLessThan(0.002);
+    // (it used to sink to 6 cm below them)
+    expect(lowest, 'lowest wrist (m above the white keys)').toBeGreaterThan(0.02);
+  });
+
+  test('Chopin\'s Raindrop prelude, bars 72-75: the right hand stays on the keys, not in them', () => {
+    // where the hands crowd together near the end (it used to sink the right hand's knuckles into the keys)
+    const parsed = readMidi(new Uint8Array(readFileSync('src/music/chopin-raindrop-prelude.mid')), 'raindrop.mid');
+    const full = buildScore(parsed, defaultTrackSelection(parsed.tracks));
+    const [a, b] = [211, 221];
+    const notes = full.notes.filter((n) => n.start >= a && n.start < b).map((n, id) => ({ ...n, id, start: n.start - a, end: Math.min(n.end, b) - a }));
+    const score = { ...full, notes, pedal: full.pedal.filter((p) => p.time >= a && p.time < b).map((p) => ({ ...p, time: p.time - a })), duration: b - a + 1 };
+    const { timeline: tl } = planChecked(score);
+    let worst = -1;
+    let lowest = 1;
+    for (let t = 0; t < score.duration - 1; t += 1 / 60) {
+      const f = tl.evaluate(t);
+      for (const hand of ['L', 'R'] as Hand[]) {
+        worst = Math.max(worst, penetration(f.hands[hand], f.keys).body);
+        lowest = Math.min(lowest, f.hands[hand].wrist[1]);
+      }
+    }
+    expect(worst, 'deepest the palm or knuckles go into the keys (m)').toBeLessThan(0.002);
+    expect(lowest, 'lowest wrist (m above the white keys)').toBeGreaterThan(0.02);
   });
 });

@@ -6,8 +6,15 @@
 // travel speed, hand collision, register and (when the file has them) the
 // MIDI track a note came from. The cheapest path through the piece wins, so a
 // split decision can depend on what comes several groups later.
+//
+// A hand holding a key is not tied to it: it may let go to play elsewhere (a
+// bass note caught by the pedal goes on sounding while the hand moves up to
+// play a chord in the middle of the keyboard). Letting go costs a little,
+// more when no pedal holds the sound, so a hand keeps what it can comfortably
+// hold and gives up only what would stretch it beyond reach.
 import { keyOf, WHITE_PITCH } from '../core/keyboard';
-import type { Hand, Override, ScoreNote, TrackInfo } from '../core/types';
+import type { Hand, Override, PedalEvent, ScoreNote, TrackInfo } from '../core/types';
+import { pedalDownAt } from './MidiEngine';
 
 export interface OnsetGroup {
   time: number;
@@ -78,17 +85,42 @@ export function trackHands(tracks: TrackInfo[], selected: number[], notes: Score
   ]);
 }
 
-function handCost(h: HState, xs: number[], t: number, hand: Hand): { cost: number; next: HState } {
-  const held = h.held.filter((n) => n.end > t + 0.01);
-  if (!xs.length) return { cost: 0, next: { ...h, held } };
-  const all = xs.concat(held.map((n) => n.x));
+/** what it costs to let go of a sounding key to play elsewhere: little under the pedal, more without it */
+const RELEASE_PEDALLED = 0.6;
+const RELEASE_DRY = 3;
+
+/** the cost of a hand shape: more than five keys, and spans beyond comfort and beyond reach */
+function shapeCost(xs: number[]): number {
   let cost = 0;
-  if (all.length > 5) cost += 400 * (all.length - 5);
-  const lo = Math.min(...all);
-  const hi = Math.max(...all);
-  const span = hi - lo;
+  if (xs.length > 5) cost += 400 * (xs.length - 5);
+  const span = Math.max(...xs) - Math.min(...xs);
   if (span > COMFORT_SPAN) cost += (12 * (span - COMFORT_SPAN)) / W;
   if (span > MAX_SPAN) cost += (150 * (span - MAX_SPAN)) / W;
+  return cost;
+}
+
+function handCost(h: HState, xs: number[], t: number, hand: Hand, pedalled: boolean): { cost: number; next: HState } {
+  let held = h.held.filter((n) => n.end > t + 0.01);
+  if (!xs.length) return { cost: 0, next: { ...h, held } };
+  // keep holding everything, or let go of what lies furthest from the new
+  // notes, one key at a time, whichever costs least
+  let cost = shapeCost(xs.concat(held.map((n) => n.x)));
+  if (held.length && cost > 0) {
+    const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const byDistance = held.slice().sort((a, b) => Math.abs(b.x - mid) - Math.abs(a.x - mid));
+    const each = pedalled ? RELEASE_PEDALLED : RELEASE_DRY;
+    for (let k = 1; k <= byDistance.length; k++) {
+      const kept = byDistance.slice(k);
+      const c = each * k + shapeCost(xs.concat(kept.map((n) => n.x)));
+      if (c < cost) {
+        cost = c;
+        held = kept;
+      }
+    }
+  }
+  const all = xs.concat(held.map((n) => n.x));
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
   const centre = (lo + hi) / 2;
   const d = Math.abs(centre - h.pos);
   const dt = Math.max(0.04, t - h.last);
@@ -109,6 +141,7 @@ export function assignHands(
   overrides: Map<number, Override>,
   tracks: Map<number, Hand> | null,
   beamWidth = 40,
+  pedal: PedalEvent[] = [],
 ): Map<number, Hand> {
   const groups = groupOnsets(notes);
   const startL: HState = { pos: keyOf(48).x, last: -10, held: [] };
@@ -126,6 +159,7 @@ export function assignHands(
   for (const g of groups) {
     const k = g.notes.length;
     const xs = g.notes.map((n) => keyOf(n.midi).x);
+    const pedalled = pedalDownAt(pedal, g.time);
     const forced = g.notes.map((n) => overrides.get(n.id)?.hand);
     const candidates: Hand[][] = [];
     for (let s = 0; s <= k; s++) {
@@ -137,8 +171,8 @@ export function assignHands(
       for (const a of candidates) {
         const lx = xs.filter((_, i) => a[i] === 'L');
         const rx = xs.filter((_, i) => a[i] === 'R');
-        const l = handCost(st.L, lx, g.time, 'L');
-        const r = handCost(st.R, rx, g.time, 'R');
+        const l = handCost(st.L, lx, g.time, 'L', pedalled);
+        const r = handCost(st.R, rx, g.time, 'R', pedalled);
         let cost = st.cost + l.cost + r.cost;
         // the hands must not collide: left stays left of right
         const lPos = lx.length ? l.next.pos : st.L.pos;
