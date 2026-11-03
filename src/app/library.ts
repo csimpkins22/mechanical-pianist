@@ -6,6 +6,7 @@ import nocturneOp9 from '../music/chopin-nocturne-op9-2.mid?inline';
 import raindrop from '../music/chopin-raindrop-prelude.mid?inline';
 import gnossienne from '../music/satie-gnossienne-1.mid?inline';
 import mapleLeaf from '../music/joplin-maple-leaf-rag.mid?inline';
+import extra from 'virtual:extra-music';
 
 export type LibraryGroup = 'Original' | 'Classical' | 'Songs';
 
@@ -31,8 +32,8 @@ function fromDataUrl(url: string): () => Uint8Array {
   };
 }
 
-/** in programme order: classical, then originals; each by year */
-export const LIBRARY: LibraryEntry[] = [
+/** the repository's own pieces: classical, then originals; each by year */
+const BUILT_IN: LibraryEntry[] = [
   {
     id: 'nocturne-op9-2',
     title: 'Nocturne in E♭ major, Op. 9 No. 2',
@@ -96,6 +97,18 @@ export const LIBRARY: LibraryEntry[] = [
 ];
 
 /** what plays first */
-export const DEFAULT_PIECE = 'gnossienne';
+/**
+ * In programme order (songs, classical, originals; each group in its given
+ * order), with any extra pieces built in from outside the repository
+ * (tools/extra-music.cjs) in their groups.
+ */
+const GROUPS: LibraryGroup[] = ['Songs', 'Classical', 'Original'];
+const EXTRA: LibraryEntry[] = extra.pieces.map(({ data, ...p }) => ({ ...p, bytes: fromDataUrl(data) }));
+export const LIBRARY: LibraryEntry[] = [...EXTRA, ...BUILT_IN.filter((e) => !EXTRA.some((x) => x.id === e.id))]
+  .map((e, i) => ({ e, i }))
+  .sort((a, b) => GROUPS.indexOf(a.e.group) - GROUPS.indexOf(b.e.group) || a.i - b.i)
+  .map(({ e }) => e);
+
+export const DEFAULT_PIECE: string = extra.defaultPiece ?? 'gnossienne';
 
 export const entryById = (id: string) => LIBRARY.find((e) => e.id === id);
