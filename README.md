@@ -51,12 +51,19 @@ The repository carries only music that can be shared freely. To build a version 
 
 ⚙ → Camera → **Open the piano** (or **I**) takes the upper front panel off, with its music desk and candle sconces, and shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
 
-* a hammer per key, with a white felt head over a red underfelt and a mahogany moulding. The head has a rounded crown, worn flat with string grooves at the strike line, and tapers toward the string. It sits on a maple shank and a buckskin butt.
-* a damper per key up to E6 (F6 and above have none, as in the sound), with felt on a wooden head and a wire running down beside the hammer.
+* a hammer per key, its head of thick cream felt wrapped over a red underfelt and a beech moulding, nearly as wide as the keys' spacing allows, so that at rest the row reads as one ribbed wall. The head is longer from the moulding to the crown than it is tall, with a broad round crown, pressed smoother and a little yellowed at the strike line, where the strings have left their grooves. Each head has its number stamped on its upper side. It sits on a maple shank and a buckskin butt.
+* a damper per key up to E6 (F6 and above have none, as in the sound), a soft block of felt glued with red cloth to a wooden head, and a wire running down beside the hammer.
 * wippens on the key backs, and the flange, rest and damper rails on cast brackets.
 * 236 strings: steel trichords in the treble and tenor, and copper-wound bichords and single strings in the bass, overstrung on a steep diagonal across the tenor.
-* a gilded cast-iron plate with its pin field, struts, bolts and a hitch-pin rail; tuning pins with their coils of string, and hitch pins.
-* the treble and bass bridges on a spruce soundboard.
+* a cast-iron plate in gold paint with its pin field, struts, bolts and a hitch-pin rail, the maker's name and the casting's legends raised across its top; tuning pins with their coils of string, and hitch pins.
+* the treble and bass bridges on a spruce soundboard, with the maker's gold transfer in the treble.
+
+The surfaces were matched against slow-motion footage of a real action (`presentation/InteriorShading.ts`), with all fine detail filtered by its size on screen, so it fades to its average before it can shimmer:
+
+* **Felt** reads as felt rather than painted plastic: fine matted fibres in the colour and the surface, very matte, with the light wrapping a little past the terminator and coming back warmer, as it does out of wool, a soft sheen at grazing angles and a slightly fuzzy rim where fibres catch the light. On the sides of each head the layers show in section: the white felt, the thin dark-red U of the underfelt inside it, the wood inside that. The damper felts, the punchings and the cloth strips are the same wool.
+* **Gold paint:** bronze flakes in lacquer over sand-cast iron. Up close single flakes catch the light; further off it is a satin gold. The raised letters are a little brighter, with the iron around them in their shadow.
+* **Copper winding** catches light from far more directions than a smooth wire, so the bass strings never go black facing the dark cabinet.
+* **Wood:** a fine straight grain along each part of the action, with a beech moulding's flecks; dust lies on whatever faces up.
 
 The moving parts are pure functions of time from the same key strokes that move the keys (`performance/ActionMechanics.ts`), as deterministic as everything else:
 
