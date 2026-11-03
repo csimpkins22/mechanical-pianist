@@ -170,7 +170,7 @@ The classical pieces are public-domain compositions, played from piano MIDI perf
 ### Interpretation
 
 * **`MidiEngine`** reads the file with `@tonejs/midi`, applies the tempo map, folds out-of-range notes by octaves, merges duplicate notes, makes sure a key is released before it is struck again, and extracts the sustain pedal (CC 64).
-* **`HandAssignment`** is a beam search over onset groups. Each state knows where both hands are, what each is holding and when it last moved. Every split of a chord between the hands is scored for count (at most five fingers), span, travel speed, collisions, register and, when the file separates the hands into tracks, the track. Overrides are hard constraints.
+* **`HandAssignment`** is a beam search over onset groups. Each state knows where both hands are, what each is holding and when it last moved. Every split of a chord between the hands is scored for count (at most five fingers), span, travel speed, collisions, register and, when the file separates the hands into tracks, the track. A hand may let go of a key it is holding to play elsewhere, cheaply while the pedal keeps the sound and at a higher cost without it: a low octave caught by the pedal does not pin the left hand to the bass while the right is handed a two-octave chord. Overrides are hard constraints.
 * **`Fingering`** is a beam search per hand whose states remember the last key each finger played and whether it is still held. Transitions follow Parncutt et al. (1997) — comfortable and practical spans per finger pair, thumb passing, weak fingers, thumb and fifth on black keys — extended to chords, held notes and timing (legato vs. detached, fast vs. slow, chord-to-chord shifts). Distances are physical: E–F is as wide as C–D. A hand spread near its limit between its outer fingers leaves the inner pairs less room. Fast repeated notes change finger down the hand (4-3-2-1); slow ones keep it.
 * **`Patterns`** recognises familiar figures and hands their conventional fingerings (`Conventions.ts`) to the search as soft priors:
   * scale runs longer than a hand position, fitted to a major key or a white-key minor;
@@ -194,7 +194,7 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
 
   **Repeated notes:** the earlier key lets go in time to rise most of the way before the re-strike, and the finger visibly lifts off.
 * **`HandIK`** is closed-form. For each finger, abduction turns its flexion plane to the target and a preferred distal angle fixes the DIP joint, so MCP and PIP follow from the two-link solution. The thumb's CMC is a ball joint: swing spreads it in the palm plane and twist turns its flexion plane until the target lies in it.
-* **`HandPoser`** evaluates every fingertip target from that finger's notes (prepare, strike, hold, release, travel), then runs a few damped Gauss–Newton steps over wrist position, yaw, roll and pitch so the fingers on keys always reach them.
+* **`HandPoser`** evaluates every fingertip target from that finger's notes (prepare, strike, hold, release, travel), then runs a few damped Gauss–Newton steps over wrist position, yaw, roll and pitch so the fingers on keys always reach them; a step is kept only if it improves the fit, so the solve settles rather than swinging between compromises from one frame to the next. The keys are solid: where a pose would put the palm, the knuckles or the base of the thumb into them, the hand is lifted until they clear, and a key still beyond reach is left a fingertip short. (The contact refinement in `PerformanceTimeline` likewise never brings the planned wrist below 3.6 cm.)
 * **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Coming up, it meets its rest stop and rebounds into a small dip below rest, 1–4% of its travel, then a smaller one, before settling. It never rises above rest. A brisk release (a short, loud note) dips more than a slow one, and every stroke a little differently. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
 * **`PerformanceTimeline.evaluate(t)`** returns keys, both hands' joints, finger phases, pedal and sounding notes for any *t*, as a pure function. After planning it checks every held key against the hand and re-plans where needed.
 
@@ -293,16 +293,17 @@ Nothing is integrated frame to frame. Planning happens once, and every frame is 
 `npm test` covers:
 
 * five-finger positions; two-octave scales up and down (right hand, thumb crossings in the right places); a left-hand scale; harmonic minor (thumb never on G♯); triads; trills (two alternating fingers); repeated notes; no finger ever holding two keys;
-* hand assignment: melodies crossing middle C stay in one hand, bass and treble split, interleaved lines in overlapping registers keep their tracks, leaps stay in reach, impossible chords are detected and flagged, overrides are honoured;
+* hand assignment: melodies crossing middle C stay in one hand, bass and treble split, interleaved lines in overlapping registers keep their tracks, leaps stay in reach, impossible chords are detected and flagged, a bass held under the pedal lets its hand go to share a chord above, overrides are honoured;
 * the demo round-trips through a real MIDI file with tempo changes and pedal, and plans with no approximations, deterministically; so do the Études;
 * the exported robot hand's joints match the shared hand spec;
 * IK reproduces the rest pose and reaches forward-kinematics targets exactly;
 * every key is down exactly at its onset and up after release;
 * every key that is going down or held down has its fingertip on it, within 2 mm, across the whole demo;
 * the state at any *t* is identical whatever order times are visited in;
-* scales, chords and leaps stay within reach.
+* scales, chords and leaps stay within reach;
+* the keys are solid: a chord beyond the reach of one hand, and the crowded end of the Raindrop prelude, never sink a palm or knuckle into them.
 
-Tools: `node tools/shot.cjs out.png "?t=12&ui=0"` for stills, `node tools/render-video.cjs out.mp4 "?demo=phrase" 0 9.6` for frame-exact video, both against the dev server.
+Tools: `node tools/shot.cjs out.png "?t=12&ui=0"` for stills, `node tools/render-video.cjs out.mp4 "?demo=phrase" 0 9.6` for frame-exact video, both against the dev server. `node tools/hand-check.cjs [--library] file.mid ...` plans pieces as the app does and measures, at 60 Hz, how far any part of either hand goes into the piano (`src/performance/HandClearance.ts`), listing the worst moments by bar.
 
 ## Rebuilding the 3D assets
 
