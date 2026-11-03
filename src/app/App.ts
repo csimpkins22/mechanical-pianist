@@ -9,10 +9,10 @@ import { fingerprint } from './planCodec';
 import { DEFAULT_SOUND, loadSettings, saveSettings, type SoundSettings } from './settings';
 import { STYLES, styleSettings } from '../presentation/VisualStyles';
 import { PerformanceTimeline, type FrameState } from '../performance/PerformanceTimeline';
-import { CinematicCamera, DEFAULT_FRAMING, blendCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
+import { CinematicCamera, DEFAULT_FRAMING, sameView, type CameraMode, type CameraState, type CameraView, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
 import { DEFAULT_LIGHTS, type LightSettings } from '../presentation/Environment';
-import { SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
+import { DEFAULT_LOOK, SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 import { DEFAULT_LIVE, LiveSession, type LiveSettings } from '../live/LiveSession';
@@ -73,13 +73,12 @@ export class App {
   t = 0;
   playing = false;
   speed = 1;
-  loop = false;
   scrubbing = false;
   private resumeAfterScrub = false;
-  mode: CameraMode = 'cinematic';
+  /** what the camera shows: 'cinematic' (the director's edit), a continuous camera, or a shot held from the bar's arrows */
+  camView: CameraView = 'cinematic';
   framing: Framing = { ...DEFAULT_FRAMING };
   lights: LightSettings = { ...DEFAULT_LIGHTS };
-  private modeFrom: { state: CameraState; start: number } | null = null;
   private lastWall = 0;
   private listeners = new Set<Listener>();
   private raf = 0;
@@ -101,7 +100,8 @@ export class App {
     // the viewer's own settings from last time (ignored with ?settings=default, for tools)
     if (this.params.get('settings') !== 'default') {
       const s = loadSettings();
-      this.view.look = s.look;
+      // the piano always starts open; closing it lasts for the visit
+      this.view.look = { ...s.look, openPiano: DEFAULT_LOOK.openPiano };
       this.lights = s.lights;
       this.framing = s.framing;
       this.applySound(s.sound);
@@ -184,7 +184,9 @@ export class App {
     await this.openEntry(entryById(id) ?? entryById(DEFAULT_PIECE)!, (f, label) => onProgress?.(0.7 + 0.3 * f, label));
     onProgress?.(1, '');
     const mode = this.params.get('camera') as CameraMode | null;
-    if (mode) this.mode = mode;
+    if (mode && ['cinematic', 'follow', 'overhead', 'macro'].includes(mode)) this.camView = mode;
+    const held = this.params.get('shot');
+    if (held) this.camView = { shot: held, hand: this.params.get('hand') === 'L' ? 'L' : 'R' };
     const t = parseFloat(this.params.get('t') ?? '');
     if (!Number.isNaN(t)) this.t = t;
     if (this.params.get('debug') === '1') this.setDebug(true);
@@ -229,7 +231,6 @@ export class App {
       fit: this.view.canvas.style.objectFit,
     };
     this.exporting = true;
-    this.modeFrom = null;
     this.speed = 1;
     this.autoQuality = false;
     if (before.debug) this.setDebug(false);
@@ -311,7 +312,7 @@ export class App {
       });
       if (seq !== this.buildSeq) return; // superseded
       const score = perf.score;
-      const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos);
+      const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos, this.view.look.openPiano);
       const wasPlaying = this.playing;
       if (wasPlaying) this.pause();
       this.piece = { bytes, parsed, perf, timeline, camera, overrides, tracks: sel, source, title: meta.title, artist: meta.artist };
@@ -516,16 +517,41 @@ export class App {
   }
 
   // ------------------------------------------------------------- view
-  setMode(m: CameraMode) {
-    if (m === this.mode || !this.piece) return;
-    this.modeFrom = { state: this.cameraAt(this.live ? this.live.now() : this.t), start: performance.now() };
-    this.mode = m;
+  /** show a camera view: a clean cut, as the director's own cuts are (a glide between distant framings could pass through the case) */
+  setCamera(v: CameraView) {
+    if (sameView(v, this.camView) || !this.piece) return;
+    this.camView = v;
+    this.invalidate();
     this.emit('view');
+  }
+
+  /** hold the next (or previous) shot along the cycle, from whatever is on screen now */
+  stepShot(dir: 1 | -1) {
+    if (!this.piece) return;
+    this.setCamera(this.piece.camera.step(this.camView, this.viewTime(), dir));
+  }
+
+  /** the name of the shot on screen, for the bar */
+  shotName(): string {
+    return this.piece ? this.piece.camera.nameOf(this.camView, this.viewTime()) : '';
   }
 
   setDebug(v: boolean) {
     this.debug.setVisible(v);
     this.renderNow();
+    this.emit('view');
+  }
+
+  /** take the piano's upper front panel off, or put it back */
+  setOpen(open: boolean) {
+    this.view.look.openPiano = open;
+    this.view.setOpen(open);
+    this.piece?.camera.setOpen(open);
+    this.live?.camera.setOpen(open);
+    // a shot held inside the piano moves to the nearest one outside once it closes
+    if (!open && this.piece) this.camView = this.piece.camera.whenClosed(this.camView);
+    this.settingsChanged();
+    this.invalidate();
     this.emit('view');
   }
 
@@ -537,14 +563,7 @@ export class App {
 
   cameraAt(t: number): CameraState {
     const camera = this.live ? this.live.camera : this.piece!.camera;
-    const target = camera.evaluate(this.mode, t, this.framing, this.view.camera.aspect);
-    if (!this.modeFrom) return target;
-    const u = Math.min(1, (performance.now() - this.modeFrom.start) / 1800);
-    if (u >= 1) {
-      this.modeFrom = null;
-      return target;
-    }
-    return blendCamera(this.modeFrom.state, target, u);
+    return camera.evaluate(this.camView, t, this.framing, this.view.camera.aspect);
   }
 
   renderNow() {
@@ -557,7 +576,7 @@ export class App {
     const open = shutterTime(this.view.look) * this.speed;
     if (open > 0 && this.view.post.quality !== 'low') {
       const t0 = Math.max(0, t - open);
-      const cut = this.mode === 'cinematic' && this.piece.camera.director.shotAt(t).start > t0;
+      const cut = this.camView === 'cinematic' && this.piece.camera.director.shotAt(t).start > t0;
       this.view.setPrevious(this.piece.timeline.evaluate(t0), cut ? cam : this.cameraAt(t0));
     }
     const frame = this.piece.timeline.evaluate(t);
@@ -585,9 +604,9 @@ export class App {
     void this.audio.init().catch((e) => console.warn('audio unavailable', e));
     if (this.playing) this.pause();
     this.liveFrom = { t: this.t };
-    this.modeFrom = null;
     if (this.debug?.visible) this.setDebug(false);
     this.live = new LiveSession(this.audio, this.liveSettings);
+    this.live.camera.setOpen(this.view.look.openPiano);
     this.live.onChange = () => this.emit('live');
     this.emit('live');
   }
@@ -597,7 +616,6 @@ export class App {
     if (!this.live) return;
     this.live.dispose();
     this.live = null;
-    this.modeFrom = null;
     if (this.liveFrom) this.t = this.liveFrom.t;
     this.liveFrom = null;
     this.renderNow();
@@ -612,7 +630,7 @@ export class App {
     const open = shutterTime(this.view.look);
     if (open > 0 && this.view.post.quality !== 'low') {
       const t0 = t - open;
-      const cut = this.mode === 'cinematic' && L.camera.director.shotAt(t).start > t0;
+      const cut = this.camView === 'cinematic' && L.camera.director.shotAt(t).start > t0;
       this.view.setPrevious(L.performer.evaluate(t0), cut ? cam : this.cameraAt(t0));
     }
     const frame = L.performer.evaluate(t);
@@ -665,19 +683,14 @@ export class App {
       this.t = this.audio.isRunning ? this.audioTime() : this.t + dt * this.speed;
       this.audio.pump(this.piece.timeline);
       if (this.t >= this.duration) {
-        if (this.loop) {
-          this.t = 0;
-          if (this.audio.ready) this.audio.start(this.piece.timeline, 0, this.speed);
-        } else {
-          this.t = this.duration;
-          this.playing = false;
-          this.audio.stop();
-          this.emit('transport');
-        }
+        this.t = this.duration;
+        this.playing = false;
+        this.audio.stop();
+        this.emit('transport');
       }
       this.renderNow();
       this.emit('time');
-    } else if (this.modeFrom || this.dirty) this.renderNow();
+    } else if (this.dirty) this.renderNow();
   };
 
   invalidate() {

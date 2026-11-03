@@ -51,6 +51,8 @@ vec3 mpBounce(vec3 p, vec3 n) {
 export interface PatchOptions {
   uniforms?: Record<string, THREE.IUniform>;
   vertexHead?: string;
+  /** after begin_vertex: may move `transformed` (object space) */
+  afterBegin?: string;
   vertexEnd?: string;
   fragHead?: string;
   /** after the albedo is known (diffuseColor) */
@@ -100,13 +102,20 @@ ${o.masks ? 'attribute vec4 color;\nvarying vec3 vMask;' : ''}
 ${decl}
 ${o.vertexHead ?? ''}`,
     );
+    if (o.afterBegin) vs = vs.replace('#include <begin_vertex>', `#include <begin_vertex>\n${o.afterBegin}`);
     vs = vs.replace(
       '#include <project_vertex>',
       `#include <project_vertex>
 {
-  vec4 mpW = modelMatrix * vec4(transformed, 1.0);
+  vec4 mpL = vec4(transformed, 1.0);
+  vec3 mpN = objectNormal;
+  #ifdef USE_INSTANCING
+  mpL = instanceMatrix * mpL;
+  mpN = mat3(instanceMatrix) * mpN;
+  #endif
+  vec4 mpW = modelMatrix * mpL;
   vWPos = mpW.xyz;
-  vWNormal = normalize(mat3(modelMatrix) * objectNormal);
+  vWNormal = normalize(mat3(modelMatrix) * mpN);
   vOPos = transformed;
   ${o.masks ? 'vMask = color.rgb;' : ''}
 }

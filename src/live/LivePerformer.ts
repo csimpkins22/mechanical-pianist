@@ -309,6 +309,7 @@ export class LivePerformer {
     const lt = t - cur.plan.origin;
     const keys = tl.keys.evaluate(lt, new Float32Array(KEY_COUNT));
     const hands = { L: poseHand(cur.tracks.L, tl.keys, lt), R: poseHand(cur.tracks.R, tl.keys, lt) };
+    const inside = tl.interior(lt);
     const u = i > 0 ? (t - cur.at) / FADE : 1;
     if (u < 1) {
       const prev = this.taken[i - 1];
@@ -317,12 +318,22 @@ export class LivePerformer {
       const pk = prev.plan.timeline.keys.evaluate(pt, new Float32Array(KEY_COUNT));
       for (let k = 0; k < KEY_COUNT; k++) keys[k] = lerp(pk[k], keys[k], e);
       for (const h of ['L', 'R'] as Hand[]) hands[h] = mixFingers(poseHand(prev.tracks[h], prev.plan.timeline.keys, pt), hands[h], e);
+      // the action too, so a hammer in flight does not jump at the handover
+      const before = prev.plan.timeline.interior(pt);
+      for (const k of ['hammers', 'dampers', 'strings', 'jacks', 'bridles', 'leans', 'checks'] as const) {
+        const a = before[k];
+        const b = inside[k];
+        for (let j = 0; j < b.length; j++) b[j] = lerp(a[j], b[j], e);
+      }
+      inside.damperRail = lerp(before.damperRail, inside.damperRail, e);
+      inside.softPedal = lerp(before.softPedal, inside.softPedal, e);
     }
     return {
       t,
       keys,
       hands,
       pedal: tl.pedalAt(lt),
+      ...inside,
       effort: { L: tl.effort('L', lt), R: tl.effort('R', lt) },
       sounding: [],
     };

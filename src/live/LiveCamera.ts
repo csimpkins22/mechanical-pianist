@@ -7,8 +7,8 @@
 // a fixed grid as time passes. Every framing, focus pull and the forearm
 // guard are then the cinematographer's own, and the director cuts between
 // calm shots on a steady cadence instead of to a score it cannot see.
-import { DEFAULT_FRAMING, CinematicCamera, type CameraMode, type CameraState, type Framing } from '../presentation/CinematicCamera';
-import { ShotDirector } from '../presentation/ShotDirector';
+import { DEFAULT_FRAMING, CinematicCamera, type CameraState, type CameraView, type Framing } from '../presentation/CinematicCamera';
+import { ShotDirector, type DirectorContext } from '../presentation/ShotDirector';
 import type { Hand } from '../core/types';
 import type { LivePerformer } from './LivePerformer';
 
@@ -74,20 +74,35 @@ export class LiveCamera extends CinematicCamera {
     self.leftWrist = [L.Lx, L.Ly, L.Lz];
     // the forearm guard reads the wrists through the tracks
     self.tracks = { L: { sx: -1, x: L.Lx, y: L.Ly, z: L.Lz }, R: { sx: 1, x: L.Rx, y: L.Ry, z: L.Rz } };
-    self.director = new ShotDirector(
-      {
-        duration: 4 * 3600,
-        center: (t) => L.center.at(t),
-        span: (t) => L.span.at(t),
-        tip: (h, t) => this.tip(h, t),
-        wrist: (h, t) => this.wrist(h, t),
-        peak: (t) => L.peak.at(t),
-        lead: (t) => L.lead.at(t),
-      },
-      [],
-      [],
-      { cadence: 9, handAt: (t) => (L.lead.at(t) >= 0.5 ? 'R' : 'L') },
-    );
+    this.liveContext = {
+      duration: 4 * 3600,
+      center: (t) => L.center.at(t),
+      span: (t) => L.span.at(t),
+      tip: (h, t) => this.tip(h, t),
+      wrist: (h, t) => this.wrist(h, t),
+      peak: (t) => L.peak.at(t),
+      lead: (t) => L.lead.at(t),
+    };
+    this.makeLiveDirector();
+  }
+
+  private liveContext!: DirectorContext;
+  private liveOpen = false;
+
+  /** the live director: a shot every few seconds about whichever hand is playing, inside the piano too when it is open */
+  private makeLiveDirector() {
+    const L = this.live;
+    (this as unknown as Record<string, unknown>).director = new ShotDirector(this.liveContext, [], [], {
+      cadence: 9,
+      handAt: (t) => (L.lead.at(t) >= 0.5 ? 'R' : 'L'),
+      open: this.liveOpen,
+    });
+  }
+
+  override setOpen(open: boolean) {
+    if (open === this.liveOpen) return;
+    this.liveOpen = open;
+    this.makeLiveDirector();
   }
 
   /** sample the hands up to live time `now` (call every frame, before evaluate) */
@@ -136,8 +151,8 @@ export class LiveCamera extends CinematicCamera {
   }
 
   /** the shot and the hands as they are: no look ahead at a zoom the guard may need later (it cannot be known) */
-  override evaluate(mode: CameraMode, t: number, f: Framing = DEFAULT_FRAMING, aspect = 16 / 9): CameraState {
-    const raw = (this as unknown as { compose(m: CameraMode, t: number, f: Framing): CameraState }).compose(mode, t, f);
+  override evaluate(view: CameraView, t: number, f: Framing = DEFAULT_FRAMING, aspect = 16 / 9): CameraState {
+    const raw = (this as unknown as { compose(m: CameraView, t: number, f: Framing): CameraState }).compose(view, t, f);
     return this.guard(raw, t, aspect);
   }
 }

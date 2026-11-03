@@ -27,6 +27,7 @@ async function build() {
     logLevel: 'silent',
     output: { file: bundle, format: 'cjs' },
     plugins: [
+      require('./extra-music.cjs').extraMusic(root),
       {
         name: 'mid-inline',
         resolveId(source, importer) {

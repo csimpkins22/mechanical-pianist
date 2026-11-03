@@ -74,7 +74,7 @@ export class LivePanel {
     if (live.input.key(e, true)) return true;
     const cam = { Digit1: 'cinematic', Digit2: 'follow', Digit3: 'overhead', Digit4: 'macro' }[e.code] as CameraMode | undefined;
     if (cam) {
-      this.app.setMode(cam);
+      this.app.setCamera(cam);
       this.sync();
       return true;
     }
@@ -130,7 +130,7 @@ export class LivePanel {
     for (const [m, label] of CAMS) {
       const b = el('button', 'seg', label);
       b.onclick = () => {
-        this.app.setMode(m);
+        this.app.setCamera(m);
         this.sync();
       };
       this.camBtns.set(m, b);
@@ -195,7 +195,7 @@ export class LivePanel {
             ? 'No MIDI keyboard connected: play on the computer keyboard'
             : 'MIDI is not available here: play on the computer keyboard';
     this.delayVal.textContent = `${live.settings.delay.toFixed(2)} s`;
-    for (const [m, b] of this.camBtns) b.classList.toggle('on', this.app.mode === m);
+    for (const [m, b] of this.camBtns) b.classList.toggle('on', this.app.camView === m);
     const base = 12 * (inp.octave + 1);
     const held = live.performer.heldKeys();
     for (const [semi, b] of this.keys) {
