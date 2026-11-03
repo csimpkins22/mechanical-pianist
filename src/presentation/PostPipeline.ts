@@ -276,18 +276,30 @@ void main() {
 const prepassVS = /* glsl */ `
 uniform mat4 uPrevModel;
 uniform mat4 uPrevViewProj;
+#ifdef USE_INSTANCING
+// instanced meshes keep each instance's transform from the start of the shutter here
+in mat4 prevInstanceMatrix;
+#endif
 out vec4 vCur;
 out vec4 vPrev;
 out float vDepth;
 out vec3 vNormal;
 void main() {
-  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vec4 lp = vec4(position, 1.0);
+  vec4 lprev = lp;
+  vec3 ln = normal;
+  #ifdef USE_INSTANCING
+  lp = instanceMatrix * lp;
+  lprev = prevInstanceMatrix * vec4(position, 1.0);
+  ln = mat3(instanceMatrix) * ln;
+  #endif
+  vec4 wp = modelMatrix * lp;
   vec4 mv = viewMatrix * wp;
   gl_Position = projectionMatrix * mv;
   vCur = gl_Position;
-  vPrev = uPrevViewProj * (uPrevModel * vec4(position, 1.0));
+  vPrev = uPrevViewProj * (uPrevModel * lprev);
   vDepth = -mv.z;
-  vNormal = normalize(normalMatrix * normal);
+  vNormal = normalize(normalMatrix * ln);
 }
 `;
 const prepassFS = /* glsl */ `

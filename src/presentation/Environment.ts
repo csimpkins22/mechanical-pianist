@@ -232,8 +232,24 @@ export class Environment {
   }
 
   /** point the raking light and fit its shadow camera around the keyboard and the hands above it */
+  private interiorOpen = false;
+  private rakeAim: [number, number] = [0, 0];
+
+  /** with the piano open, the lights' shadows also have to cover the action and strings inside */
+  setInteriorOpen(open: boolean) {
+    if (open === this.interiorOpen) return;
+    this.interiorOpen = open;
+    this.aimRake(...this.rakeAim);
+    // the sun's reaches up under the lid, so the case and the parts high inside cast their shadows there too
+    const sc = this.lights.sun.shadow.camera;
+    sc.top = open ? 0.88 : 0.62;
+    sc.updateProjectionMatrix();
+    this.lights.sun.shadow.needsUpdate = true;
+  }
+
   private aimRake(angleDeg: number, dirDeg: number) {
-    const key = `${angleDeg.toFixed(2)}:${dirDeg.toFixed(2)}`;
+    this.rakeAim = [angleDeg, dirDeg];
+    const key = `${angleDeg.toFixed(2)}:${dirDeg.toFixed(2)}:${this.interiorOpen}`;
     if (key === this.rakeKey) return;
     this.rakeKey = key;
     const rake = this.lights.rake;
@@ -248,9 +264,10 @@ export class Environment {
     const inv = view.clone().invert();
     const lo = new THREE.Vector3(Infinity, Infinity, Infinity);
     const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    const open = this.interiorOpen;
     for (const x of [-0.72, 0.72])
-      for (const y of [-0.03, 0.24])
-        for (const z of [-0.2, 0.5]) {
+      for (const y of [-0.03, open ? 0.52 : 0.24])
+        for (const z of [open ? -0.4 : -0.2, 0.5]) {
           const p = new THREE.Vector3(x, y, z).applyMatrix4(inv);
           lo.min(p);
           hi.max(p);

@@ -5,14 +5,20 @@
 // get there. "Camera drama" adds what a camera operator would: slow push-ins
 // toward the peaks of a phrase, focus racked to whichever hand leads, and
 // longer lenses from further back. A camera state is a pure function of
-// (mode, t), because every curve it reads is computed once, ahead of time.
+// (view, t), because every curve it reads is computed once, ahead of time.
+//
+// The viewer can also hold one shot: the arrows on the bar step through the
+// director's shots (and the three continuous cameras), wide to close, then
+// inside the piano when it is open. A held shot keeps its framing and follows
+// the hands gently: its subject is the hands' path smoothed over a second or
+// two more than the edit's, so it drifts with the music rather than chasing.
 import * as THREE from 'three';
 import { clamp, gaussianBlur, Signal } from '../core/math';
 import { drift } from '../core/random';
 import { ELBOW_Z, SHOULDER_X, type HandTrack, type MotionPlan } from '../performance/MotionPlanner';
 import { HAND_SPEC } from '../core/handGeometry';
 import type { Hand } from '../core/types';
-import { ShotDirector } from './ShotDirector';
+import { ShotDirector, type DirectorContext, type NoteRef } from './ShotDirector';
 
 /**
  * cinematic: the director, cutting between designed shots (ShotDirector.ts)
@@ -20,6 +26,94 @@ import { ShotDirector } from './ShotDirector';
  * overhead, macro: as named
  */
 export type CameraMode = 'cinematic' | 'follow' | 'overhead' | 'macro';
+
+/** one of the director's designed shots, held by the viewer, about one hand */
+export interface HeldShot {
+  shot: string;
+  hand: Hand;
+}
+
+/** what the camera shows: the director's edit, a continuous camera, or a held shot */
+export type CameraView = CameraMode | HeldShot;
+
+/** an entry in the shot cycle: a continuous camera (its mode) or a designed shot ("shot:" + its id) */
+export interface ShotEntry {
+  key: string;
+  name: string;
+  inside: boolean;
+}
+
+const CONTINUOUS: Record<Exclude<CameraMode, 'cinematic'>, string> = { follow: 'Follow', overhead: 'Overhead', macro: 'Macro' };
+
+/** the order the arrows step through: wide to close, then inside the piano (only while it is open) */
+export const CYCLE_ORDER = [
+  'shot:establishing',
+  'overhead',
+  'shot:overhead-crane',
+  'shot:rise',
+  'shot:silhouette',
+  'shot:opening',
+  'follow',
+  'shot:treble-profile',
+  'shot:bass-profile',
+  'shot:over-shoulder',
+  'shot:orbit',
+  'shot:push-in',
+  'shot:dutch',
+  'shot:handheld',
+  'shot:low-front',
+  'shot:key-slider',
+  'shot:desk',
+  'macro',
+  'shot:macro',
+  'shot:dorsal',
+  'shot:inside-plate',
+  'shot:inside-along',
+  'shot:inside-through',
+  'shot:inside-hammers',
+];
+
+/** a held shot inside the piano, once the piano is closed: the shot outside nearest to it in kind */
+export const OUTSIDE_OF: Record<string, string> = {
+  'shot:inside-plate': 'shot:establishing',
+  'shot:inside-along': 'shot:treble-profile',
+  'shot:inside-through': 'shot:over-shoulder',
+  'shot:inside-hammers': 'shot:macro',
+};
+
+/** the director's shots that cannot be held, and where they count as being in the cycle (to step on from them) */
+const STEP_FROM: Record<string, string> = { pullback: 'shot:establishing', 'key-xcu': 'shot:dorsal' };
+
+/** the shots the arrows step through, in order (the ones inside only while the piano is open) */
+export function shotCycle(open: boolean): ShotEntry[] {
+  const held = new Map(ShotDirector.heldShots().map((sh) => [`shot:${sh.id}`, sh]));
+  const out: ShotEntry[] = [];
+  for (const key of CYCLE_ORDER) {
+    if (key in CONTINUOUS) out.push({ key, name: CONTINUOUS[key as keyof typeof CONTINUOUS], inside: false });
+    else {
+      const sh = held.get(key);
+      if (sh && (open || !sh.inside)) out.push({ key, name: sh.name, inside: sh.inside });
+    }
+  }
+  return out;
+}
+
+/** the cycle's key for a view (cinematic has none of its own) */
+export function viewKey(v: CameraView): string {
+  return typeof v === 'string' ? v : `shot:${v.shot}`;
+}
+
+function viewOf(key: string, hand: Hand): CameraView {
+  return key.startsWith('shot:') ? { shot: key.slice(5), hand } : (key as CameraMode);
+}
+
+/** the same view (a held shot with the same hand counts as the same) */
+export function sameView(a: CameraView, b: CameraView): boolean {
+  return typeof a === 'string' || typeof b === 'string' ? a === b : a.shot === b.shot && a.hand === b.hand;
+}
+
+/** the hands' path for a held shot is smoothed this much more than the edit's (s) */
+const HELD_SMOOTH = 1.1;
 
 /** average offset from a planned wrist to the centre of fingertips 2-4 (measured on the demos) */
 const TIP_OFFSET: Record<Hand, [number, number, number]> = { R: [-0.007, -0.047, -0.153], L: [-0.009, -0.042, -0.153] };
@@ -64,16 +158,23 @@ export class CinematicCamera {
   /** each wrist's planned path, smoothed (x, y, z) */
   private rightWrist: Signal[];
   private leftWrist: Signal[];
-  readonly director: ShotDirector;
+  director: ShotDirector;
+  /** the piano is open: the director may also cut to shots inside it */
+  open = false;
+  private directorArgs: [DirectorContext, NoteRef[], { time: number; bpm: number }[]];
   private tracks: Record<Hand, HandTrack>;
   /** 0..1: how close the music is to the peak of a phrase (slow) */
   private peak: Signal;
   /** 0 = the left hand leads, 1 = the right */
   private lead: Signal;
+  private duration: number;
+  /** what a held shot frames: the edit's curves, smoothed further (made when first needed) */
+  private heldCtx: DirectorContext | null = null;
 
-  constructor(plan: MotionPlan, duration: number, tempos: { time: number; bpm: number }[] = []) {
+  constructor(plan: MotionPlan, duration: number, tempos: { time: number; bpm: number }[] = [], open = false) {
     const t0 = -1;
     const n = Math.ceil((duration + 2) * RATE) + 1;
+    this.duration = duration;
     const c = new Float32Array(n);
     const sp = new Float32Array(n);
     const rx = new Float32Array(n);
@@ -168,7 +269,7 @@ export class CinematicCamera {
     const notes = (['L', 'R'] as Hand[]).flatMap((h) =>
       plan.hands[h].notes.map((pn) => ({ hand: h, midi: pn.note.midi, start: pn.note.start, end: pn.note.keyEnd, velocity: pn.note.velocity })),
     );
-    this.director = new ShotDirector(
+    this.directorArgs = [
       {
         duration,
         center: (t) => this.center.at(t),
@@ -180,7 +281,16 @@ export class CinematicCamera {
       },
       notes,
       tempos,
-    );
+    ];
+    this.open = open;
+    this.director = new ShotDirector(...this.directorArgs, { open });
+  }
+
+  /** re-cut the piece with (or without) the shots inside the piano */
+  setOpen(open: boolean) {
+    if (open === this.open) return;
+    this.open = open;
+    this.director = new ShotDirector(...this.directorArgs, { open });
   }
 
   wrist(h: Hand, t: number): THREE.Vector3 {
@@ -194,9 +304,76 @@ export class CinematicCamera {
     return this.wrist(h, t).add(new THREE.Vector3(o[0], o[1], o[2]));
   }
 
-  evaluate(mode: CameraMode, t: number, f: Framing = DEFAULT_FRAMING, aspect = 16 / 9): CameraState {
-    const raw = this.compose(mode, t, f);
-    const z = this.calmZoom(mode, t, f, aspect);
+  /**
+   * One step along the shot cycle from what is on screen at t: from a held
+   * shot or continuous camera, the next or previous in the cycle; from the
+   * director's edit, the shot on either side of the one it is showing (about
+   * the same hand), so the arrows take over from it.
+   */
+  step(view: CameraView, t: number, dir: 1 | -1): CameraView {
+    const cycle = shotCycle(this.open);
+    let key: string;
+    let hand: Hand;
+    if (view === 'cinematic') {
+      const sh = this.director.shotAt(t);
+      key = STEP_FROM[sh.id] ?? `shot:${sh.id}`;
+      hand = sh.hand;
+    } else {
+      key = viewKey(view);
+      hand = typeof view === 'object' ? view.hand : this.lead.at(t) >= 0.5 ? 'R' : 'L';
+    }
+    let i = cycle.findIndex((e) => e.key === key);
+    if (i < 0) i = cycle.findIndex((e) => e.key === OUTSIDE_OF[key]);
+    if (i < 0) i = 0;
+    const n = cycle.length;
+    return viewOf(cycle[(((i + dir) % n) + n) % n].key, hand);
+  }
+
+  /** the view once the piano is closed: a held shot inside it moves to the nearest outside */
+  whenClosed(view: CameraView): CameraView {
+    if (typeof view === 'string') return view;
+    const out = OUTSIDE_OF[viewKey(view)];
+    return out ? viewOf(out, view.hand) : view;
+  }
+
+  /** the name of what is on screen at t, for the bar */
+  nameOf(view: CameraView, t: number): string {
+    if (view === 'cinematic') return this.director.shotAt(t).name;
+    return shotCycle(true).find((e) => e.key === viewKey(view))?.name ?? '';
+  }
+
+  /** the curves a held shot frames, smoothed further so it follows the hands gently */
+  private held(): DirectorContext {
+    if (this.heldCtx) return this.heldCtx;
+    const t0 = -1;
+    const n = Math.ceil((this.duration + 2) * RATE) + 1;
+    const smooth = (f: (t: number) => number) => {
+      const a = new Float32Array(n);
+      for (let i = 0; i < n; i++) a[i] = f(t0 + i / RATE);
+      return new Signal(t0, RATE, gaussianBlur(a, HELD_SMOOTH * RATE));
+    };
+    const center = smooth((t) => this.center.at(t));
+    const span = smooth((t) => this.span.at(t));
+    const w = { L: [0, 1, 2].map((k) => smooth((t) => this.leftWrist[k].at(t))), R: [0, 1, 2].map((k) => smooth((t) => this.rightWrist[k].at(t))) };
+    const wrist = (h: Hand, t: number) => new THREE.Vector3(w[h][0].at(t), w[h][1].at(t), w[h][2].at(t));
+    this.heldCtx = {
+      duration: this.duration,
+      center: (t) => center.at(t),
+      span: (t) => span.at(t),
+      wrist,
+      tip: (h, t) => {
+        const o = TIP_OFFSET[h];
+        return wrist(h, t).add(new THREE.Vector3(o[0], o[1], o[2]));
+      },
+      peak: (t) => this.peak.at(t),
+      lead: (t) => this.lead.at(t),
+    };
+    return this.heldCtx;
+  }
+
+  evaluate(view: CameraView, t: number, f: Framing = DEFAULT_FRAMING, aspect = 16 / 9): CameraState {
+    const raw = this.compose(view, t, f);
+    const z = this.calmZoom(view, t, f, aspect);
     // the guard stays the hard limit; after the calm zoom it rarely has anything left to do
     return this.guard(z > 1 ? { ...raw, focalLength: raw.focalLength * z } : raw, t, aspect);
   }
@@ -213,8 +390,8 @@ export class CinematicCamera {
    * deterministic), and each sample holds its zoom for a while either side.
    * In Cinematic mode only the current shot counts: a cut is a fresh start.
    */
-  private calmZoom(mode: CameraMode, t: number, f: Framing, aspect: number): number {
-    const key = `${mode}|${aspect.toFixed(3)}|${f.distance}|${f.height}|${f.angle}|${f.focalScale}|${f.dramaOn}|${f.drama}`;
+  private calmZoom(mode: CameraView, t: number, f: Framing, aspect: number): number {
+    const key = `${viewKey(mode)}|${typeof mode === 'object' ? mode.hand : ''}|${aspect.toFixed(3)}|${f.distance}|${f.height}|${f.angle}|${f.focalScale}|${f.dramaOn}|${f.drama}`;
     let needs = this.needs.get(key);
     if (!needs) {
       if (this.needs.size >= 8) this.needs.delete(this.needs.keys().next().value!);
@@ -313,7 +490,8 @@ export class CinematicCamera {
     return { ...s, focalLength: Math.min(260, s.focalLength * 1.6) };
   }
 
-  private compose(mode: CameraMode, t: number, f: Framing): CameraState {
+  private compose(mode: CameraView, t: number, f: Framing): CameraState {
+    if (typeof mode === 'object') return this.director.held(mode.shot, mode.hand, t, this.held());
     const cx = this.center.at(t);
     const k = f.dramaOn ? clamp(f.drama, 0, 1) : 0;
     const peak = this.peak.at(t) * k;

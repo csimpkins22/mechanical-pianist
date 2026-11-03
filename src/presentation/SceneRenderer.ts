@@ -13,6 +13,8 @@ import { MIRROR_UNIFORMS, applyPalette, createPalette, type Palette } from './ma
 import { SHARED_UNIFORMS as SHARED } from './shaderPatch';
 import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
 import { PianoModel } from './PianoModel';
+import { InteriorLighting } from './InteriorLight';
+import { PianoInterior } from './PianoInterior';
 import { PostPipeline, type PostParams, type Quality } from './PostPipeline';
 import { createSheetMusic } from './SheetMusic';
 import { SHARED_UNIFORMS } from './shaderPatch';
@@ -45,6 +47,8 @@ export interface Look {
   shutter: number;
   /** live reflections of the keys and hands in the lacquer behind them */
   reflectionsOn: boolean;
+  /** the upper front panel off: the hammers, dampers, strings and plate in view */
+  openPiano: boolean;
   /** ambient occlusion: darkening where surfaces crowd each other */
   aoOn: boolean;
   ao: number;
@@ -72,6 +76,7 @@ export const DEFAULT_LOOK: Look = {
   motionBlurOn: true,
   shutter: 180,
   reflectionsOn: true,
+  openPiano: true,
   aoOn: true,
   ao: 0.6,
 };
@@ -136,6 +141,7 @@ export class SceneRenderer {
   private mirrorBlank = MIRROR_UNIFORMS.uMirror.value;
   /** the board's own panels, left out of their reflection */
   private mirrorHidden: THREE.Object3D[] = [];
+  private mirrorShown: boolean[] = [];
   // bounced light: small cube captures of the lit room, reduced to irradiance
   private bounceRT = new THREE.WebGLCubeRenderTarget(32, { type: THREE.HalfFloatType });
   private bounceCam = new THREE.CubeCamera(0.01, 20, this.bounceRT);
@@ -143,6 +149,19 @@ export class SceneRenderer {
   private bounceAgain = false;
   private bounceTimer = 0;
   readonly debugLayer = new THREE.Group();
+  private sheet: THREE.Object3D;
+  /** inside the piano, and what comes off to show it (the upper panel with its music desk, the sconces on it, the score) */
+  interior: PianoInterior | null = null;
+  private panelParts: THREE.Object3D[] = [];
+  private open = false;
+  /** the light inside the open piano: through its opening, and dark between the rows of parts */
+  private interiorLight: InteriorLighting | null = null;
+  /**
+   * The room's bounced light and the hands' reflections, prepared for the
+   * piano both open and closed, so opening or closing it relights at once.
+   * stale: the lights have changed since, and it is being prepared again.
+   */
+  private lightStates = new Map<boolean, { sh: THREE.Vector3[]; env: THREE.Texture; stale: boolean }>();
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
@@ -155,7 +174,8 @@ export class SceneRenderer {
     this.palette = createPalette();
     this.env = new Environment();
     this.scene.add(this.env.root);
-    this.scene.add(createSheetMusic());
+    this.sheet = createSheetMusic();
+    this.scene.add(this.sheet);
     this.scene.background = new THREE.Color(0x020202);
     this.scene.fog = new THREE.FogExp2(0x060403, 0.12);
     this.post = new PostPipeline(this.renderer);
@@ -207,11 +227,33 @@ export class SceneRenderer {
       });
     this.post.prepassHidden = [this.env.dust];
     this.mirrorHidden = ['Nameboard', 'UpperPanel'].map((n) => this.piano.root.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+    this.interior = new PianoInterior();
+    this.piano.root.add(this.interior.root);
+    const upper = this.piano.root.getObjectByName('UpperPanel');
+    this.interiorLight = new InteriorLighting(this.interior.root, this.interior.rows(), upper ?? null, new THREE.Vector3(WINDOW.x, WINDOW.y, WINDOW.z));
+    this.panelParts = [upper, this.piano.sconces, this.sheet].filter((o): o is THREE.Object3D => !!o);
+    this.applyOpen(this.look.openPiano);
     MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
     this.captureHandReflections();
     await this.captureBounce();
     // a second pass lets the first bounce light the room the probes see: two bounces
     await this.captureBounce();
+    this.keepLightState(this.open);
+    // and the same for the piano the other way (open or closed), so that changing it later relights at once:
+    // one pass, lit by the bounce just found (as a recapture after opening or closing it used to be)
+    const other = !this.open;
+    const sh = SHARED.uBounceSH.value.map((v) => v.clone());
+    const env = this.captureHandEnv(other);
+    await this.captureBounce(other, sh);
+    this.lightStates.set(other, { sh, env, stale: false });
+  }
+
+  /** remember the bounced light and reflections as they are now, for the piano as it is now */
+  private keepLightState(open: boolean) {
+    const sh = SHARED.uBounceSH.value.map((v) => v.clone());
+    const was = this.lightStates.get(open);
+    if (was && was.env !== this.handEnv) was.env.dispose();
+    this.lightStates.set(open, { sh, env: this.handEnv!, stale: false });
   }
 
   /**
@@ -220,25 +262,50 @@ export class SceneRenderer {
    * as the hands' environment.
    */
   private captureHandReflections() {
+    const old = this.handEnv;
+    this.useHandEnv(this.captureHandEnv(this.open));
+    // keep a texture that a prepared state still holds
+    if (old && ![...this.lightStates.values()].some((s) => s.env === old)) old.dispose();
+  }
+
+  /** the room as the hands see it, with the piano open or closed (as it is, or as it would be) */
+  private captureHandEnv(open: boolean): THREE.Texture {
     this.cubeRT?.dispose();
     const rt = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
     const cam = new THREE.CubeCamera(0.01, 20, rt);
     cam.position.set(0, 0.07, 0.04);
+    const was = this.open;
+    if (open !== was) this.applyOpen(open);
     this.hands.L.root.visible = false;
     this.hands.R.root.visible = false;
     const mirrorOn = MIRROR_UNIFORMS.uMirrorOn.value;
     MIRROR_UNIFORMS.uMirrorOn.value = 0;
     this.scene.add(cam);
-    cam.update(this.renderer, this.scene);
+    this.captureCube(cam);
     this.scene.remove(cam);
     MIRROR_UNIFORMS.uMirrorOn.value = mirrorOn;
     this.hands.L.root.visible = true;
     this.hands.R.root.visible = true;
+    if (open !== was) this.applyOpen(was);
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const tex = pmrem.fromCubemap(rt.texture).texture;
     pmrem.dispose();
     rt.dispose();
-    this.handEnv?.dispose();
+    return tex;
+  }
+
+  /** a cube capture of the scene: the shadow maps drawn once for all six faces (they are the same for each) */
+  private captureCube(cam: THREE.CubeCamera) {
+    const sm = this.renderer.shadowMap;
+    const auto = sm.autoUpdate;
+    sm.autoUpdate = false;
+    sm.needsUpdate = true;
+    cam.update(this.renderer, this.scene);
+    sm.autoUpdate = auto;
+    sm.needsUpdate = true;
+  }
+
+  private useHandEnv(tex: THREE.Texture) {
     this.handEnv = tex;
     for (const m of [this.palette.shell, this.palette.chrome, this.palette.steel, this.palette.graphite, this.palette.rubber, this.palette.shellInner]) {
       (m as THREE.MeshStandardMaterial).envMap = tex;
@@ -254,39 +321,73 @@ export class SceneRenderer {
    * surface then takes by height (see shaderPatch BOUNCE_GLSL). Redone when
    * the lights change; each capture includes the previous bounce.
    */
-  async captureBounce() {
-    if (this.bounceBusy) {
+  async captureBounce(open = this.open, into: THREE.Vector3[] = SHARED.uBounceSH.value) {
+    if (this.bounceBusy && into === SHARED.uBounceSH.value) {
       this.bounceAgain = true;
       return;
     }
+    // the piano the other way waits its turn
+    while (this.bounceBusy) await this.whenIdle();
     this.bounceBusy = true;
     try {
       const ys = SHARED.uBounceY.value;
       const spots = [new THREE.Vector3(0, ys.x, 0.45), new THREE.Vector3(0, ys.y, 0.1), new THREE.Vector3(0, ys.z, 0.35)];
-      const sh = SHARED.uBounceSH.value;
+      const shared = SHARED.uBounceSH.value;
+      // the piano the other way: the room drawn so (and lit by that piano's own bounce) for the moment of each capture
+      const away = into !== shared;
+      const keep = away ? shared.map((v) => v.clone()) : [];
       for (let i = 0; i < 3; i++) {
+        const was = this.open;
+        if (away) {
+          if (open !== was) this.applyOpen(open);
+          for (let k = 0; k < shared.length; k++) shared[k].copy(into[k]);
+        }
         const hidden = [this.hands.L.root, this.hands.R.root, this.env.dust, this.debugLayer].filter((o) => o.visible);
         for (const o of hidden) o.visible = false;
         const mirrorOn = MIRROR_UNIFORMS.uMirrorOn.value;
         MIRROR_UNIFORMS.uMirrorOn.value = 0;
         this.bounceCam.position.copy(spots[i]);
         this.scene.add(this.bounceCam);
-        this.bounceCam.update(this.renderer, this.scene);
+        this.captureCube(this.bounceCam);
         this.scene.remove(this.bounceCam);
         MIRROR_UNIFORMS.uMirrorOn.value = mirrorOn;
         for (const o of hidden) o.visible = true;
+        if (away) {
+          for (let k = 0; k < shared.length; k++) shared[k].copy(keep[k]);
+          if (open !== was) this.applyOpen(was);
+        }
         const probe = await LightProbeGenerator.fromCubeRenderTarget(this.renderer, this.bounceRT);
-        for (let k = 0; k < 9; k++) sh[i * 9 + k].copy(probe.sh.coefficients[k]);
+        for (let k = 0; k < 9; k++) into[i * 9 + k].copy(probe.sh.coefficients[k]);
       }
       const ls = this.lightSettings;
       SHARED.uBounce.value = ls.bounceOn ? BOUNCE_GAIN * ls.bounce : 0;
     } finally {
       this.bounceBusy = false;
+      for (const f of this.idle.splice(0)) f();
     }
     if (this.bounceAgain) {
       this.bounceAgain = false;
       await this.captureBounce();
     }
+  }
+
+  private idle: (() => void)[] = [];
+  private whenIdle() {
+    return new Promise<void>((r) => this.idle.push(r));
+  }
+
+  /** the lights changed: prepare again the piano the other way from how it is (after the one shown) */
+  private async refreshOther() {
+    const other = !this.open;
+    const st = this.lightStates.get(other);
+    if (!st) return;
+    st.stale = true;
+    const env = this.captureHandEnv(other);
+    await this.captureBounce(other, st.sh);
+    if (this.lightStates.get(other) !== st) return env.dispose();
+    if (st.env !== this.handEnv) st.env.dispose();
+    st.env = env;
+    st.stale = false;
   }
 
   private lightSettings: LightSettings = DEFAULT_LIGHTS;
@@ -298,11 +399,48 @@ export class SceneRenderer {
     // the room's light changed: recapture what it bounces (once the sliders settle)
     if (this.hands) {
       clearTimeout(this.bounceTimer);
+      for (const st of this.lightStates.values()) st.stale = true;
       this.bounceTimer = window.setTimeout(() => {
         this.captureHandReflections();
-        void this.captureBounce().then(() => this.onRelit?.());
+        void this.captureBounce()
+          .then(() => {
+            this.keepLightState(this.open);
+            this.onRelit?.();
+            return this.refreshOther();
+          })
+          .then(() => this.onRelit?.());
       }, 300);
     }
+  }
+
+  /** take the upper front panel off (or put it back): the action, strings and plate come into view */
+  setOpen(open: boolean) {
+    if (open === this.open) return;
+    this.applyOpen(open);
+    // the room's light and the hands' reflections now include the inside (or not): prepared already, so at once
+    const st = this.lightStates.get(open);
+    if (st) {
+      const sh = SHARED.uBounceSH.value;
+      for (let k = 0; k < sh.length; k++) sh[k].copy(st.sh[k]);
+      this.useHandEnv(st.env);
+      if (!st.stale) return;
+    }
+    // not prepared (or the lights changed since): capture it now
+    clearTimeout(this.bounceTimer);
+    this.bounceTimer = window.setTimeout(() => {
+      this.captureHandReflections();
+      void this.captureBounce().then(() => {
+        this.keepLightState(this.open);
+        this.onRelit?.();
+      });
+    }, 120);
+  }
+
+  private applyOpen(open: boolean) {
+    this.open = open;
+    if (this.interior) this.interior.root.visible = open;
+    for (const o of this.panelParts) o.visible = !open;
+    this.env.setInteriorOpen(open);
   }
 
   /** called when a recapture of the room's light has finished (to redraw a paused frame) */
@@ -339,6 +477,10 @@ export class SceneRenderer {
     this.piano.setKeys(frame.keys);
     this.hands.L.apply(frame.hands.L);
     this.hands.R.apply(frame.hands.R);
+    if (this.open && this.interior) {
+      this.interior.update(frame);
+      this.interior.keepPrevious();
+    }
     this.scene.updateMatrixWorld();
     for (const o of this.moving) ((o.userData.prevMW ??= new THREE.Matrix4()) as THREE.Matrix4).copy(o.matrixWorld);
     const c = this.prevCam;
@@ -399,7 +541,12 @@ export class SceneRenderer {
       .multiply(cam.projectionMatrix)
       .multiply(mc.matrixWorldInverse);
     const r = this.renderer;
-    for (const o of this.mirrorHidden) o.visible = false;
+    // hidden for the mirror, then as they were (the upper panel stays off while the piano is open)
+    const shown = this.mirrorShown;
+    this.mirrorHidden.forEach((o, i) => {
+      shown[i] = o.visible;
+      o.visible = false;
+    });
     const dbg = this.debugLayer.visible;
     this.debugLayer.visible = false;
     // the rest of the lacquer, seen in the mirror, must not read the image being drawn
@@ -409,7 +556,7 @@ export class SceneRenderer {
     r.clear();
     r.render(this.scene, mc);
     MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
-    for (const o of this.mirrorHidden) o.visible = true;
+    this.mirrorHidden.forEach((o, i) => (o.visible = shown[i]));
     this.debugLayer.visible = dbg;
     return true;
   }
@@ -431,6 +578,12 @@ export class SceneRenderer {
       }
     }
     this.env.update(frame.t, this.post.height * 0.9);
+    if (this.open && this.interior) {
+      this.interior.update(frame);
+      const L = this.env.lights;
+      this.interiorLight?.setSources([L.sun, L.rake]);
+      this.interiorLight?.update();
+    }
   }
 
   /** t (performance time) seeds the film grain, so a paused frame is a still image */

@@ -33,7 +33,7 @@ To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.
 
 Choose a piece from the **Library** (the button in the control bar, the title, or `O`). To perform your own `.mid` file, use **Open a MIDI file** there or drop the file anywhere on the window. Files with several parts ask which tracks to perform, with piano parts preselected. Your files are kept under "Your files" in this browser (IndexedDB), along with the parts you chose.
 
-URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?shot=<shot id>` (hold one of the director's shots, `&hand=L` to favour the left hand), `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
 ### Publishing on GitHub Pages
 
@@ -47,6 +47,70 @@ The repository carries only music that can be shared freely. To build a version 
 
 ⚙ → **Export** renders the performance as an MP4: choose its shape (16:9, 2.39:1 scope, 1.85:1, 4:3, 1:1, 4:5 or 9:16 vertical), its size (1080p, 1440p or 4K on the long side), 24, 30 or 60 fps, and the whole piece or from the playhead. Every frame is drawn offline at its exact time at high quality, so a slower computer only takes longer, never drops a frame; the piano is rendered offline too (`AudioEngine.renderOffline`), with the same room, pedal halo and key noises. Both are encoded in the browser with WebCodecs (H.264 at a generous bitrate; AAC, or Opus where the browser has no AAC encoder) and muxed with `mp4-muxer` into a file streamed out as it is written (`app/VideoExport.ts`). The camera, style and look are the current ones; the interface is HTML over the canvas, so it never appears in the film, and the letterbox bars are left off because the frame itself has the chosen shape. In the published artifact the page offers the file through its `downloads` capability (the viewer confirms the save); elsewhere it is an ordinary download. `tools/render-video.cjs` renders a stretch to video from the command line instead (silent).
 
+### Open the piano
+
+The piano starts open: its upper front panel is off, with its music desk and candle sconces. **Close piano** on the control bar (or **I**) puts it back for the rest of the visit. Open, it shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
+
+* a hammer per key, its head of thick cream felt wrapped over a red underfelt and a beech moulding, nearly as wide as the keys' spacing allows, so that at rest the row reads as one ribbed wall. The head is longer from the moulding to the crown than it is tall, with a broad round crown, pressed smoother and a little yellowed at the strike line, where the strings have left their grooves. Each head has its number stamped on its upper side. It sits on a maple shank and a buckskin butt.
+* a damper per key up to E6 (F6 and above have none, as in the sound), a soft block of felt glued with red cloth to a wooden head, and a wire running down beside the hammer.
+* the mechanism below them, built in `presentation/ActionParts.ts` so the chain from key to hammer can be followed part by part:
+  * each key pivots on its balance pin on the balance rail, on a felt punching, and runs on under the action, cranked toward its hammer, to rest on the back rail's cloth;
+  * a brass capstan on the key's back lifts the heel of its wippen, which turns in its flange on the wippen rail;
+  * the jack stands on the wippen and pushes the hammer butt's buckskin heel round. At let-off its toe meets the let-off button on the let-off rail, and it slips forward from under the butt, springing back under it as the key rises;
+  * a white bridle tape runs from the hammer's catcher to the bridle wire on the front of the wippen. It hangs slack and sways a little after each blow;
+  * a brass spoon on the wippen pushes the damper lever's tail toward the strings, taking the damper off them;
+  * the backcheck's wire leans in as the key goes down, so its felt meets the catcher at the check, and out of the catcher's way as the key rises. Our keyboard's short lever alone would not move it far enough;
+  * there are centre pins at every pivot, a flange screw for each hammer and damper, and bolts through the cast brackets that carry the main, rest and damper rails.
+  * The key's back moves only as much as the keyboard's lever allows (a millimetre or two at the capstan), and the action takes it from there. Each jack keeps its foot on the wippen and its head on the butt while driving it, so its length follows the two by a few percent rather than opening a gap.
+* 236 strings: steel trichords in the treble and tenor, and copper-wound bichords and single strings in the bass, overstrung on a steep diagonal across the tenor.
+* a cast-iron plate in gold paint with its pin field, struts, bolts and a hitch-pin rail, the maker's name and the casting's legends raised across its top; tuning pins with their coils of string, and hitch pins.
+* the treble and bass bridges on a spruce soundboard, with the maker's gold transfer in the treble.
+
+The surfaces were matched against slow-motion footage of a real action (`presentation/InteriorShading.ts`), with all fine detail filtered by its size on screen, so it fades to its average before it can shimmer:
+
+* **Felt** reads as felt rather than painted plastic: fine matted fibres in the colour and the surface, very matte, with the light wrapping a little past the terminator and coming back warmer, as it does out of wool, a soft sheen at grazing angles and a slightly fuzzy rim where fibres catch the light. On the sides of each head the layers show in section: the white felt, the thin dark-red U of the underfelt inside it, the wood inside that. The damper felts, the punchings and the cloth strips are the same wool.
+* **Gold paint:** bronze flakes in lacquer over sand-cast iron. Up close single flakes catch the light; further off it is a satin gold. The raised letters are a little brighter, with the iron around them in their shadow.
+* **Copper winding** catches light from far more directions than a smooth wire, so the bass strings never go black facing the dark cabinet.
+* **Wood:** a fine straight grain along each part of the action, with a beech moulding's flecks; dust lies on whatever faces up.
+
+The moving parts are pure functions of time from the same key strokes that move the keys (`performance/ActionMechanics.ts`), as deterministic as everything else:
+
+* **Hammers** move as slow-motion footage of a real upright action shows them:
+  * Each hammer eases out of the resting row and accelerates under the jack, covering most of its travel in the second half of the rise.
+  * The jack trips a few millimetres short of the string (let-off), and the hammer flies the rest of the way on its own, slowing into the string.
+  * It reaches the string exactly at the note onset and lingers there, for contact and felt compression, for about a fifth of the rise, without bouncing off.
+  * It comes back about twice as fast as it rose, and its catcher lands in the backcheck's felt (the felt-faced check on its wire at the front of the wippen). It sinks in past the check by 10–15% of its travel, as tracked frame by frame in the footage, and springs back out past it by about a fifth of that. It settles in an elastic ease-out: about one and a half swings to see, over one to one and a half times its rise. It then holds still while the key is down.
+  * When the key lets go it falls, gathering speed, to its rest rail. It comes off the rail's felt in a small bounce (a few percent of its travel) and a smaller one, and lies still.
+  * Every strike settles a little differently: about ±30% in size and ±15% in time, fixed per strike. Loud blows sink further into the check, and a quick release bounces more at the rail than a slow one.
+  * A soft note rises more slowly, rebounds more gently and is caught a little higher than a loud one.
+  * As in a real action, the hammers of a chord are never quite in unison. Each note has its own lost motion before the jack takes up, and its own small differences in linger, rebound and check. They all strike on their onsets but sit at different heights in between.
+  * A repeated note strikes again from wherever the half-risen key left it.
+  * No hammer swings in a perfect plane. Each one leans a hint to one side and twists a hint about its shank as it rises (a few tenths of a millimetre at the head over the whole blow), with a smaller difference every strike. The dampers do the same as they lift, and nothing moves at rest.
+* **Dampers:**
+  * A damper lifts in the second half of its key's travel, falls back a moment after the key rises, and its felt gives a little as it lands.
+  * The sustain pedal lifts every damper together on the damper lift rail, visible behind the damper wires. Each damper meets the rail at a slightly different point, and half-pedalling (the MIDI controller's in-between values) lifts them part of the way.
+  * The dampers clear the strings, and the strings ring, once the pedal is half down, matching where the sound counts it as down.
+* **Soft pedal** (CC67): it moves the hammer rest rail toward the strings, so every hammer rests, and starts its blow, a third of the way closer (`performance/Pedals.ts`). Satie's Gnossienne holds it throughout. The sound is unchanged.
+* **Strings** (`performance/StringMechanics.ts`): each string swings by a physical amount, set by velocity and register. That is a few millimetres at mid-span for a bass string struck hard, a few tenths in the middle and hundredths at the top. It dies away in two stages, the quick prompt sound and then the long aftersound, slowly in the bass and quickly in the treble. Once its damper is back on the strings (the key risen past where it lifts the damper, and the pedal up), the swing dies within tens of milliseconds in the treble and a few hundred in the bass, rather than stopping dead. The undamped top strings and pedalled strings ring on. While the dampers are off, strings that share a partial with a sounding note (octaves, twelfths, fifths) pick up a faint sympathetic swing. The swing starts in the hammer's plane, toward the soundboard, and turns partly into the other polarisation over a few tenths of a second.
+
+A string vibrates far faster than any frame rate, so a camera never sees a moving wire. It sees the envelope of the swing over the exposure, which is how the strings are drawn. Each string is a ribbon facing the camera, as wide as the wire plus the part of its swing seen across the line of sight, with the first mode's shape: widest at mid-span and pinched at the bridge and the top bearing. Every pixel takes the share of the exposure the wire covers it, so a swinging string becomes a translucent band, brightest at its edges where the wire lingers as it turns. The band holds exactly the wire's light, however wide it spreads. In practice only loud bass notes blur visibly, and mostly when seen from above or from the side. The same filter gives distant strings, thinner than a pixel, a steady faint line instead of a broken, flickering one. The normal across the ribbon is the round wire's, so light runs along each string in a bright streak; where a wire is only a pixel or two wide, its highlight broadens instead of depending on where the pixel falls.
+
+Hammers, dampers and wippens are instanced, and keep their transforms from the start of the shutter for motion blur.
+
+The light inside (`presentation/InteriorLight.ts`): with the panel off, the case is a deep box with one opening, and nearly all its light comes in through it.
+
+* **Direct light** reaches a point inside only along a line through the opening. This is tested analytically for every light at every pixel. The penumbra grows with the distance to the opening's edge and with the size of the source: crisp for the sun and the raking lamp, wide for the fill and the window. So the light falls in under the lid's edge and across the action from the window's side, and leaves the top of the case, the pins and the far corners in shadow. The shadow maps still draw what the parts inside cast on one another, and the sun's map reaches up under the lid while the piano is open.
+* **Light from the room** (sky fill, bounced light, reflections) is scaled by how much of what a surface faces is the opening rather than the dark inside of the case, with a little left over for what the inside bounces about. Reflections look out along the mirror direction.
+* **Between the rows**: hammers, dampers and wippens stand a millimetre or two apart. Where a part's neighbour stands level with it, the slot between them is dark: its faces see out only near the mouth, and the faces beside it darken toward the gap. When a neighbour rises out of the row, the slot opens and lights up. Each part carries its neighbours' state as instance attributes, worked out every frame from the posed parts themselves.
+* **No relighting delay**: the room's bounced light and the hands' reflections are prepared at load for the piano both open and closed, so opening or closing it relights at once, on the next frame.
+
+With the piano open, the cinematic director also goes inside now and then: about one cut in six or seven, never twice running, and not in the first two shots or the last. It chooses the moments for a soft or held passage, a big chord at the cut, or the start of a phrase. Inside, the focus is pulled from hammer to hammer with the melody, the top note of the hand's chords. A focus puller would start each pull a little ahead of the note, ease it to a stop, and take longer for a longer distance. A pull that starts before the last has finished carries on from its speed, so the focus never jerks. There are four shots inside:
+
+* *The hammers*, a close-up above the leading hand, focused on the melody's hammer where it stands while its note sounds;
+* *Along the hammer line*, a long lens wide open from one end, the focus travelling along the line with the melody;
+* *Through the action*, looking out past the dampers and hammers to the hands;
+* *The plate and the pins*, a crane down from the tuning pins to the hammers.
+
 ### Controls
 
 | Action | Control |
@@ -57,14 +121,16 @@ The repository carries only music that can be shared freely. To build a version 
 | Back / forward 1 s | Shift + ← / → |
 | Start / end, restart | Home / End, ⏮ |
 | Speed (0.25×–1.5×) | the speed menu, `[` / `]` |
-| Cinematic / Follow / Overhead / Macro camera | 1 / 2 / 3 / 4, or the camera switch |
+| Cinematic: the director cuts between shots | 1, or Cinematic on the bar |
+| Previous / next shot, held with a gentle follow | , / . or ‹ › on the bar |
+| Hold the Follow, Overhead or Macro shot | 2 / 3 / 4 |
 | Next / previous visual style | S / Shift + S |
-| Loop | L |
 | Mute, volume | M, the volume slider |
 | Library: choose a piece or open a file | O, the Library button, or the title |
 | Close the library, a dialog or the drawer | Esc |
-| Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
+| Settings drawer (fingering, light, camera, sound, export, debug) | A, or Settings |
 | Kinematics overlay | D |
+| Open / close the piano (upper panel off: hammers, dampers, strings) | I, or Open piano on the bar |
 
 ## The library
 
@@ -129,7 +195,7 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
   **Repeated notes:** the earlier key lets go in time to rise most of the way before the re-strike, and the finger visibly lifts off.
 * **`HandIK`** is closed-form. For each finger, abduction turns its flexion plane to the target and a preferred distal angle fixes the DIP joint, so MCP and PIP follow from the two-link solution. The thumb's CMC is a ball joint: swing spreads it in the palm plane and twist turns its flexion plane until the target lies in it.
 * **`HandPoser`** evaluates every fingertip target from that finger's notes (prepare, strike, hold, release, travel), then runs a few damped Gauss–Newton steps over wrist position, yaw, roll and pitch so the fingers on keys always reach them.
-* **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
+* **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Coming up, it meets its rest stop and rebounds into a small dip below rest, 1–4% of its travel, then a smaller one, before settling. It never rises above rest. A brisk release (a short, loud note) dips more than a slow one, and every stroke a little differently. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
 * **`PerformanceTimeline.evaluate(t)`** returns keys, both hands' joints, finger phases, pedal and sounding notes for any *t*, as a pure function. After planning it checks every held key against the hand and re-plans where needed.
 
 The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender build, the IK and the fingering model alike. The keyboard layout in `src/core/keyboard.ts` is shared by the planner, the IK and the piano model.
@@ -162,13 +228,11 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
   * Studio
 
   Every slider still applies after choosing one.
-* **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. There are four modes:
-  * **Cinematic** is the director (`ShotDirector.ts`): nineteen designed camera moves cut together at musical moments, described below.
-  * **Follow** is one continuous treble-end three-quarter view down the keyboard.
-  * **Overhead** looks over the player's shoulder.
-  * **Macro** is low and close at the right hand's fingertips.
+* **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. The camera control on the bar has two parts:
+  * **Cinematic** is the director (`ShotDirector.ts`): designed camera moves cut together at musical moments, described below. The label beside it names the shot on screen.
+  * **‹ ›** step through the same shots in a fixed order (wide, medium, close, macro, then the inside shots while the piano is open) and hold the chosen one, following the hands gently. The arrows start from whatever shot is on screen; Cinematic hands the camera back to the director. Three continuous views are in the cycle too: **Follow**, one treble-end three-quarter view down the keyboard; **Overhead**, over the player's shoulder; and **Macro**, low and close at the right hand's fingertips. Closing the piano on an inside shot moves to the nearest shot outside.
 
-  Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous modes. Switching modes blends over 1.8 s; cuts within Cinematic are hard cuts.
+  Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous views. Stepping between held shots cuts, as the director does.
 * **`ShotDirector`** edits the piece like a concert film.
   * **Cutting:** every onset is a candidate cut, scored for attack strength, a breath before it, a bar line and a new bass note. A cut in the middle of a fast run is penalised. Dynamic programming chooses cuts that aim for shots of 6–9 s in calm passages and 3–5 s as the music builds. Each cut falls 50 ms before an attack, so the new shot sees it land.
   * **Shot choice:** shots are assigned by film grammar. The edit opens low along the keys into the light (from the treble end, the hands backlit by the window, a slow push-in with the keys falling into soft focus) and ends on a pull-back reveal. It alternates wide, medium, close and detail, never repeats a recent shot, and gives close-ups to the leading hand.
@@ -255,8 +319,8 @@ Add `--preview out.png` to either script for a Cycles studio render. `tests/asse
 src/
   core/            keyboard layout, hand spec + forward kinematics, types, math, seeded noise
   interpretation/  MidiEngine, HandAssignment, Fingering, Patterns, Conventions, PerformancePlanner, demoPiece
-  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, PerformanceTimeline
-  presentation/    SceneRenderer, PianoModel, HandRig, Environment, materials, PostPipeline,
+  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, ActionMechanics, StringMechanics, Pedals, PerformanceTimeline
+  presentation/    SceneRenderer, PianoModel, PianoInterior, ActionLayout, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
   audio/           AudioEngine, synthPiano
   ui/              AppUI, LibrarySheet, dom helpers, styles
