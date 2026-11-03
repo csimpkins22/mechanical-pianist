@@ -51,7 +51,7 @@ export const CAVITY = /* glsl */ `
     // and the faces beside it darken toward its edge
     float mpEx = clamp((vOPos.x - vMpRowX.x) / max(1e-4, vMpRowX.y - vMpRowX.x), 0.0, 1.0);
     float mpEdge = (1.0 - smoothstep(0.0, 0.3, mpEx)) * vMpRow.x + (1.0 - smoothstep(0.0, 0.3, 1.0 - mpEx)) * vMpRow.y;
-    float mpE = 1.0 - 0.6 * clamp(mpEdge, 0.0, 1.0) * (1.0 - abs(mpON.x));
+    float mpE = 1.0 - MP_ROW_EDGE_K * clamp(mpEdge, 0.0, 1.0) * (1.0 - abs(mpON.x));
     float mpK = mix(1.0, mpOpen, mpOcc) * mpE;
     reflectedLight.indirectDiffuse *= mpK;
     reflectedLight.indirectSpecular *= mpK;
@@ -66,6 +66,11 @@ export const CAVITY = /* glsl */ `
 
 const FRAG_HEAD = /* glsl */ `
 #define MP_INTERIOR
+// how much the faces beside a level neighbour darken toward their edge, standing in for a rounded edge
+// (a material whose parts are already rounded, like the hammers' felt, sets less)
+#ifndef MP_ROW_EDGE_K
+#define MP_ROW_EDGE_K 0.6
+#endif
 uniform vec4 uMpOpening;   // the opening, world: x from .x to .y, y from .z to .w
 uniform float uMpOpeningZ; // in the plane z = this
 uniform vec3 uMpCrisp[2];  // toward the two small sources (sun, lamp), world

@@ -76,7 +76,7 @@ export const DEFAULT_LOOK: Look = {
   motionBlurOn: true,
   shutter: 180,
   reflectionsOn: true,
-  openPiano: false,
+  openPiano: true,
   aoOn: true,
   ao: 0.6,
 };

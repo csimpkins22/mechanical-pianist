@@ -121,39 +121,61 @@ export function feltify<T extends THREE.MeshPhysicalMaterial>(mat: T): T {
 }
 
 // ---------------------------------------------------------------- hammer heads
-/** GLSL: the head's number stamped in ink (3x5 cells a digit), and the underfelt's U on the sides */
+/**
+ * The hammers' numbers: the ten digits in a plain, slightly heavy face, as a
+ * rubber stamp would print them, drawn once into a strip (digit d in the d-th
+ * tenth), softened a little as ink on wool is.
+ */
+export function digitsTexture(): THREE.Texture {
+  if (typeof document === 'undefined') return new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  const W = 64;
+  const H = 96;
+  const c = document.createElement('canvas');
+  c.width = W * 10;
+  c.height = H;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, W * 10, H);
+  g.fillStyle = '#fff';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.filter = 'blur(1.2px)';
+  g.font = `600 ${Math.round(H * 0.86)}px "Courier New", Courier, "Nimbus Mono PS", monospace`;
+  for (let d = 0; d < 10; d++) g.fillText(String(d), W * (d + 0.5), H * 0.54);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.NoColorSpace;
+  t.anisotropy = 8;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  return t;
+}
+
+/** GLSL: the head's number stamped in ink, and the underfelt's U on the sides */
 export const HAMMER_GLSL = /* glsl */ `
 flat varying float vHammer;
 varying vec3 vONormal;
-float mpBit(int d, int x, int y) {
-  if (x < 0 || x > 2 || y < 0 || y > 4) return 0.0;
-  int codes[10] = int[10](0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF);
-  return float((codes[d] >> (14 - (y * 3 + x))) & 1);
-}
-// one digit, its cells sampled bilinearly so the strokes come out rounded, like a rubber stamp's
-float mpDigit(int d, vec2 c) {
-  vec2 g = c - 0.5;
-  vec2 i = floor(g);
-  vec2 f = g - i;
-  int x = int(i.x), y = int(i.y);
-  float v = mix(mix(mpBit(d, x, 4 - y), mpBit(d, x + 1, 4 - y), f.x), mix(mpBit(d, x, 3 - y), mpBit(d, x + 1, 3 - y), f.x), f.y);
-  return smoothstep(0.32, 0.62, v);
-}
-// how much ink: the number n stamped centred on q (metres; reading along x), digits 5 cells high
-float mpStamp(vec2 q, float n, float cell, float foot) {
+// how much ink: the number n stamped centred on q (metres; reading along +x, its digits h high, up along +y),
+// as a rubber stamp leaves it on felt: the ink uneven, a little smudged, missing here and there
+float mpStamp(vec2 q, float n, float h, float foot) {
   float tens = floor(n / 10.0);
   float ones = n - 10.0 * tens;
   float nd = tens > 0.0 ? 2.0 : 1.0;
-  float w = 4.0 * nd - 1.0;
-  vec2 c = q / cell + vec2(0.5 * w, 2.5);
-  if (c.x < -0.5 || c.x > w + 0.5 || c.y < -0.5 || c.y > 5.5) return 0.0;
-  float k = floor(c.x / 4.0);
-  vec2 cc = vec2(c.x - 4.0 * k, c.y);
-  int d = int(nd > 1.5 && k < 0.5 ? tens : ones);
-  float ink = cc.x <= 3.5 ? mpDigit(d, cc) : 0.0;
+  float w = 0.62 * h;              // a digit's advance
+  vec2 c = vec2(q.x / w + 0.5 * nd, q.y / h + 0.5);
+  if (c.x < -0.2 || c.x > nd + 0.2 || c.y < -0.2 || c.y > 1.2) return 0.0;
+  float k = clamp(floor(c.x), 0.0, nd - 1.0);
+  float d = nd > 1.5 && k < 0.5 ? tens : ones;
+  // the stamp was pressed a little crooked, each one its own way
+  vec2 u = vec2(c.x - k, c.y);
+  float j = mpHash(vec3(n, 2.0, 9.0)) - 0.5;
+  u = vec2(0.5, 0.5) + mat2(1.0, j * 0.12, -j * 0.12, 1.0) * (u - 0.5);
+  float ink = texture2D(uDigits, vec2((d + clamp(u.x, 0.0, 1.0)) / 10.0, clamp(u.y, 0.0, 1.0))).r;
+  ink *= step(0.0, u.x) * step(u.x, 1.0) * step(0.0, u.y) * step(u.y, 1.0);
+  // uneven ink: lighter where the stamp met the fibres less, a few gaps
+  float pres = 0.55 + 0.45 * smoothstep(0.2, 0.75, mpNoise(vec3(q * 2600.0, n)));
+  float gaps = mix(1.0, smoothstep(0.15, 0.45, mpNoise(vec3(q * 9000.0, n + 3.0))), mpRes(0.0004, foot));
   // a stamp too small to read is a faint smudge
-  float box = (1.0 - smoothstep(w, w + 0.5, c.x)) * smoothstep(-0.5, 0.0, c.x) * (1.0 - smoothstep(5.0, 5.5, c.y)) * smoothstep(-0.5, 0.0, c.y);
-  return mix(0.4 * box, ink, mpRes(cell * 2.5, foot));
+  float box = smoothstep(-0.2, 0.1, c.x) * (1.0 - smoothstep(nd - 0.1, nd + 0.2, c.x)) * smoothstep(-0.2, 0.1, c.y) * (1.0 - smoothstep(0.9, 1.2, c.y));
+  return mix(0.25 * box, ink * pres * gaps, mpRes(h * 0.5, foot));
 }
 // the underfelt's U on a side of the head (y, z about its centre): the distance to its line, and whether inside it
 vec2 mpU(float y, float z, vec4 u) {
@@ -216,6 +238,12 @@ float mpClothness(vec3 c) {
   float green = smoothstep(1.2, 1.4, c.g / r);
   float white = smoothstep(0.76, 0.84, dot(c, vec3(0.33))) * (1.0 - smoothstep(0.06, 0.12, max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))));
   return max(max(red, green), white) * smoothstep(0.05, 0.12, r + c.g);
+}
+// steel among the wood: neutral grey, neither dark iron paint nor white cloth
+float mpMetalness(vec3 c) {
+  float l = dot(c, vec3(0.33));
+  float chroma = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+  return (1.0 - smoothstep(0.03, 0.06, chroma)) * smoothstep(0.35, 0.45, l) * (1.0 - smoothstep(0.72, 0.8, l));
 }
 // fine straight grain (maple, beech): growth lines across the part, wandering a little, with ray flecks
 float mpGrain(vec3 p, float foot) {
@@ -289,7 +317,8 @@ export const LETTERING_MAP = /* glsl */ `
 if (vWNormal.z > 0.9 && vWPos.y > ${LETTERING.y0.toFixed(4)} && vWPos.y < ${LETTERING.y1.toFixed(4)}) {
   vec2 mpUV = vec2((vWPos.x - ${LETTERING.x0.toFixed(4)}) / ${(LETTERING.x1 - LETTERING.x0).toFixed(4)}, (vWPos.y - ${LETTERING.y0.toFixed(4)}) / ${(LETTERING.y1 - LETTERING.y0).toFixed(4)});
   vec4 mpL = texture2D(uLetters, mpUV);
-  diffuseColor.rgb *= (1.0 - 0.35 * clamp(mpL.g - mpL.r, 0.0, 1.0)) * (1.0 + 0.08 * mpL.r);
+  // the letters' faces rubbed bright, the iron in the angle around them darker with old grime
+  diffuseColor.rgb *= (1.0 - 0.5 * clamp(mpL.g - mpL.r, 0.0, 1.0)) * (1.0 + 0.35 * mpL.r) * (1.0 - 0.18 * (1.0 - mpL.g));
 }`;
 
 /** The soundboard's decal: a fictional maker's gold transfer, in the alpha of a small texture. */

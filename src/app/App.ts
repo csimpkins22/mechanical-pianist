@@ -12,7 +12,7 @@ import { PerformanceTimeline, type FrameState } from '../performance/Performance
 import { CinematicCamera, DEFAULT_FRAMING, sameView, type CameraMode, type CameraState, type CameraView, type Framing } from '../presentation/CinematicCamera';
 import { DebugOverlay } from '../presentation/DebugOverlay';
 import { DEFAULT_LIGHTS, type LightSettings } from '../presentation/Environment';
-import { SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
+import { DEFAULT_LOOK, SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 
@@ -99,7 +99,8 @@ export class App {
     // the viewer's own settings from last time (ignored with ?settings=default, for tools)
     if (this.params.get('settings') !== 'default') {
       const s = loadSettings();
-      this.view.look = s.look;
+      // the piano always starts open; closing it lasts for the visit
+      this.view.look = { ...s.look, openPiano: DEFAULT_LOOK.openPiano };
       this.lights = s.lights;
       this.framing = s.framing;
       this.applySound(s.sound);

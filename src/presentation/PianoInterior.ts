@@ -57,10 +57,14 @@ import {
   LETTERING_NORMAL,
   WOOD_GLSL,
   decalTexture,
+  digitsTexture,
   feltify,
   letteringTexture,
 } from './InteriorShading';
 import { patch } from './shaderPatch';
+
+/** which way the hammers' numbers face: upright to someone looking in from the keys */
+const STAMP_UP = 1;
 
 /** the piano's (invented) maker, cast into the plate and on the soundboard's decal (as on the nameboard) */
 const MAKER = 'Halloran & Vey';
@@ -257,6 +261,7 @@ function materials() {
   // inside that); the crown pressed smoother and a little yellowed along the
   // strike line, the strings' grooves in it; and each head's number stamped
   // in ink on its upper side, by the moulding.
+  const digits = digitsTexture();
   const felt = feltify(
     patch(
       new THREE.MeshPhysicalMaterial({
@@ -268,6 +273,7 @@ function materials() {
         sheenColor: new THREE.Color(0xa49a88),
       }),
       {
+        uniforms: { uDigits: { value: digits } },
         vertexHead: INSTANCE_VS_HEAD,
         vertexEnd: INSTANCE_VS,
         fragHead: DETAIL_GLSL + FELT_GLSL + HAMMER_GLSL,
@@ -300,8 +306,9 @@ function materials() {
           c *= mix(vec3(1.0), vec3(0.95, 0.91, 0.8) * (1.0 - 0.28 * min(g, 1.0)), mpFeltSmooth);
           // the number, stamped on the upper side by the moulding, upright to someone looking in from the keys
           float top = smoothstep(0.4, 0.7, vONormal.y) * (1.0 - side);
-          float ink = top * mpStamp(vec2(mpO.x, ${(HEAD_BACK - 0.0058).toFixed(4)} - mpO.z), vHammer + 1.0, 0.00056, mpF);
-          c = mix(c, vec3(0.2, 0.185, 0.2), 0.62 * ink * (0.7 + 0.3 * mpNoise(vOPos * 3000.0)));
+          vec2 sq = ${STAMP_UP.toFixed(1)} * vec2(mpO.x, ${(HEAD_BACK - 0.0055).toFixed(4)} - mpO.z);
+          float ink = top * mpStamp(sq, vHammer + 1.0, 0.0026, mpF);
+          c = mix(c, vec3(0.22, 0.2, 0.21), 0.68 * ink);
           diffuseColor.rgb = c;
           mpFeltH *= 1.0 - mpWoodIn;
         }`,
@@ -312,6 +319,8 @@ function materials() {
       },
     ),
   );
+  // the heads' edges are round now, so the slots between them need only a little of the light's edge darkening (InteriorLight)
+  felt.defines = { ...felt.defines, MP_ROW_EDGE_K: '0.2' };
   // inside the felt now, where it belongs: what shows of it is the U on the sides
   const underfelt = patch(
     new THREE.MeshPhysicalMaterial({ color: 0x8e2019, roughness: 0.92, sheen: 1, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xd06050) }),
@@ -338,6 +347,7 @@ function materials() {
     fragHead: DETAIL_GLSL + FELT_GLSL + WOOD_GLSL,
     afterMap: /* glsl */ `
     float mpCloth = 0.0;
+    float mpMetal = 0.0;
     {
       float mpF = mpFoot();
       #ifdef USE_INSTANCING
@@ -347,15 +357,46 @@ function materials() {
       #endif
       float wd = mpWoodness(vColor.rgb);
       mpCloth = mpClothness(vColor.rgb);
+      mpMetal = mpMetalness(vColor.rgb);
       float other = 0.95 + 0.1 * mpNoise(vWPos * 1500.0) * mpRes(0.0007, mpF);
       diffuseColor.rgb *= mix(mix(other, mpGrain(mpP, mpF), wd), mpFelt(mpP, mpF), mpCloth);
       mpFeltH *= mpCloth;
     }`,
-    afterRough: /* glsl */ `roughnessFactor = mix(roughnessFactor, 1.0, mpCloth);${DUST}`,
+    afterRough: /* glsl */ `roughnessFactor = mix(mix(roughnessFactor, 1.0, mpCloth), 0.3, mpMetal);${DUST}`,
+    // the wires and pins among the wood are bright steel, which shows the room's bounced light rather than the dark case
+    afterMetal: /* glsl */ `metalnessFactor = mix(metalnessFactor, 0.55, mpMetal);`,
     afterNormal: FELT_NORMAL,
-    afterAO: CAVITY,
+    afterAO: /* glsl */ `
+    if (uBounce > 0.0) reflectedLight.indirectSpecular += mpMetal * uBounce * 0.5 * mpBounce(vWPos, normalize(vWNormal)) * material.specularColor;
+    ${CAVITY}`,
     bounce: 0.7,
   });
+  // Brass, for the capstans, the spoons and the flange screws: a warm yellow
+  // metal, a little tarnished and dulled, that takes the room's bounced light in
+  // its own colour rather than going grey in the dark of the case.
+  const brass = patch(new THREE.MeshPhysicalMaterial({ color: 0xd3a24c, metalness: 0.95, roughness: 0.4 }), {
+    fragHead: DETAIL_GLSL,
+    afterMap: /* glsl */ `diffuseColor.rgb *= 0.8 + 0.24 * mpFbm(vWPos * 900.0);`,
+    afterRough: /* glsl */ `roughnessFactor = clamp(roughnessFactor + (mpFbm(vWPos * 1700.0) - 0.5) * 0.2, 0.26, 0.6);${DUST}`,
+    afterAO: /* glsl */ `
+    if (uBounce > 0.0) reflectedLight.indirectSpecular += uBounce * 0.55 * mpBounce(vWPos, normalize(vWNormal)) * material.specularColor;
+    ${CAVITY}`,
+    bounce: 1,
+  });
+  // the bridle tapes: woven cotton, the same soft white as the felts
+  const tape = feltify(
+    patch(
+      new THREE.MeshPhysicalMaterial({ color: 0xebe4d4, roughness: 1, specularIntensity: 0.1, sheen: 1, sheenRoughness: 0.85, sheenColor: new THREE.Color(0xa8a194), side: THREE.DoubleSide }),
+      {
+        fragHead: DETAIL_GLSL + FELT_GLSL,
+        afterMap: /* glsl */ `diffuseColor.rgb *= mpFelt(vWPos, mpFoot());`,
+        afterRough: DUST,
+        afterNormal: FELT_NORMAL,
+        afterAO: CAVITY,
+        bounce: 0.75,
+      },
+    ),
+  );
   // The plate's gold paint: bronze powder in lacquer over sand-cast iron, so
   // fine flakes catch the light up close and it reads as satin gold further
   // off; the maker's name and the casting's legends raised across its top.
@@ -370,7 +411,15 @@ function materials() {
     }`,
     afterRough: GOLD_ROUGH + DUST,
     afterNormal: GOLD_NORMAL + LETTERING_NORMAL,
-    afterAO: CAVITY,
+    // the top of the plate, under the lid, gets no direct light; what reaches it is warm light bounced up off the
+    // lit action and keys below, across the band between the pins and the lid's edge (in shadow right under the lid)
+    afterAO: /* glsl */ `${CAVITY}
+    if (uBounce > 0.0) {
+      float mpBand = smoothstep(0.43, 0.47, vWPos.y) * (1.0 - smoothstep(0.508, 0.522, vWPos.y)) * smoothstep(0.5, 0.9, normalize(vWNormal).z);
+      vec3 mpUp = uBounce * mpBounce(vec3(vWPos.x, 0.07, vWPos.z), vec3(0.0, -0.55, 0.83)) * vec3(1.0, 0.86, 0.66);
+      reflectedLight.indirectDiffuse += 0.9 * mpBand * mpUp * BRDF_Lambert(material.diffuseColor);
+      reflectedLight.indirectSpecular += 0.5 * mpBand * mpUp * material.specularColor;
+    }`,
     bounce: 0.6,
   });
   const pins = patch(new THREE.MeshPhysicalMaterial({ color: 0xd2d6dc, metalness: 0.55, roughness: 0.3, clearcoat: 0.4, clearcoatRoughness: 0.2 }), { afterAO: CAVITY, bounce: 0.6 });
@@ -446,7 +495,7 @@ function materials() {
     afterAO: CAVITY,
     bounce: 0.6,
   });
-  return { felt, underfelt, damperFelt, wood, plate, pins, steel, copper, soundboard, bridge, viewH };
+  return { felt, underfelt, damperFelt, wood, brass, tape, plate, pins, steel, copper, soundboard, bridge, viewH };
 }
 
 // ---------------------------------------------------------------- geometry
@@ -525,7 +574,7 @@ function feltShape(zBack: number, crown: number, h: number, wBack: number, wCrow
 }
 
 /** the outer felt: cream, wrapping the head, with the crown that meets the string */
-const hammerHead = () => feltShape(HEAD_BACK, CROWN, HEAD_HALF, FELT_W, FELT_W * 0.9, 0.00045);
+const hammerHead = () => feltShape(HEAD_BACK, CROWN, HEAD_HALF, FELT_W, FELT_W * 0.85, 0.00045);
 /** the underfelt, inside the outer felt: what shows of it is its U on the sides (the felt's shader) */
 const hammerUnderfelt = () => feltShape(HEAD_BACK - 0.0008, U_DEPTH - HEAD_BACK - 0.0005, U_HALF - 0.0006, FELT_W - 0.0018, FELT_W * 0.8, 0, 0.0008, 8, 1);
 
@@ -552,10 +601,27 @@ function damperWood(): THREE.BufferGeometry {
   return merged([
     box(0.0101, 0.029, 0.0013, 0, 0.165, -0.0104, RED_FELT), // the red cloth the felt is glued on with
     box(0.0098, 0.026, 0.011, 0, 0.165, -0.0045, WALNUT),
-    box(0.003, 0.006, 0.006, 0.0058, 0.154, -0.004, WIRE),
-    rod([0.0058, 0.0, -0.004], [0.0058, 0.155, -0.004], 0.0006, WIRE, 5),
-    box(0.004, 0.014, 0.01, 0.0058, 0.0, -0.004, WALNUT),
+    box(0.003, 0.006, 0.006, 0.0058, 0.154, -0.004, WIRE), // where its wire goes in
   ]);
+}
+
+/**
+ * The damper's wire, from its lever up beside its hammer: it rises straight up
+ * the gap between that hammer and the next (so no head, leaning or swinging a
+ * little sideways, ever touches it), to above the heads, where a second length
+ * bends over to the damper head on its strings.
+ */
+const WIRE_R = 0.0003;
+const WIRE_BEND_Y = 0.287; // above the hammers' heads at the string (their tops at about 0.272)
+function wireUpGeo(): THREE.BufferGeometry {
+  return merged([rod([0, 0, 0], [0, WIRE_BEND_Y - DAMPER_PIVOT_Y, 0], WIRE_R, WIRE, 5), box(0.0036, 0.014, 0.01, 0, 0, 0, WALNUT)]);
+}
+const wireBendGeo = () => rod([0, 0, 0], [0, 1, 0], WIRE_R, WIRE, 5);
+/** key i's wire: in the middle of the gap beside its hammer, on the treble side */
+function wireX(i: number): number {
+  const next = i + 1 < KEY_COUNT ? HAMMER_X[i + 1] - HAMMER_X[i] : Infinity;
+  const prev = i > 0 ? HAMMER_X[i] - HAMMER_X[i - 1] : Infinity;
+  return HAMMER_X[i] + 0.5 * Math.min(next, prev);
 }
 
 
@@ -571,6 +637,15 @@ export class PianoInterior {
   private hammerWood: THREE.InstancedMesh;
   private damperFelt: THREE.InstancedMesh;
   private damperWood: THREE.InstancedMesh;
+  private wireUp: THREE.InstancedMesh;
+  private wireBend: THREE.InstancedMesh;
+  /** per damper: how far its head stands from its lever's pivot sideways, to sit on its own strings */
+  private headShift: number[] = [];
+  private wa = new THREE.Vector3();
+  private wb = new THREE.Vector3();
+  private wq = new THREE.Quaternion();
+  private wUp = new THREE.Vector3(0, 1, 0);
+  private wScale = new THREE.Vector3();
   private parts: ActionParts;
   private steel: THREE.InstancedMesh;
   private copper: THREE.InstancedMesh;
@@ -603,7 +678,10 @@ export class PianoInterior {
     this.hammerWood = instanced(hammerWood(), M.wood, KEY_COUNT);
     this.damperFelt = instanced(damperFeltGeo(), M.damperFelt, N_DAMPED);
     this.damperWood = instanced(damperWood(), M.wood, N_DAMPED);
-    this.root.add(this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood);
+    this.wireUp = instanced(wireUpGeo(), M.wood, N_DAMPED);
+    this.wireBend = instanced(wireBendGeo(), M.wood, N_DAMPED);
+    for (const m of [this.wireUp, this.wireBend]) m.castShadow = false;
+    this.root.add(this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wireUp, this.wireBend);
     for (let i = 0; i < N_DAMPED; i++) {
       // the damper sits on its strings above the strike line, leaning with them in the bass
       const s = stringSlope(i);
@@ -611,10 +689,13 @@ export class PianoInterior {
       const dy = 0.165 + DAMPER_PIVOT_Y - STRIKE_Y; // felt centre above the strike line
       this.dampPivot.push([HAMMER_X[i] + s * dy, DAMPER_PIVOT_Y, stringZ(i) + r + 0.0215]);
       this.leans.push(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.atan(-s)));
+      // leaning with its strings turns the head off them sideways; this sets it back on its own strings
+      const lean = Math.atan(-s);
+      this.headShift.push(s * (0.165 * Math.cos(lean) - 0.165) + 0.165 * Math.sin(lean));
     }
 
     // the mechanism below the hammers: keys' backs, capstans, wippens, jacks, bridles, spoons (ActionParts.ts)
-    this.parts = new ActionParts({ wood: M.wood, steel: M.pins, cavity: CAVITY, dampPivot: this.dampPivot, leans: this.leans });
+    this.parts = new ActionParts({ wood: M.wood, steel: M.pins, brass: M.brass, cloth: M.tape, felt: M.damperFelt, cavity: CAVITY, dampPivot: this.dampPivot, leans: this.leans });
     this.root.add(this.parts.root);
 
     // strings
@@ -850,11 +931,24 @@ export class PianoInterior {
     for (let i = 0; i < N_DAMPED; i++) {
       const [x, y, z] = this.dampPivot[i];
       damperQuaternion(i, f.dampers[i], this.leans[i], DAMPER_SWING, q);
-      m4.compose(p.set(x, y, z), q, one);
+      m4.compose(p.set(x + this.headShift[i], y, z), q, one);
       this.damperFelt.setMatrixAt(i, m4);
       this.damperWood.setMatrixAt(i, m4);
+      // where its wire goes into the head
+      const top = this.wb.set(0.0058, 0.154, -0.004).applyMatrix4(m4);
+      // the wire up the gap, swinging with the lever
+      q2.setFromAxisAngle(xAxis, DAMPER_SWING * f.dampers[i]);
+      m4.compose(p.set(wireX(i), y, z - 0.004), q2, one);
+      this.wireUp.setMatrixAt(i, m4);
+      const bend = this.wa.set(0, WIRE_BEND_Y - y, 0).applyMatrix4(m4);
+      // and over to the head
+      const d = top.sub(bend);
+      const len = Math.max(1e-5, d.length());
+      this.wq.setFromUnitVectors(this.wUp, d.divideScalar(len));
+      m4.compose(bend, this.wq, this.wScale.set(1, len, 1));
+      this.wireBend.setMatrixAt(i, m4);
     }
-    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood]) m.instanceMatrix.needsUpdate = true;
+    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wireUp, this.wireBend]) m.instanceMatrix.needsUpdate = true;
     this.parts.update(f);
     this.vibrate(f);
     // the rails: the soft pedal's (toward the strings) and the sustain pedal's (toward the player)
@@ -886,7 +980,7 @@ export class PianoInterior {
 
   /** remember the moving parts' transforms as they were when the shutter opened (call after update with that frame) */
   keepPrevious() {
-    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood]) keepPrevious(m);
+    for (const m of [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wireUp, this.wireBend]) keepPrevious(m);
     this.parts.keepPrevious();
   }
 }

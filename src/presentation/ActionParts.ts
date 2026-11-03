@@ -31,8 +31,9 @@
 // keeps its foot on the wippen and its head under the butt while it drives it,
 // so its length follows the two by a few percent rather than open a gap.
 //
-// New parts have plain placeholder materials (wood by vertex colour, brass,
-// steel, white cloth); the shared wood and steel are the interior's own.
+// The materials are the interior's own (PianoInterior): wood by vertex colour,
+// with its grain, dust, cloth and steel; brass for the capstans, spoons and
+// flange screws; felt for the backchecks; cotton for the bridle tapes.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { KEYS, KEY_COUNT, LOWEST_MIDI, PIVOT_Y, keyAngle } from '../core/keyboard';
@@ -40,7 +41,6 @@ import { hash01 } from '../core/random';
 import { HAMMER_CHECK, HAMMER_LETOFF, JACK_TRIP_AT, UNDAMPED_FROM } from '../performance/ActionMechanics';
 import type { FrameState } from '../performance/PerformanceTimeline';
 import { BASS_N, CROWN, DAMPER_SWING, HAMMER_REST, HAMMER_SPAN, HAMMER_X, SHANK, STRIKE_Y, STRUT_X, stringRadius, stringZ } from './ActionLayout';
-import { patch } from './shaderPatch';
 
 type C3 = [number, number, number];
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
@@ -53,7 +53,7 @@ const BEECH: C3 = [0.74, 0.58, 0.4];
 const BUCKSKIN: C3 = [0.72, 0.6, 0.44];
 const RED_FELT: C3 = [0.42, 0.07, 0.07];
 const GREEN_FELT: C3 = [0.17, 0.32, 0.2];
-const CLOTH: C3 = [0.12, 0.09, 0.08];
+const CLOTH: C3 = [0.05, 0.085, 0.06]; // the key frame's dark green cloth
 const STEEL: C3 = [0.62, 0.62, 0.64];
 
 // ---------------------------------------------------------------- where things are
@@ -178,9 +178,12 @@ const sub = (a: C3, b: C3): C3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dist = (a: C3, b: C3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 export interface ActionPartsOptions {
-  /** the interior's vertex-coloured wood, and its steel */
+  /** the interior's vertex-coloured wood, its steel and brass, the felt of the backchecks and the cotton of the bridle tapes */
   wood: THREE.Material;
   steel: THREE.Material;
+  brass: THREE.Material;
+  felt: THREE.Material;
+  cloth: THREE.Material;
   /** the interior's cavity shading (afterAO), for the new materials */
   cavity: string;
   /** each damped key's damper pivot and lean (PianoInterior) */
@@ -230,19 +233,13 @@ export class ActionParts {
 
   /** the instanced parts that stand in rows, instance i beside i ± 1 (for InteriorLighting's slot shading) */
   rows(): THREE.InstancedMesh[] {
-    return [this.wippens, this.jacks];
+    return [this.wippens, this.jacks, this.checks, this.checkFelts];
   }
 
   constructor(opts: ActionPartsOptions) {
     this.opts = opts;
     this.root.name = 'ActionParts';
-    const brass = patch(new THREE.MeshStandardMaterial({ color: 0xc9a24f, metalness: 1, roughness: 0.32 }), { afterAO: opts.cavity, bounce: 0.6 });
-    const cloth = patch(new THREE.MeshStandardMaterial({ color: 0xf1ede2, roughness: 0.95, side: THREE.DoubleSide }), {
-      afterMap: /* glsl */ `diffuseColor.rgb *= 0.92 + 0.1 * mpNoise(vWPos * 1800.0);`,
-      afterAO: opts.cavity,
-      bounce: 0.7,
-    });
-    const { wood, steel } = opts;
+    const { wood, steel, brass, cloth, felt } = opts;
 
     // ---- per key constants
     for (let i = 0; i < KEY_COUNT; i++) {
@@ -348,7 +345,7 @@ export class ActionParts {
       false,
     );
     // the felt: unit thickness along its own +y (scaled each frame), its back on the block
-    this.checkFelts = instanced(part(new THREE.BoxGeometry(0.0062, 1, 0.0115).translate(0, 0.5, 0), [0.93, 0.9, 0.84]), wood, KEY_COUNT, false);
+    this.checkFelts = instanced(part(new THREE.BoxGeometry(0.0062, 1, 0.0115).translate(0, 0.5, 0), [0.93, 0.9, 0.84]), felt, KEY_COUNT, false);
     this.moving = [this.keyBacks, this.capstans, this.wippens, this.jacks, this.heels, this.tails, this.spoons, this.checks, this.checkFelts];
     this.root.add(...this.moving);
 
@@ -424,6 +421,8 @@ export class ActionParts {
     g.name = 'ActionStatic';
     const W: THREE.BufferGeometry[] = [];
     const S: THREE.BufferGeometry[] = [];
+    const B: THREE.BufferGeometry[] = []; // brass: the flange screws
+    const F: THREE.BufferGeometry[] = []; // felt: the let-off buttons
     const [x0, x1] = HAMMER_SPAN;
     const kx0 = KEYS[0].x - 0.015;
     const kx1 = KEYS[KEY_COUNT - 1].x + 0.015;
@@ -459,19 +458,19 @@ export class ActionParts {
       const Wz = wippenZ(i);
       // the wippen's flange: two cheeks either side of it, on the wippen rail, with its screw
       for (const s of [-1, 1]) W.push(span([P[0] + s * 0.0036, 0.034, Wz - 0.005], [P[0] + s * 0.0049, WIPPEN_Y + 0.006, Wz + 0.005], MAPLE));
-      S.push(rod([P[0], 0.028, Wz + 0.006], [P[0], 0.028, Wz + 0.0075], 0.0016, STEEL, 8));
+      B.push(rod([P[0], 0.028, Wz + 0.006], [P[0], 0.028, Wz + 0.0075], 0.0016, STEEL, 8));
       // a flange screw for each hammer, in the main rail's front face
-      S.push(rod([P[0], (MAIN_RAIL_Y[0] + MAIN_RAIL_Y[1]) / 2, P[2] - 0.0025], [P[0], (MAIN_RAIL_Y[0] + MAIN_RAIL_Y[1]) / 2, P[2] - 0.001], 0.0018, STEEL, 8));
+      B.push(rod([P[0], (MAIN_RAIL_Y[0] + MAIN_RAIL_Y[1]) / 2, P[2] - 0.0025], [P[0], (MAIN_RAIL_Y[0] + MAIN_RAIL_Y[1]) / 2, P[2] - 0.001], 0.0018, STEEL, 8));
       // the let-off button, felt on its wire hanging from the let-off rail
       const lo = this.letOffButton(i);
-      W.push(part(new THREE.CylinderGeometry(0.0032, 0.0032, 0.004, 10).translate(lo[0], lo[1] + 0.002, lo[2]), [0.88, 0.85, 0.78]));
+      F.push(part(new THREE.CylinderGeometry(0.0032, 0.0032, 0.004, 10).translate(lo[0], lo[1] + 0.002, lo[2]), [0.9, 0.86, 0.76]));
       S.push(rod([lo[0], lo[1] + 0.004, lo[2]], [lo[0], lo[1] + 0.017, lo[2]], 0.0006, STEEL, 5));
       // the damper lever's centre pin
       if (i < N_DAMPED) {
         const d = this.opts.dampPivot[i];
         S.push(rod([d[0] + 0.0033, d[1], d[2] - 0.004], [d[0] + 0.0083, d[1], d[2] - 0.004], 0.0007, STEEL, 6));
         // and a screw in the damper rail for its flange
-        S.push(rod([d[0] + 0.0058, 0.165, d[2] + 0.0035], [d[0] + 0.0058, 0.165, d[2] + 0.005], 0.0014, STEEL, 8));
+        B.push(rod([d[0] + 0.0058, 0.165, d[2] + 0.0035], [d[0] + 0.0058, 0.165, d[2] + 0.005], 0.0014, STEEL, 8));
       }
     }
     // bolts with washers through the action brackets, top, middle and foot
@@ -486,7 +485,7 @@ export class ActionParts {
         S.push(rod([x + 0.004, y, z], [x + 0.0058, y, z], 0.0045, STEEL, 6));
       }
     }
-    g.add(staticMesh(W, wood, 'ActionRailsAndFrame'), staticMesh(S, steel, 'ActionPinsAndScrews', false));
+    g.add(staticMesh(W, wood, 'ActionRailsAndFrame'), staticMesh(S, steel, 'ActionPinsAndBolts', false), staticMesh(B, this.opts.brass, 'ActionScrews', false), staticMesh(F, this.opts.felt, 'LetOffButtons', false));
     return g;
   }
 

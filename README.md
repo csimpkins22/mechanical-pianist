@@ -49,7 +49,7 @@ The repository carries only music that can be shared freely. To build a version 
 
 ### Open the piano
 
-**Open piano** on the control bar (or **I**) takes the upper front panel off, with its music desk and candle sconces, and shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
+The piano starts open: its upper front panel is off, with its music desk and candle sconces. **Close piano** on the control bar (or **I**) puts it back for the rest of the visit. Open, it shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
 
 * a hammer per key, its head of thick cream felt wrapped over a red underfelt and a beech moulding, nearly as wide as the keys' spacing allows, so that at rest the row reads as one ribbed wall. The head is longer from the moulding to the crown than it is tall, with a broad round crown, pressed smoother and a little yellowed at the strike line, where the strings have left their grooves. Each head has its number stamped on its upper side. It sits on a maple shank and a buckskin butt.
 * a damper per key up to E6 (F6 and above have none, as in the sound), a soft block of felt glued with red cloth to a wooden head, and a wire running down beside the hammer.
