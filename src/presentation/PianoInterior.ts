@@ -39,19 +39,12 @@ import {
   speakingLength,
   stringZ,
 } from './ActionLayout';
+import { CAVITY } from './InteriorLight';
 import { patch } from './shaderPatch';
 
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
 const INNER_X = 0.665; // the case's side panels, inside
 const TOP_Y = 0.524; // under the lid
-
-/** inside a closed cabinet the room's light reaches less and less far in */
-const CAVITY = /* glsl */ `
-{
-  float mpCav = mix(1.0, 0.55, smoothstep(-0.23, -0.37, vWPos.z)) * mix(1.0, 0.75, smoothstep(0.43, 0.52, vWPos.y));
-  reflectedLight.indirectDiffuse *= mpCav;
-  reflectedLight.indirectSpecular *= mix(1.0, mpCav, 0.6);
-}`;
 
 type C3 = [number, number, number];
 
@@ -678,6 +671,11 @@ export class PianoInterior {
     }
     this.swingSteel.needsUpdate = true;
     this.swingCopper.needsUpdate = true;
+  }
+
+  /** the instanced rows of parts, instance i beside i ± 1 (for the light between them: InteriorLight) */
+  rows(): THREE.InstancedMesh[] {
+    return [this.hammerFelt, this.hammerUnder, this.hammerWood, this.damperFelt, this.damperWood, this.wippens];
   }
 
   /** remember the moving parts' transforms as they were when the shutter opened (call after update with that frame) */
