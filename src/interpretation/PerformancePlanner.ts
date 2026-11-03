@@ -16,7 +16,7 @@ export function planPerformance(score: Score, overrides: Map<number, Override> =
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const warnings: string[] = [];
   const tracks = trackHands(score.tracks, score.selectedTracks, score.notes);
-  const hands = assignHands(score.notes, overrides, tracks, 40, opts.handsAt);
+  const hands = assignHands(score.notes, overrides, tracks, 40, score.pedal, opts.handsAt);
 
   const notes: PerformanceNote[] = score.notes.map((n) => {
     const flags: NoteFlag[] = [];

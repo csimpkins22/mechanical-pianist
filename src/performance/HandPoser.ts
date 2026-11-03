@@ -2,7 +2,7 @@
 // channels, every fingertip target from that finger's notes, joint angles from
 // the IK. A pure function of (track, keys, t).
 import { KEYS, keySurfacePoint, keyTopNear } from '../core/keyboard';
-import { REST_TIPS, TIP_RADIUS, THUMB, apply, fingerFK, FINGERS, mul, rotX, rotY, rotZ, thumbFK, transpose, type M3, type V3 } from '../core/handGeometry';
+import { HAND_SPEC, REST_TIPS, TIP_RADIUS, THUMB, apply, fingerFK, FINGERS, mul, rotX, rotY, rotZ, thumbFK, transpose, type M3, type V3 } from '../core/handGeometry';
 import { clamp, lastAtOrBefore, smoothstep } from '../core/math';
 import { drift } from '../core/random';
 import type { Hand } from '../core/types';
@@ -190,6 +190,27 @@ function contactWeight(ft: FingerTarget, t: number): number {
   return 0;
 }
 
+/**
+ * The underside of the palm, the knuckles and the base of the thumb, as
+ * spheres (hand frame, radius): the parts that must never sink into the keys,
+ * whatever the fingers reach for (see HandClearance, which measures the same).
+ */
+const UNDERSIDE: [V3, number][] = (() => {
+  const b = HAND_SPEC.palm.palmarBottom;
+  const pts: [V3, number][] = [
+    [[-0.03, b, -0.01], 0.002],
+    [[0.03, b, -0.01], 0.002],
+    [[0, b, -0.05], 0.002],
+    [[-0.036, b, -0.08], 0.002],
+    [[0.036, b, -0.075], 0.002],
+  ];
+  for (const f of FINGERS) pts.push([f.mcp, f.heights[0] / 2]);
+  pts.push([THUMB.cmc, THUMB.heights[0] / 2]);
+  return pts;
+})();
+/** how far the palm and knuckles stay above the key tops at the least (m) */
+const FLOOR_CLEARANCE = 0.003;
+
 function solveAll(track: HandTrack, keys: KeyMechanics, t: number, d: number[]): Solved {
   const { wrist, R } = handFrame(track, t, d);
   const Rt = transpose(R);
@@ -221,6 +242,23 @@ function solveAll(track: HandTrack, keys: KeyMechanics, t: number, d: number[]):
   return { states, fingers, thumb, res };
 }
 
+/**
+ * The keys are solid: however far a finger reaches for its key, the palm and
+ * knuckles do not go down into the keyboard. Where the pose would put them
+ * there, the hand is lifted (just its height: one step is exact, since the
+ * keys under each point stay the same) until they clear the key tops; a key
+ * the fingers then cannot reach is left a fingertip short.
+ */
+function clearKeys(track: HandTrack, t: number, d: number[]) {
+  const { wrist, R } = handFrame(track, t, d);
+  let lift = 0;
+  for (const [p, r] of UNDERSIDE) {
+    const q = toWorld(wrist, R, track.sx, p);
+    lift = Math.max(lift, keyTopNear(q[0], q[2], r) + FLOOR_CLEARANCE - (q[1] - r));
+  }
+  d[1] += lift;
+}
+
 /** regularisation: how much the hand resists leaving its planned pose (per parameter) */
 const PRIOR = [0.2, 0.12, 0.2, 0.012, 0.012, 0.012];
 const STEP = [1e-4, 1e-4, 1e-4, 1e-3, 1e-3, 1e-3];
@@ -229,12 +267,22 @@ const NP = PRIOR.length;
 /**
  * Contact has priority: if fingers on keys (or about to land) cannot reach
  * them from the planned hand, the hand yields: a few damped Gauss-Newton steps
- * over wrist position, yaw, roll and pitch. Recomputed from scratch at every t,
- * from the same start, so it is as deterministic as everything else.
+ * over wrist position, yaw, roll and pitch, each kept only if it improves the
+ * fit (and the hand goes only as far as the keys let it: clearKeys).
+ * Recomputed from scratch at every t, from the same start, so it is as
+ * deterministic as everything else.
  */
 function comply(track: HandTrack, keys: KeyMechanics, t: number): number[] {
-  const d = [0, 0, 0, 0, 0, 0];
+  let d = [0, 0, 0, 0, 0, 0];
   let cur = solveAll(track, keys, t, d);
+  /** what the solve minimises: contact misses, and leaving the planned pose */
+  const costOf = (res: number[], dd: number[]) => {
+    let c = 0;
+    for (const v of res) c += v * v;
+    for (let k = 0; k < NP; k++) c += (PRIOR[k] * dd[k]) ** 2;
+    return c;
+  };
+  let cost = costOf(cur.res, d);
   for (let it = 0; it < 6; it++) {
     const r0 = cur.res;
     let rr = 0;
@@ -262,10 +310,24 @@ function comply(track: HandTrack, keys: KeyMechanics, t: number): number[] {
       b.push(-sb - PRIOR[a] * PRIOR[a] * d[a]);
     }
     const step = solve5(A, b);
-    for (let k = 0; k < NP; k++) d[k] += step[k];
-    for (let k = 0; k < 3; k++) d[k] = clamp(d[k], -0.05, 0.05);
-    for (let k = 3; k < NP; k++) d[k] = clamp(d[k], -0.4, 0.4);
-    cur = solveAll(track, keys, t, d);
+    // take the step only as far as it helps: where the fingers' joint limits
+    // make the problem kinked, a full step can overshoot and the solve would
+    // otherwise swing between compromises, landing on a different one from
+    // one frame to the next (the hand twitching for a frame)
+    let better = false;
+    for (let u = 1; u >= 1 / 8; u /= 2) {
+      const nd = d.map((v, k) => clamp(v + u * step[k], k < 3 ? -0.05 : -0.4, k < 3 ? 0.05 : 0.4));
+      const next = solveAll(track, keys, t, nd);
+      const c = costOf(next.res, nd);
+      if (c < cost) {
+        d = nd;
+        cur = next;
+        cost = c;
+        better = true;
+        break;
+      }
+    }
+    if (!better) break;
   }
   return d;
 }
@@ -288,6 +350,7 @@ export function poseHand(track: HandTrack, keys: KeyMechanics, t: number, steady
     const d2 = comply(track, keys, t + COMPLY_BLUR);
     d = d1.map((v, k) => 0.25 * d0[k] + 0.5 * v + 0.25 * d2[k]);
   }
+  clearKeys(track, t, d);
   const cur = solveAll(track, keys, t, d);
   const { wrist, R } = handFrame(track, t, d);
   const { states, fingers, thumb } = cur;
