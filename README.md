@@ -43,6 +43,30 @@ URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`,
 
 ⚙ → **Export** renders the performance as an MP4: choose its shape (16:9, 2.39:1 scope, 1.85:1, 4:3, 1:1, 4:5 or 9:16 vertical), its size (1080p, 1440p or 4K on the long side), 24, 30 or 60 fps, and the whole piece or from the playhead. Every frame is drawn offline at its exact time at high quality, so a slower computer only takes longer, never drops a frame; the piano is rendered offline too (`AudioEngine.renderOffline`), with the same room, pedal halo and key noises. Both are encoded in the browser with WebCodecs (H.264 at a generous bitrate; AAC, or Opus where the browser has no AAC encoder) and muxed with `mp4-muxer` into a file streamed out as it is written (`app/VideoExport.ts`). The camera, style and look are the current ones; the interface is HTML over the canvas, so it never appears in the film, and the letterbox bars are left off because the frame itself has the chosen shape. In the published artifact the page offers the file through its `downloads` capability (the viewer confirms the save); elsewhere it is an ordinary download. `tools/render-video.cjs` renders a stretch to video from the command line instead (silent).
 
+### Open the piano
+
+⚙ → Camera → **Open the piano** (or **I**) takes the upper front panel off, with its music desk and candle sconces, and shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
+
+* a hammer per key, with a white felt head over a red underfelt and a mahogany moulding. The head has a rounded crown, worn flat with string grooves at the strike line, and tapers toward the string. It sits on a maple shank and a buckskin butt.
+* a damper per key up to E6 (F6 and above have none, as in the sound), with felt on a wooden head and a wire running down beside the hammer.
+* wippens on the key backs, and the flange, rest and damper rails on cast brackets.
+* 236 strings: steel trichords in the treble and tenor, and copper-wound bichords and single strings in the bass, overstrung on a steep diagonal across the tenor.
+* a gilded cast-iron plate with its pin field, struts, bolts and a hitch-pin rail; tuning pins with their coils of string, and hitch pins.
+* the treble and bass bridges on a spruce soundboard.
+
+The moving parts are pure functions of time from the same key strokes that move the keys (`performance/ActionMechanics.ts`), as deterministic as everything else:
+
+* **Hammers:** the jack lifts each hammer in step with its key, and it reaches the string exactly at the note onset. It rebounds at once, the backcheck catches it about halfway back while the key is held, and it falls back to its rail as the key rises. A repeated note strikes again from the half-risen key.
+* **Dampers:** a damper lifts in the second half of its key's travel, or with every other damper when the sustain pedal goes down.
+* **Strings:** struck strings shimmer while they sound, more in the bass, dying away.
+
+Hammers, dampers and wippens are instanced, and keep their transforms from the start of the shutter for motion blur. The lighting, bounce, occlusion and reflections take the inside in, and its surfaces get less of the room's light the deeper they sit in the case. With the piano open, the cinematic director also cuts to four shots inside it:
+
+* *The hammers*, a close-up above the leading hand;
+* *Along the hammer line*;
+* *Through the action*, looking out past the dampers and hammers to the hands;
+* *The plate and the pins*, a crane down from the tuning pins to the hammers.
+
 ### Controls
 
 | Action | Control |
@@ -61,6 +85,7 @@ URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`,
 | Close the library, a dialog or the drawer | Esc |
 | Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
 | Kinematics overlay | D |
+| Open the piano (upper panel off: hammers, dampers, strings) | I, or ⚙ → Camera |
 
 ## The library
 
@@ -251,8 +276,8 @@ Add `--preview out.png` to either script for a Cycles studio render. `tests/asse
 src/
   core/            keyboard layout, hand spec + forward kinematics, types, math, seeded noise
   interpretation/  MidiEngine, HandAssignment, Fingering, Patterns, Conventions, PerformancePlanner, demoPiece
-  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, PerformanceTimeline
-  presentation/    SceneRenderer, PianoModel, HandRig, Environment, materials, PostPipeline,
+  performance/     MotionPlanner, HandIK, HandPoser, KeyMechanics, ActionMechanics, PerformanceTimeline
+  presentation/    SceneRenderer, PianoModel, PianoInterior, ActionLayout, HandRig, Environment, materials, PostPipeline,
                    CinematicCamera, DebugOverlay, shaderPatch
   audio/           AudioEngine, synthPiano
   ui/              AppUI, LibrarySheet, dom helpers, styles

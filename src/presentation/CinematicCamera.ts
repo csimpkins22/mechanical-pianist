@@ -12,7 +12,7 @@ import { drift } from '../core/random';
 import { ELBOW_Z, SHOULDER_X, type HandTrack, type MotionPlan } from '../performance/MotionPlanner';
 import { HAND_SPEC } from '../core/handGeometry';
 import type { Hand } from '../core/types';
-import { ShotDirector } from './ShotDirector';
+import { ShotDirector, type DirectorContext, type NoteRef } from './ShotDirector';
 
 /**
  * cinematic: the director, cutting between designed shots (ShotDirector.ts)
@@ -64,14 +64,17 @@ export class CinematicCamera {
   /** each wrist's planned path, smoothed (x, y, z) */
   private rightWrist: Signal[];
   private leftWrist: Signal[];
-  readonly director: ShotDirector;
+  director: ShotDirector;
+  /** the piano is open: the director may also cut to shots inside it */
+  open = false;
+  private directorArgs: [DirectorContext, NoteRef[], { time: number; bpm: number }[]];
   private tracks: Record<Hand, HandTrack>;
   /** 0..1: how close the music is to the peak of a phrase (slow) */
   private peak: Signal;
   /** 0 = the left hand leads, 1 = the right */
   private lead: Signal;
 
-  constructor(plan: MotionPlan, duration: number, tempos: { time: number; bpm: number }[] = []) {
+  constructor(plan: MotionPlan, duration: number, tempos: { time: number; bpm: number }[] = [], open = false) {
     const t0 = -1;
     const n = Math.ceil((duration + 2) * RATE) + 1;
     const c = new Float32Array(n);
@@ -168,7 +171,7 @@ export class CinematicCamera {
     const notes = (['L', 'R'] as Hand[]).flatMap((h) =>
       plan.hands[h].notes.map((pn) => ({ hand: h, midi: pn.note.midi, start: pn.note.start, end: pn.note.keyEnd, velocity: pn.note.velocity })),
     );
-    this.director = new ShotDirector(
+    this.directorArgs = [
       {
         duration,
         center: (t) => this.center.at(t),
@@ -180,7 +183,16 @@ export class CinematicCamera {
       },
       notes,
       tempos,
-    );
+    ];
+    this.open = open;
+    this.director = new ShotDirector(...this.directorArgs, { open });
+  }
+
+  /** re-cut the piece with (or without) the shots inside the piano */
+  setOpen(open: boolean) {
+    if (open === this.open) return;
+    this.open = open;
+    this.director = new ShotDirector(...this.directorArgs, { open });
   }
 
   wrist(h: Hand, t: number): THREE.Vector3 {

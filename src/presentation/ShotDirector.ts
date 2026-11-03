@@ -22,6 +22,7 @@ import { clamp } from '../core/math';
 import { drift } from '../core/random';
 import type { Hand } from '../core/types';
 import type { CameraState } from './CinematicCamera';
+import { STRIKE_Y, STRING_Z_TREBLE, hammerXAtKeyX } from './ActionLayout';
 
 export interface DirectorContext {
   duration: number;
@@ -71,6 +72,8 @@ interface Shot {
   scale: Scale;
   /** how well the shot suits a segment (higher is better; -Infinity never) */
   fit(f: Features): number;
+  /** needs the piano open (its upper panel off) */
+  inside?: boolean;
   frame(ctx: DirectorContext, t: number, s: Segment): CameraState;
 }
 
@@ -340,6 +343,74 @@ const SHOTS: Shot[] = [
       return state(around(c, s.side * 1.3, lerp(0.85, 0.42, u), lerp(0.18, 0.12, u)), c, lerp(55, 70, u), 9, c);
     },
   },
+  // inside the open piano
+  {
+    id: 'inside-hammers',
+    name: 'The hammers',
+    scale: 'close',
+    inside: true,
+    fit: (f) => 0.75 + 0.4 * f.intensity,
+    frame(ctx, t, s) {
+      // close on the hammers above the leading hand, from just under the
+      // lid's edge: they rise, strike and fall back as the notes land
+      const u = ease((t - s.a) / (s.b - s.a));
+      const c = subject(ctx, s.hand, t, s, 0.5);
+      const hx = hammerXAtKeyX(c.x);
+      const target = V(hx + s.side * lerp(-0.01, 0.01, u), STRIKE_Y - 0.004, STRING_Z_TREBLE + 0.03);
+      const pos = V(target.x + s.side * 0.07, lerp(0.42, 0.405, u), lerp(-0.1, -0.12, u));
+      // focus on the heads themselves, between rest and the string
+      return state(pos, target, 50, 7, V(target.x, STRIKE_Y, STRING_Z_TREBLE + 0.05));
+    },
+  },
+  {
+    id: 'inside-along',
+    name: 'Along the hammer line',
+    scale: 'medium',
+    inside: true,
+    fit: (f) => 0.7 + Math.min(0.4, f.travel),
+    frame(ctx, t, s) {
+      // from one end of the action, down the whole row of hammers to where
+      // the music is: the strikes ripple along the line
+      const u = ease((t - s.a) / (s.b - s.a));
+      const c = subject(ctx, s.hand, t, s, 0.35);
+      const hx = hammerXAtKeyX(c.x);
+      const end = hx > 0 ? -1 : 1;
+      const pos = V(end * lerp(0.6, 0.55, u), lerp(0.405, 0.395, u), -0.13);
+      const target = V(hx, STRIKE_Y - 0.01, -0.295);
+      return state(pos, target, 35, 8, target);
+    },
+  },
+  {
+    id: 'inside-through',
+    name: 'Through the action',
+    scale: 'medium',
+    inside: true,
+    fit: (f) => 0.8 - 0.2 * f.intensity,
+    frame(ctx, t, s) {
+      // from inside, just in front of the strings and above the dampers,
+      // looking out over the hammers to the hands at the keys
+      const u = ease((t - s.a) / (s.b - s.a));
+      const c = subject(ctx, s.hand, t, s, 0.5);
+      const hx = hammerXAtKeyX(c.x);
+      const pos = V(hx + s.side * 0.05, lerp(0.4, 0.425, u), -0.304);
+      return state(pos, c, 30, 2.8, c);
+    },
+  },
+  {
+    id: 'inside-plate',
+    name: 'The plate and the pins',
+    scale: 'wide',
+    inside: true,
+    fit: (f) => (f.first || f.last ? -Infinity : 0.65 - 0.3 * f.intensity),
+    frame(ctx, t, s) {
+      // a crane down from the gilded plate and its rows of tuning pins to the hammers at work
+      const u = ease((t - s.a) / (s.b - s.a));
+      const c = subject(ctx, 'both', t, s, 0.3);
+      const pos = V(c.x * 0.5 + s.side * 0.08, lerp(0.6, 0.48, u), lerp(0.1, 0.02, u));
+      const target = V(c.x * 0.6, lerp(0.45, 0.25, u), -0.33);
+      return state(pos, target, 30, 5.6);
+    },
+  },
 ];
 
 const SCALE_ORDER: Scale[] = ['wide', 'medium', 'close', 'detail'];
@@ -370,8 +441,11 @@ export class ShotDirector {
     private ctx: DirectorContext,
     notes: NoteRef[],
     tempos: { time: number; bpm: number }[],
+    opts: { open?: boolean } = {},
   ) {
     const D = ctx.duration;
+    // the shots inside the piano only when its panel is off
+    const shots = SHOTS.filter((sh) => !sh.inside || opts.open);
     const sorted = notes.slice().sort((a, b) => a.start - b.start);
     // onsets, chords merged
     const onsets: { t: number; vel: number; bass: boolean; gap: number; dense: number }[] = [];
@@ -474,7 +548,7 @@ export class ShotDirector {
       };
       let pick = SHOTS[0];
       let bestScore = -Infinity;
-      for (const shot of SHOTS) {
+      for (const shot of shots) {
         let sc = shot.fit(f);
         if (!isFinite(sc)) continue;
         const ago = recent.lastIndexOf(shot.id);

@@ -436,6 +436,12 @@ export class AppUI {
         case '4':
           a.setMode('macro');
           break;
+        case 'i':
+        case 'I':
+          a.setOpen(!a.view.look.openPiano);
+          this.toast(a.view.look.openPiano ? 'The piano is open' : 'The piano is closed', 1600);
+          if (this.drawer.classList.contains('open') && this.tab === 'camera') this.renderDrawer();
+          break;
         case 'd':
         case 'D':
           a.setDebug(!a.debug.visible);
@@ -871,6 +877,10 @@ export class AppUI {
         el('p', 'note', `Cinematic cuts between designed camera moves at phrase points. Now: shot ${sh.index + 1} of ${sh.count}, “${sh.name}”. Follow, Overhead and Macro are single continuous cameras; the settings below shape them.`),
       );
     }
+    this.sectionToggle(body, 'Open the piano', () => look.openPiano, (v) => a.setOpen(v));
+    body.appendChild(
+      el('p', 'note', 'The upper front panel off (I): the hammers strike, the dampers lift and the strings shimmer as the hands play. Cinematic adds shots inside the piano.'),
+    );
     const drama = this.sectionToggle(body, 'Camera drama', () => f().dramaOn, (v) => (a.framing.dramaOn = v));
     drama([sl('Amount', 0, 1, 0.01, () => f().drama, (v) => (a.framing.drama = v), (v) => `${Math.round(v * 100)}%`)]);
     body.appendChild(el('p', 'note', 'For Follow, Overhead and Macro: slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));

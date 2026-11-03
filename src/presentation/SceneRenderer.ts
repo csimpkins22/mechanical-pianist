@@ -13,6 +13,7 @@ import { MIRROR_UNIFORMS, applyPalette, createPalette, type Palette } from './ma
 import { SHARED_UNIFORMS as SHARED } from './shaderPatch';
 import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
 import { PianoModel } from './PianoModel';
+import { PianoInterior } from './PianoInterior';
 import { PostPipeline, type PostParams, type Quality } from './PostPipeline';
 import { createSheetMusic } from './SheetMusic';
 import { SHARED_UNIFORMS } from './shaderPatch';
@@ -45,6 +46,8 @@ export interface Look {
   shutter: number;
   /** live reflections of the keys and hands in the lacquer behind them */
   reflectionsOn: boolean;
+  /** the upper front panel off: the hammers, dampers, strings and plate in view */
+  openPiano: boolean;
   /** ambient occlusion: darkening where surfaces crowd each other */
   aoOn: boolean;
   ao: number;
@@ -72,6 +75,7 @@ export const DEFAULT_LOOK: Look = {
   motionBlurOn: true,
   shutter: 180,
   reflectionsOn: true,
+  openPiano: false,
   aoOn: true,
   ao: 0.6,
 };
@@ -136,6 +140,7 @@ export class SceneRenderer {
   private mirrorBlank = MIRROR_UNIFORMS.uMirror.value;
   /** the board's own panels, left out of their reflection */
   private mirrorHidden: THREE.Object3D[] = [];
+  private mirrorShown: boolean[] = [];
   // bounced light: small cube captures of the lit room, reduced to irradiance
   private bounceRT = new THREE.WebGLCubeRenderTarget(32, { type: THREE.HalfFloatType });
   private bounceCam = new THREE.CubeCamera(0.01, 20, this.bounceRT);
@@ -143,6 +148,11 @@ export class SceneRenderer {
   private bounceAgain = false;
   private bounceTimer = 0;
   readonly debugLayer = new THREE.Group();
+  private sheet: THREE.Object3D;
+  /** inside the piano, and what comes off to show it (the upper panel with its music desk, the sconces on it, the score) */
+  interior: PianoInterior | null = null;
+  private panelParts: THREE.Object3D[] = [];
+  private open = false;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
@@ -155,7 +165,8 @@ export class SceneRenderer {
     this.palette = createPalette();
     this.env = new Environment();
     this.scene.add(this.env.root);
-    this.scene.add(createSheetMusic());
+    this.sheet = createSheetMusic();
+    this.scene.add(this.sheet);
     this.scene.background = new THREE.Color(0x020202);
     this.scene.fog = new THREE.FogExp2(0x060403, 0.12);
     this.post = new PostPipeline(this.renderer);
@@ -207,6 +218,11 @@ export class SceneRenderer {
       });
     this.post.prepassHidden = [this.env.dust];
     this.mirrorHidden = ['Nameboard', 'UpperPanel'].map((n) => this.piano.root.getObjectByName(n)).filter((o): o is THREE.Object3D => !!o);
+    this.interior = new PianoInterior();
+    this.piano.root.add(this.interior.root);
+    const upper = this.piano.root.getObjectByName('UpperPanel');
+    this.panelParts = [upper, this.piano.sconces, this.sheet].filter((o): o is THREE.Object3D => !!o);
+    this.applyOpen(this.look.openPiano);
     MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
     this.captureHandReflections();
     await this.captureBounce();
@@ -305,6 +321,25 @@ export class SceneRenderer {
     }
   }
 
+  /** take the upper front panel off (or put it back): the action, strings and plate come into view */
+  setOpen(open: boolean) {
+    if (open === this.open) return;
+    this.applyOpen(open);
+    // the room's light and the hands' reflections now include the inside
+    clearTimeout(this.bounceTimer);
+    this.bounceTimer = window.setTimeout(() => {
+      this.captureHandReflections();
+      void this.captureBounce().then(() => this.onRelit?.());
+    }, 120);
+  }
+
+  private applyOpen(open: boolean) {
+    this.open = open;
+    if (this.interior) this.interior.root.visible = open;
+    for (const o of this.panelParts) o.visible = !open;
+    this.env.setInteriorOpen(open);
+  }
+
   /** called when a recapture of the room's light has finished (to redraw a paused frame) */
   onRelit?: () => void;
 
@@ -339,6 +374,10 @@ export class SceneRenderer {
     this.piano.setKeys(frame.keys);
     this.hands.L.apply(frame.hands.L);
     this.hands.R.apply(frame.hands.R);
+    if (this.open && this.interior) {
+      this.interior.update(frame);
+      this.interior.keepPrevious();
+    }
     this.scene.updateMatrixWorld();
     for (const o of this.moving) ((o.userData.prevMW ??= new THREE.Matrix4()) as THREE.Matrix4).copy(o.matrixWorld);
     const c = this.prevCam;
@@ -399,7 +438,12 @@ export class SceneRenderer {
       .multiply(cam.projectionMatrix)
       .multiply(mc.matrixWorldInverse);
     const r = this.renderer;
-    for (const o of this.mirrorHidden) o.visible = false;
+    // hidden for the mirror, then as they were (the upper panel stays off while the piano is open)
+    const shown = this.mirrorShown;
+    this.mirrorHidden.forEach((o, i) => {
+      shown[i] = o.visible;
+      o.visible = false;
+    });
     const dbg = this.debugLayer.visible;
     this.debugLayer.visible = false;
     // the rest of the lacquer, seen in the mirror, must not read the image being drawn
@@ -409,7 +453,7 @@ export class SceneRenderer {
     r.clear();
     r.render(this.scene, mc);
     MIRROR_UNIFORMS.uMirror.value = this.mirrorRT.texture;
-    for (const o of this.mirrorHidden) o.visible = true;
+    this.mirrorHidden.forEach((o, i) => (o.visible = shown[i]));
     this.debugLayer.visible = dbg;
     return true;
   }
@@ -431,6 +475,7 @@ export class SceneRenderer {
       }
     }
     this.env.update(frame.t, this.post.height * 0.9);
+    if (this.open) this.interior?.update(frame);
   }
 
   /** t (performance time) seeds the film grain, so a paused frame is a still image */

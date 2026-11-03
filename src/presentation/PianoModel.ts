@@ -159,8 +159,48 @@ function irregularity(k: KeyInfo) {
   return { x: 0.00006 * c(11), y: 0.00011 * c(12), yaw: 0.0007 * c(13), tilt: 0.0006 * c(14) };
 }
 
+/**
+ * The candle sconces are screwed to the upper front panel, but the case
+ * builds them into one brass mesh with the pedals: split the triangles above
+ * the keyboard into their own mesh, so they come off with the panel.
+ */
+function splitSconces(caseScene: THREE.Object3D): THREE.Object3D | null {
+  const brass = caseScene.getObjectByName('Brass');
+  if (!brass) return null;
+  caseScene.updateMatrixWorld(true);
+  const group = new THREE.Group();
+  group.name = 'Sconces';
+  const meshes: THREE.Mesh[] = [];
+  brass.traverse((o) => (o as THREE.Mesh).isMesh && meshes.push(o as THREE.Mesh));
+  const v = new THREE.Vector3();
+  for (const mesh of meshes) {
+    const g = mesh.geometry;
+    const pos = g.getAttribute('position');
+    const idx = g.index ? Array.from(g.index.array) : Array.from({ length: pos.count }, (_, i) => i);
+    const up: number[] = [];
+    const down: number[] = [];
+    for (let t = 0; t + 2 < idx.length; t += 3) {
+      let y = 0;
+      for (let k = 0; k < 3; k++) y += v.fromBufferAttribute(pos, idx[t + k]).applyMatrix4(mesh.matrixWorld).y / 3;
+      (y > -0.2 ? up : down).push(idx[t], idx[t + 1], idx[t + 2]);
+    }
+    if (!up.length) continue;
+    const top = new THREE.Mesh(g.clone(), mesh.material);
+    top.geometry.setIndex(up);
+    g.setIndex(down);
+    top.castShadow = mesh.castShadow;
+    top.receiveShadow = mesh.receiveShadow;
+    mesh.matrixWorld.decompose(top.position, top.quaternion, top.scale);
+    group.add(top);
+  }
+  caseScene.add(group);
+  return group;
+}
+
 export class PianoModel {
   readonly root = new THREE.Group();
+  /** the brass sconces on the upper panel (null without a case) */
+  readonly sconces: THREE.Object3D | null;
   readonly pivots: THREE.Group[] = [];
   readonly keyMeshes: THREE.Mesh[] = [];
   private angles = new Float32Array(KEYS.length).fill(-1);
@@ -169,6 +209,7 @@ export class PianoModel {
   constructor(caseScene: THREE.Object3D | null, palette: Palette) {
     this.root.name = 'Piano';
     if (caseScene) this.root.add(caseScene);
+    this.sconces = caseScene ? splitSconces(caseScene) : null;
     const blackGeo = blackKeyGeometry();
     for (const k of KEYS) {
       const pivot = new THREE.Group();

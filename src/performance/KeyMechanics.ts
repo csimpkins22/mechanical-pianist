@@ -68,7 +68,7 @@ export function strokeOf(n: PerformanceNote): KeyStroke {
 }
 
 /** Depression of a released key at time t after its release from depth d0 (negative: a hair above rest). */
-function releaseCurve(d0: number, dt: number): number {
+export function releaseCurve(d0: number, dt: number): number {
   if (dt <= 0) return d0;
   if (dt < KEY_RETURN) {
     const u = dt / KEY_RETURN;
@@ -81,6 +81,21 @@ function releaseCurve(d0: number, dt: number): number {
   const v = (d0 * BOUNCE_V) / KEY_RETURN;
   const fade = s < BOUNCE_END * 0.6 ? 1 : 1 - (s - BOUNCE_END * 0.6) / (BOUNCE_END * 0.4);
   return (-v * Math.exp(-BOUNCE_DAMP * s) * Math.sin(BOUNCE_W * s) * fade) / BOUNCE_W;
+}
+
+/** index of the last stroke whose fingertip has landed by t (-1: none yet) */
+export function strokeIndexAt(strokes: readonly KeyStroke[], t: number): number {
+  let lo = 0;
+  let hi = strokes.length - 1;
+  let i = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (strokes[mid].contact <= t) {
+      i = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return i;
 }
 
 /** Depression in [0, 1] of a key with strokes sorted by contact, at t. */
@@ -100,7 +115,7 @@ export function depressionAt(strokes: readonly KeyStroke[], t: number): number {
   return strokeDepth(strokes, i, t);
 }
 
-function strokeDepth(strokes: readonly KeyStroke[], i: number, t: number): number {
+export function strokeDepth(strokes: readonly KeyStroke[], i: number, t: number): number {
   const s = strokes[i];
   if (t >= s.release) return releaseCurve(1, t - s.release);
   if (t >= s.bottom) return 1;
@@ -111,7 +126,7 @@ function strokeDepth(strokes: readonly KeyStroke[], i: number, t: number): numbe
   return d0 + (1 - d0) * e;
 }
 
-function depthBefore(strokes: readonly KeyStroke[], j: number, t: number): number {
+export function depthBefore(strokes: readonly KeyStroke[], j: number, t: number): number {
   const s = strokes[j];
   if (t >= s.release) return releaseCurve(1, t - s.release);
   return 1;

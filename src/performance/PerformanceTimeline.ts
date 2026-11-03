@@ -14,6 +14,7 @@ import { poseHand, type HandPose } from './HandPoser';
 /** spacing of the moments refine checks through a held note (s) */
 const HOLD_PROBE = 0.2;
 import { KeyMechanics, restrikeRepeats } from './KeyMechanics';
+import { dampersAt, hammersAt } from './ActionMechanics';
 import { handOverlap, liftToClear } from './HandCollision';
 import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
 
@@ -23,6 +24,9 @@ export interface FrameState {
   hands: Record<Hand, HandPose>;
   /** sustain pedal position 0..1 (eased) */
   pedal: number;
+  /** inside the piano, per key: hammer 0 (rest) .. 1 (at the string), damper 0 (on) .. 1 (off) */
+  hammers: Float32Array;
+  dampers: Float32Array;
   /** per hand, per finger (1..5): how hard and how recently it struck, 0..1 (lights the servo rings) */
   effort: Record<Hand, number[]>;
   /** notes whose keys are down or still sounding (pedal) */
@@ -328,11 +332,14 @@ export class PerformanceTimeline {
 
   evaluate(t: number): FrameState {
     const keys = this.keys.evaluate(t, new Float32Array(KEY_COUNT));
+    const pedal = this.pedalAt(t);
     return {
       t,
       keys,
       hands: { L: poseHand(this.plan.hands.L, this.keys, t), R: poseHand(this.plan.hands.R, this.keys, t) },
-      pedal: this.pedalAt(t),
+      pedal,
+      hammers: hammersAt(this.keys.strokes, t),
+      dampers: dampersAt(keys, pedal),
       effort: { L: this.effort('L', t), R: this.effort('R', t) },
       sounding: this.sounding(t),
     };
@@ -347,6 +354,7 @@ export class PerformanceTimeline {
       h = Math.imul(h ^ q, 16777619) >>> 0;
     };
     s.keys.forEach(mix);
+    s.hammers.forEach(mix);
     for (const hand of ['L', 'R'] as Hand[]) {
       const p = s.hands[hand];
       p.wrist.forEach(mix);

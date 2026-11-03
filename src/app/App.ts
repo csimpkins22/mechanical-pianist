@@ -310,7 +310,7 @@ export class App {
       });
       if (seq !== this.buildSeq) return; // superseded
       const score = perf.score;
-      const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos);
+      const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos, this.view.look.openPiano);
       const wasPlaying = this.playing;
       if (wasPlaying) this.pause();
       this.piece = { bytes, parsed, perf, timeline, camera, overrides, tracks: sel, source, title: meta.title, artist: meta.artist };
@@ -525,6 +525,15 @@ export class App {
   setDebug(v: boolean) {
     this.debug.setVisible(v);
     this.renderNow();
+    this.emit('view');
+  }
+
+  /** take the piano's upper front panel off, or put it back */
+  setOpen(open: boolean) {
+    this.view.look.openPiano = open;
+    this.view.setOpen(open);
+    this.piece?.camera.setOpen(open);
+    this.settingsChanged();
     this.emit('view');
   }
 
