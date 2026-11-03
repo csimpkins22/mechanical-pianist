@@ -2,9 +2,9 @@ import { describe, expect, test } from 'vitest';
 import { planChecked } from '../src/app/plan';
 import { buildScore, readMidi } from '../src/interpretation/MidiEngine';
 import { composeEtudes, composeNocturne, midiBytes } from '../src/interpretation/demoPiece';
-import { CinematicCamera } from '../src/presentation/CinematicCamera';
+import { CYCLE_ORDER, CinematicCamera, OUTSIDE_OF, shotCycle, viewKey } from '../src/presentation/CinematicCamera';
 import { HAMMER_X } from '../src/presentation/ActionLayout';
-import { MelodyFocus } from '../src/presentation/ShotDirector';
+import { MelodyFocus, ShotDirector } from '../src/presentation/ShotDirector';
 
 const cams = (() => {
   const make = (m: ReturnType<typeof composeNocturne>, name: string) => {
@@ -170,6 +170,144 @@ describe('forearm ends', { timeout: 300000 }, () => {
             // the end's cross-section is about 4 cm across: all of it must be outside
             const r = 0.045 / z;
             expect(x - r > Sx || y - r > Sy, `${mode} at ${t.toFixed(1)} s, aspect ${aspect.toFixed(2)}`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('the shot cycle (the arrows on the bar)', { timeout: 300000 }, () => {
+  const make = (open: boolean) => {
+    const score = buildScore(readMidi(midiBytes(composeNocturne()), 'nocturne.mid'));
+    const { timeline } = planChecked(score);
+    return { cam: new CinematicCamera(timeline.plan, score.duration, score.tempos, open), duration: score.duration };
+  };
+  const closed = (() => {
+    let c: ReturnType<typeof make> | null = null;
+    return () => (c ??= make(false));
+  })();
+  const opened = (() => {
+    let c: ReturnType<typeof make> | null = null;
+    return () => (c ??= make(true));
+  })();
+
+  test('holds every designed shot but the two made for one moment, and the three continuous cameras, wide to close, then inside', () => {
+    const all = shotCycle(true).map((e) => e.key);
+    const out = shotCycle(false).map((e) => e.key);
+    expect(new Set(all).size).toBe(all.length);
+    expect(all).toEqual(CYCLE_ORDER);
+    for (const sh of ShotDirector.heldShots()) expect(all.filter((k) => k === `shot:${sh.id}`)).toHaveLength(1);
+    for (const k of ['follow', 'overhead', 'macro']) expect(all).toContain(k);
+    for (const k of ['shot:pullback', 'shot:key-xcu']) expect(all).not.toContain(k);
+    // inside shots only while open, and last
+    expect(out.some((k) => k.startsWith('shot:inside'))).toBe(false);
+    expect(all.slice(0, out.length)).toEqual(out);
+    expect(all.slice(out.length).every((k) => k.startsWith('shot:inside'))).toBe(true);
+  });
+
+  test('the arrows take over from the shot the director is showing, about the same hand', () => {
+    const { cam, duration } = opened();
+    const cycle = shotCycle(true).map((e) => e.key);
+    for (let t = 0.5; t < duration; t += 3.7) {
+      const sh = cam.director.shotAt(t);
+      const from = { pullback: 'shot:establishing', 'key-xcu': 'shot:dorsal' }[sh.id] ?? `shot:${sh.id}`;
+      const i = cycle.indexOf(from);
+      expect(i, sh.id).toBeGreaterThanOrEqual(0);
+      for (const dir of [1, -1] as const) {
+        const v = cam.step('cinematic', t, dir);
+        const k = viewKey(v);
+        expect(k).toBe(cycle[(i + dir + cycle.length) % cycle.length]);
+        if (typeof v === 'object') expect(v.hand).toBe(sh.hand);
+      }
+    }
+  });
+
+  test('stepping goes all the way round, and skips the shots inside while the piano is closed', () => {
+    for (const [{ cam }, open] of [
+      [closed(), false],
+      [opened(), true],
+    ] as const) {
+      const cycle = shotCycle(open).map((e) => e.key);
+      let v = cam.step('cinematic', 10, 1);
+      const seen = [viewKey(v)];
+      for (let k = 1; k < cycle.length; k++) seen.push(viewKey((v = cam.step(v, 10, 1))));
+      expect(new Set(seen).size).toBe(cycle.length);
+      expect(viewKey(cam.step(v, 10, 1))).toBe(seen[0]);
+      expect(viewKey(cam.step(cam.step(v, 10, 1), 10, -1))).toBe(viewKey(v));
+      if (!open) expect(seen.some((k) => k.startsWith('shot:inside'))).toBe(false);
+    }
+  });
+
+  test('closing the piano on a shot inside moves to the nearest outside; other views stay', () => {
+    const { cam } = opened();
+    const outside = shotCycle(false).map((e) => e.key);
+    for (const e of shotCycle(true).filter((e) => e.inside)) {
+      const v = cam.whenClosed({ shot: e.key.slice(5), hand: 'L' });
+      expect(outside).toContain(viewKey(v));
+      expect(typeof v === 'object' && v.hand).toBe('L');
+      expect(OUTSIDE_OF[e.key]).toBe(viewKey(v));
+    }
+    for (const v of ['cinematic', 'follow', { shot: 'dutch', hand: 'R' }] as const) expect(cam.whenClosed(v)).toEqual(v);
+  });
+
+  test('a held shot is the same however and whenever it is reached, and follows the hands without jumping', () => {
+    const { cam, duration } = opened();
+    const again = make(true).cam;
+    for (const e of shotCycle(true)) {
+      for (const hand of ['L', 'R'] as const) {
+        const v = e.key.startsWith('shot:') ? { shot: e.key.slice(5), hand } : (e.key as 'follow');
+        // a shuffled visit order on one camera against a fresh one, in order
+        const ts = [3.3, 41.2, 12.6, 0.4, duration - 0.5, 27.9];
+        const a = ts.map((t) => cam.evaluate(v, t));
+        const b = ts
+          .slice()
+          .sort((x, y) => x - y)
+          .map((t) => again.evaluate(v, t));
+        ts.forEach((t, i) => {
+          const j = ts.slice().sort((x, y) => x - y).indexOf(t);
+          expect(a[i].position.toArray()).toEqual(b[j].position.toArray());
+          expect(a[i].focalLength).toBe(b[j].focalLength);
+          expect(a[i].focus).toBe(b[j].focus);
+        });
+        // smooth: no frame moves the camera or its aim by more than a few millimetres
+        let prev = cam.evaluate(v, 1);
+        for (let t = 1 + 1 / 60; t < 9; t += 1 / 60) {
+          const s = cam.evaluate(v, t);
+          expect(s.position.distanceTo(prev.position), `${e.key} at ${t.toFixed(2)}`).toBeLessThan(0.006);
+          expect(s.target.distanceTo(prev.target), `${e.key} at ${t.toFixed(2)}`).toBeLessThan(0.006);
+          prev = s;
+        }
+      }
+    }
+  });
+
+  test('held shots stay finite, out of the case (but the shots inside it) and keep the forearm ends out of the picture', () => {
+    const { cam, duration } = opened();
+    for (const e of shotCycle(true)) {
+      const v = e.key.startsWith('shot:') ? { shot: e.key.slice(5), hand: 'R' as const } : (e.key as 'macro');
+      for (const aspect of [16 / 9, 9 / 16]) {
+        for (let t = 0; t <= duration; t += 0.75) {
+          const s = cam.evaluate(v, t, undefined, aspect);
+          const p = s.position;
+          for (const x of [p.x, p.y, p.z, s.target.x, s.focus, s.focalLength, s.fstop]) expect(Number.isFinite(x)).toBe(true);
+          if (!e.inside) {
+            const insideCase = p.z < -0.15 && p.z > -0.7 && p.y > -0.72 && p.y < 0.62 && Math.abs(p.x) < 0.72;
+            const insideKeys = p.z < 0.08 && p.z > -0.16 && p.y < 0.025 && p.y > -0.1 && Math.abs(p.x) < 0.68;
+            expect(insideCase || insideKeys, `${e.key} at ${t}`).toBe(false);
+          }
+          const fw = s.target.clone().sub(p).normalize();
+          const upRef = p.clone().set(Math.sin(s.roll), Math.cos(s.roll), 0);
+          const rt = fw.clone().cross(upRef).normalize();
+          const up = rt.clone().cross(fw);
+          const Sx = (18 * Math.min(aspect, 1)) / s.focalLength;
+          const Sy = 18 / Math.max(aspect, 1) / s.focalLength;
+          for (const end of cam.armEnds(t)) {
+            const w = end.clone().sub(p);
+            const z = w.dot(fw);
+            if (z <= 0) continue;
+            const r = 0.045 / z;
+            expect(Math.abs(w.dot(rt) / z) - r > Sx || Math.abs(w.dot(up) / z) - r > Sy, `${e.key} at ${t.toFixed(1)} s, aspect ${aspect.toFixed(2)}`).toBe(true);
           }
         }
       }
