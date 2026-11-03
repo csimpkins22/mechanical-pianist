@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { KeyMechanics, restrikeRepeats, type KeyStroke } from '../src/performance/KeyMechanics';
+import * as THREE from 'three';
+import { KEY_COUNT } from '../src/core/keyboard';
+import { KEY_RETURN, KeyMechanics, releaseCurve, restrikeRepeats, keyReturn, type KeyStroke } from '../src/performance/KeyMechanics';
+import { HAMMER_REST, SHANK } from '../src/presentation/ActionLayout';
+import { hammerQuaternion } from '../src/presentation/ActionParts';
 import {
+  hammerLeanAt,
   JACK_RESET_AT,
   JACK_TRIP_AT,
   RELEASE_TO_JACK,
@@ -73,42 +78,142 @@ describe('the hammers, as the slow-motion footage shows them', () => {
     expect(speed(0.999)).toBeLessThan(0.6 * speed(xl + 0.001));
   });
 
-  it('linger at the string for about a fifth of the rise, without bouncing off', () => {
+  it('linger at the string for about a fifth of the rise, without bouncing off it', () => {
     const s = strokes([note(60, 1, 2, 0.5)], 60);
     const c = hammerShape(s[0]);
     expect(c.linger).toBeGreaterThan(0.15 * c.rise);
     expect(c.linger).toBeLessThan(0.26 * c.rise);
     for (let t = 1; t < 1 + c.linger; t += 1e-4) expect(hammerAt(s, t)).toBe(1);
-    // and only ever come down from there while the key is held
-    const after = sample(s, 1, 1.5);
-    for (let k = 1; k < after.length; k++) expect(after[k]).toBeLessThanOrEqual(after[k - 1] + 1e-12);
+    // straight down from the string into the check felt, and never back up to the string
+    const down = sample(s, 1, 1 + c.linger + c.rebound);
+    for (let k = 1; k < down.length; k++) expect(down[k]).toBeLessThanOrEqual(down[k - 1] + 1e-12);
+    for (const h of sample(s, 1 + c.linger + c.rebound, 1.5)) expect(h).toBeLessThan(c.check + c.overshoot * c.ratio + 1e-9);
   });
 
-  it('come back two to two and a half times as fast as they rose, into a soft catch with no overshoot, then hold still', () => {
-    const s = strokes([note(60, 1, 2.5, 0.6)], 60);
+  it('come back about twice as fast as they rose and land in the check: sinking in past it, springing back, settling', () => {
+    const s = strokes([note(60, 1, 2.5, 0.5)], 60);
     const c = hammerShape(s[0]);
     expect(c.check).toBeGreaterThan(0.55);
     expect(c.check).toBeLessThan(0.65);
-    const rebound = sample(s, 1 + c.linger, 1.3);
+    const rebound = sample(s, 1 + c.linger, 1.4);
     // the main rebound: until it is nine tenths of the way to the check, against the whole rise
     const k90 = rebound.findIndex((h) => h <= c.check + 0.1 * (1 - c.check));
     const ratio = (0.9 * (1 - c.check)) / (k90 * 1e-4) / (1 / c.rise);
-    expect(ratio).toBeGreaterThan(1.9);
-    expect(ratio).toBeLessThan(2.7);
-    // never below the check: the felt takes it without a jolt
-    for (const h of rebound) expect(h).toBeGreaterThanOrEqual(c.check - 1e-9);
-    // settled within about a third of the rise after leaving the string
-    expect(hammerAt(s, 1 + c.linger + 0.4 * c.rise) - c.check).toBeLessThan(0.02 * (1 - c.check));
-    // dead still while the key is held
-    for (const t of [1.3, 1.8, 2.4]) expect(hammerAt(s, t)).toBeCloseTo(c.check, 6);
+    expect(ratio).toBeGreaterThan(1.8);
+    expect(ratio).toBeLessThan(2.8);
+    // the footage: past the check by 10-15% of the blow (and the strike's own +-30%), then back past it by about a fifth of that
+    const low = Math.min(...rebound);
+    expect(c.check - low).toBeGreaterThan(0.06);
+    expect(c.check - low).toBeLessThan(0.22);
+    const iLow = rebound.indexOf(low);
+    const after = rebound.slice(iLow);
+    const high = Math.max(...after);
+    expect((high - c.check) / (c.check - low)).toBeGreaterThan(0.14);
+    expect((high - c.check) / (c.check - low)).toBeLessThan(0.26);
+    // the first swing back takes about half the rise; the whole settle about one to one and a half rises
+    const iHigh = iLow + after.indexOf(high);
+    expect(((iHigh - iLow) * 1e-4) / c.rise).toBeGreaterThan(0.45);
+    expect(((iHigh - iLow) * 1e-4) / c.rise).toBeLessThan(0.65);
+    expect(Math.abs(hammerAt(s, 1 + c.linger + c.rebound + 1.5 * c.rise) - c.check)).toBeLessThan(0.006);
+    // about one and a half swings to see: two turns more than 1% of the blow from the check, no third
+    let turns = 0;
+    for (let k = 1; k + 1 < rebound.length; k++) {
+      const [a, b, d] = [rebound[k - 1], rebound[k], rebound[k + 1]];
+      if ((b < a && b <= d) || (b > a && b >= d)) if (Math.abs(b - c.check) > 0.01) turns++;
+    }
+    expect(turns).toBe(2);
+    // then dead still while the key is held
+    for (const t of [1.4, 1.8, 2.4]) expect(hammerAt(s, t)).toBeCloseTo(c.check, 6);
   });
 
-  it('rise more slowly and rebound more gently on a soft note, and are caught a little higher', () => {
+  it('rise more slowly and rebound more gently on a soft note, sink less into the check, and are caught a little higher', () => {
     const soft = hammerShape(strokes([note(60, 1, 2, 0.2)], 60)[0]);
     const loud = hammerShape(strokes([note(60, 1, 2, 0.95)], 60)[0]);
     expect(soft.rise).toBeGreaterThan(1.8 * loud.rise);
-    expect(soft.tau).toBeGreaterThan(1.8 * loud.tau);
+    expect(soft.rebound).toBeGreaterThan(1.8 * loud.rebound);
     expect(soft.check).toBeGreaterThan(loud.check + 0.02);
+    // averaged over strikes (each varies), loud blows sink further into the check felt
+    const mean = (v: number) => {
+      let a = 0;
+      for (let k = 0; k < 40; k++) a += hammerShape(strokes([note(60, 1 + k * 0.37, 2 + k * 0.37, v)], 60)[0]).overshoot;
+      return a / 40;
+    };
+    expect(mean(0.95)).toBeGreaterThan(1.5 * mean(0.2));
+  });
+
+  it('are never quite the same twice, within the footage: each strike varies in size and time, deterministically', () => {
+    const shapes = Array.from({ length: 60 }, (_, k) => hammerShape(strokes([note(60, 1 + k * 0.731, 1.5 + k * 0.731, 0.5)], 60)[0]));
+    const o = shapes.map((c) => c.overshoot);
+    const w = shapes.map((c) => c.swing / c.rise);
+    expect(Math.min(...o) / Math.max(...o)).toBeLessThan(0.65);
+    expect(Math.min(...o)).toBeGreaterThan(0.125 * 0.65 * 0.7 * 1.0);
+    expect(Math.max(...o)).toBeLessThan(0.125 * 1.0 * 1.3 + 1e-9);
+    expect(Math.min(...w)).toBeGreaterThan(0.55 * 0.85 - 1e-9);
+    expect(Math.max(...w)).toBeLessThan(0.55 * 1.15 + 1e-9);
+    expect(new Set(o.map((x) => x.toFixed(6))).size).toBe(60);
+    // the same strike is always the same
+    const again = hammerShape(strokes([note(60, 1 + 7 * 0.731, 1.5 + 7 * 0.731, 0.5)], 60)[0]);
+    expect(again).toEqual(shapes[7]);
+  });
+
+  it('fall back to the rail with the key, come off its felt in one small bounce and a smaller one, and lie still', () => {
+    const s = strokes([note(60, 1, 2)], 60);
+    const c = hammerShape(s[0]);
+    const r = s[0].release;
+    const back = sample(s, r, r + c.ret + 0.1);
+    // never below the rail
+    for (const h of back) expect(h).toBeGreaterThanOrEqual(0);
+    // falling, gathering speed, to the rail
+    const k1 = Math.round(c.ret / 1e-4);
+    for (let k = 1; k < k1 - 2; k++) expect(back[k]).toBeLessThanOrEqual(back[k - 1] + 1e-12);
+    expect(back[k1 - 10] - back[k1 - 5]).toBeGreaterThan(back[10] - back[15]);
+    // the bounce: a few percent of the blow, then a smaller one, then still within about 0.4 of the return
+    const bounce = back.slice(k1);
+    const peak = Math.max(...bounce);
+    expect(peak).toBeGreaterThan(0.005);
+    expect(peak).toBeLessThan(0.08);
+    const iPeak = bounce.indexOf(peak);
+    const iGround = bounce.findIndex((h, k) => k > iPeak && h < 0.01 * peak);
+    const second = Math.max(...bounce.slice(iGround));
+    expect(second).toBeGreaterThan(0.1 * peak);
+    expect(second).toBeLessThan(0.4 * peak);
+    expect(hammerAt(s, r + c.ret + 0.4 * c.ret * 1.2)).toBe(0);
+  });
+
+  it('bounce more off the rail after a quick release than a slow one', () => {
+    const peak = (n: PerformanceNote) => {
+      const s = strokes([n], n.midi);
+      const c = hammerShape(s[0]);
+      let m = 0;
+      for (let t = s[0].release + c.ret; t < s[0].release + 2 * c.ret; t += 1e-4) m = Math.max(m, hammerAt(s, t));
+      return m;
+    };
+    let quick = 0;
+    let slow = 0;
+    for (let k = 0; k < 20; k++) {
+      quick += peak(note(60, 1 + k, 1.15 + k, 0.85));
+      slow += peak(note(62, 1 + k, 3 + k, 0.25));
+    }
+    expect(quick).toBeGreaterThan(3 * slow);
+  });
+
+  it('swing a hint off the plane as they come up, and not at all at rest', () => {
+    const q = new THREE.Quaternion();
+    const head = new THREE.Vector3(0, SHANK, 0);
+    for (let i = 0; i < KEY_COUNT; i++) {
+      const s = strokes([note(21 + i, 1, 2)], 21 + i);
+      const lean = hammerLeanAt(i, s, 1);
+      // at rest: exactly the plain turn
+      hammerQuaternion(i, 0, lean, q);
+      const plain = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), HAMMER_REST);
+      expect(q.angleTo(plain)).toBeLessThan(1e-6);
+      // at the string: a few tenths of a millimetre to the side at the head
+      hammerQuaternion(i, 1, lean, q);
+      const x = Math.abs(head.clone().applyQuaternion(q).x);
+      expect(x).toBeLessThan(0.0004);
+    }
+    const leans = Array.from({ length: KEY_COUNT }, (_, i) => hammerLeanAt(i, [], 0));
+    expect(Math.max(...leans) - Math.min(...leans)).toBeGreaterThan(0.002);
   });
 
   it('are not in perfect unison across a chord, though each strikes on its onset', () => {
@@ -120,18 +225,6 @@ describe('the hammers, as the slow-motion footage shows them', () => {
     expect(spread(at(1 - 0.012))).toBeGreaterThan(0.03);
     expect(spread(at(1.009))).toBeGreaterThan(0.01);
     expect(spread(at(1.6))).toBeGreaterThan(0.01);
-  });
-
-  it('go back to the rail with the key, smoothly and without a bounce', () => {
-    const s = strokes([note(60, 1, 2)], 60);
-    const c = hammerShape(s[0]);
-    const r = s[0].release;
-    const back = sample(s, r, r + c.ret + 0.05);
-    for (let k = 1; k < back.length; k++) expect(back[k]).toBeLessThanOrEqual(back[k - 1] + 1e-12);
-    for (const h of back) expect(h).toBeGreaterThanOrEqual(0);
-    // arriving with almost no speed
-    expect(hammerAt(s, r + c.ret - 0.002)).toBeLessThan(0.003);
-    expect(hammerAt(s, r + c.ret)).toBe(0);
   });
 
   it('restrike a repeated note from where the half-risen key has left them, again exactly at the onset', () => {
@@ -287,5 +380,41 @@ describe('the jack and the bridle', () => {
     expect(peak(loud, 1, 1.3)).toBeLessThan(0.0015);
     expect(peak(loud, 2.6, 2.9)).toBeLessThan(0.0003);
     expect(bridleAt(39, loud, 1.234)).toBe(bridleAt(39, loud, 1.234));
+  });
+});
+
+describe('the keys coming back', () => {
+  it('meet their rest stop and dip a little below it, once and once more, never rising above rest', () => {
+    for (let k = 0; k < 40; k++) {
+      const n = note(48 + (k % 30), 1, 1.1 + 0.05 * k, 0.3 + 0.015 * k);
+      const km = new KeyMechanics([n]);
+      const s = km.strokes[n.midi - 21];
+      const r = keyReturn(s[0]);
+      const rel = s[0].release;
+      let low = Infinity;
+      let deepest = 0;
+      for (let t = rel; t < rel + 0.3; t += 1e-4) {
+        const d = km.depression(n.midi, t);
+        low = Math.min(low, d);
+        if (t > rel + KEY_RETURN) deepest = Math.max(deepest, d);
+      }
+      expect(low).toBeGreaterThanOrEqual(0);
+      expect(deepest).toBeLessThan(0.04);
+      expect(deepest).toBeGreaterThan(0.002);
+      expect(Math.abs(deepest - r.dip)).toBeLessThan(0.002);
+      // settled well before a quarter of a second
+      expect(km.depression(n.midi, rel + KEY_RETURN + 1.7 * r.time)).toBe(0);
+    }
+    expect(releaseCurve(1, KEY_RETURN + 0.5)).toBe(0);
+  });
+
+  it('bounce more after a brisk release than a slow one', () => {
+    let brisk = 0;
+    let slow = 0;
+    for (let k = 0; k < 20; k++) {
+      brisk += keyReturn(new KeyMechanics([note(60, 1 + k, 1.12 + k, 0.9)]).strokes[39][0]).dip;
+      slow += keyReturn(new KeyMechanics([note(62, 1 + k, 3 + k, 0.2)]).strokes[41][0]).dip;
+    }
+    expect(brisk).toBeGreaterThan(3 * slow);
   });
 });

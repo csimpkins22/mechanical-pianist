@@ -59,6 +59,7 @@ The repository carries only music that can be shared freely. To build a version 
   * the jack stands on the wippen and pushes the hammer butt's buckskin heel round. At let-off its toe meets the let-off button on the let-off rail, and it slips forward from under the butt, springing back under it as the key rises;
   * a white bridle tape runs from the hammer's catcher to the bridle wire on the front of the wippen. It hangs slack and sways a little after each blow;
   * a brass spoon on the wippen pushes the damper lever's tail toward the strings, taking the damper off them;
+  * the backcheck's wire leans in as the key goes down, so its felt meets the catcher at the check, and out of the catcher's way as the key rises. Our keyboard's short lever alone would not move it far enough;
   * there are centre pins at every pivot, a flange screw for each hammer and damper, and bolts through the cast brackets that carry the main, rest and damper rails.
   * The key's back moves only as much as the keyboard's lever allows (a millimetre or two at the capstan), and the action takes it from there. Each jack keeps its foot on the wippen and its head on the butt while driving it, so its length follows the two by a few percent rather than opening a gap.
 * 236 strings: steel trichords in the treble and tenor, and copper-wound bichords and single strings in the bass, overstrung on a steep diagonal across the tenor.
@@ -71,10 +72,13 @@ The moving parts are pure functions of time from the same key strokes that move 
   * Each hammer eases out of the resting row and accelerates under the jack, covering most of its travel in the second half of the rise.
   * The jack trips a few millimetres short of the string (let-off), and the hammer flies the rest of the way on its own, slowing into the string.
   * It reaches the string exactly at the note onset and lingers there, for contact and felt compression, for about a fifth of the rise, without bouncing off.
-  * It comes back about twice as fast as it rose and settles softly into the backcheck, a little over halfway back, with no jolt or overshoot. It then holds still while the key is down, and returns smoothly to its rail with the key.
+  * It comes back about twice as fast as it rose, and its catcher lands in the backcheck's felt (the felt-faced check on its wire at the front of the wippen). It sinks in past the check by 10–15% of its travel, as tracked frame by frame in the footage, and springs back out past it by about a fifth of that. It settles in an elastic ease-out: about one and a half swings to see, over one to one and a half times its rise. It then holds still while the key is down.
+  * When the key lets go it falls, gathering speed, to its rest rail. It comes off the rail's felt in a small bounce (a few percent of its travel) and a smaller one, and lies still.
+  * Every strike settles a little differently: about ±30% in size and ±15% in time, fixed per strike. Loud blows sink further into the check, and a quick release bounces more at the rail than a slow one.
   * A soft note rises more slowly, rebounds more gently and is caught a little higher than a loud one.
   * As in a real action, the hammers of a chord are never quite in unison. Each note has its own lost motion before the jack takes up, and its own small differences in linger, rebound and check. They all strike on their onsets but sit at different heights in between.
   * A repeated note strikes again from wherever the half-risen key left it.
+  * No hammer swings in a perfect plane. Each one leans a hint to one side and twists a hint about its shank as it rises (a few tenths of a millimetre at the head over the whole blow), with a smaller difference every strike. The dampers do the same as they lift, and nothing moves at rest.
 * **Dampers:**
   * A damper lifts in the second half of its key's travel, falls back a moment after the key rises, and its felt gives a little as it lands.
   * The sustain pedal lifts every damper together on the damper lift rail, visible behind the damper wires. Each damper meets the rail at a slightly different point, and half-pedalling (the MIDI controller's in-between values) lifts them part of the way.
@@ -174,7 +178,7 @@ Anything the modelled hands genuinely cannot do (more than five notes at once, s
   **Repeated notes:** the earlier key lets go in time to rise most of the way before the re-strike, and the finger visibly lifts off.
 * **`HandIK`** is closed-form. For each finger, abduction turns its flexion plane to the target and a preferred distal angle fixes the DIP joint, so MCP and PIP follow from the two-link solution. The thumb's CMC is a ball joint: swing spreads it in the palm plane and twist turns its flexion plane until the target lies in it.
 * **`HandPoser`** evaluates every fingertip target from that finger's notes (prepare, strike, hold, release, travel), then runs a few damped Gauss–Newton steps over wrist position, yaw, roll and pitch so the fingers on keys always reach them.
-* **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
+* **`KeyMechanics`**: a key starts moving when the fingertip lands (soft notes travel more slowly), bottoms out exactly at the note onset, stays down while held and springs back on release. Coming up, it meets its rest stop and rebounds into a small dip below rest, 1–4% of its travel, then a smaller one, before settling. It never rises above rest. A brisk release (a short, loud note) dips more than a slow one, and every stroke a little differently. Repeated notes restrike a half-risen key. Keys pivot on a balance rail rather than sliding.
 * **`PerformanceTimeline.evaluate(t)`** returns keys, both hands' joints, finger phases, pedal and sounding notes for any *t*, as a pure function. After planning it checks every held key against the hand and re-plans where needed.
 
 The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender build, the IK and the fingering model alike. The keyboard layout in `src/core/keyboard.ts` is shared by the planner, the IK and the piano model.

@@ -33,7 +33,7 @@
 import { KEY_COUNT, LOWEST_MIDI } from '../core/keyboard';
 import { clamp } from '../core/math';
 import { hash01 } from '../core/random';
-import { depressionAt, depthBefore, releaseCurve, strokeIndexAt, type KeyStroke } from './KeyMechanics';
+import { depressionAt, depthBefore, releaseBrisk, releaseCurve, settleDips, strokeIndexAt, type KeyStroke } from './KeyMechanics';
 
 /** where the jack trips: about 3 mm short of the string, of a 45 mm blow */
 export const HAMMER_LETOFF = 0.935;
@@ -74,17 +74,27 @@ export interface HammerShape {
   rise: number;
   /** at the string */
   linger: number;
-  /** time constant of the rebound into the check (critically damped: no overshoot) */
-  tau: number;
-  /** where the check holds it */
+  /** from leaving the string to the deepest point in the check felt */
+  rebound: number;
+  /** where the check holds it, and how far past that the catcher first sinks into the felt (fractions of the blow) */
   check: number;
-  /** its return to the rail after the key lets go */
+  overshoot: number;
+  /** the swing back out of the felt: its duration, and its size against the overshoot */
+  swing: number;
+  ratio: number;
+  /** its return to the rail after the key lets go, how much of its speed it keeps off the rail, and the bounce's duration */
   ret: number;
+  restitution: number;
+  bounce: number;
 }
 
 const shapes = new WeakMap<KeyStroke, HammerShape>();
 
-/** a stroke's hammer: timing and check from its velocity, with a little of the action's unevenness */
+/**
+ * A stroke's hammer: timing, check and settles from its velocity and how it
+ * is let go, with a little of the action's unevenness (each varies by a
+ * fixed amount per strike: about 30% in size and 15% in time).
+ */
 export function hammerShape(s: KeyStroke): HammerShape {
   let c = shapes.get(s);
   if (c) return c;
@@ -95,13 +105,22 @@ export function hammerShape(s: KeyStroke): HammerShape {
   const travel = Math.max(1e-3, s.bottom - s.contact);
   const slack = travel * (0.02 + 0.23 * r(1));
   const rise = travel - slack;
+  const brisk = releaseBrisk(n);
+  const ret = HAMMER_RETURN * (0.9 + 0.2 * r(5)) * (1.12 - 0.24 * brisk);
   c = {
     start: s.contact + slack,
     rise,
     linger: clamp(0.2 * rise * (0.85 + 0.3 * r(2)), 0.003, 0.012),
-    tau: 0.045 * rise * (1.15 - 0.3 * v) * (0.85 + 0.3 * r(3)),
+    rebound: 0.26 * rise * (1.1 - 0.2 * v) * (0.85 + 0.3 * r(3)),
     check: clamp(HAMMER_CHECK + 0.035 - 0.07 * v + 0.06 * (r(4) - 0.5), 0.54, 0.66),
-    ret: HAMMER_RETURN * (0.9 + 0.2 * r(5)),
+    // loud blows sink further into the check felt
+    overshoot: 0.125 * (0.65 + 0.7 * v) * (0.7 + 0.6 * r(6)),
+    swing: 0.55 * rise * (0.85 + 0.3 * r(7)),
+    ratio: 0.2 * (0.8 + 0.4 * r(8)),
+    ret,
+    // a quick release comes down harder and keeps more of it off the rail
+    restitution: (0.05 + 0.4 * brisk) * (0.7 + 0.6 * r(9)),
+    bounce: 0.25 * ret * (0.85 + 0.3 * r(10)),
   };
   shapes.set(s, c);
   return c;
@@ -130,15 +149,45 @@ export function riseCurve(h0: number, x: number): number {
   return HAMMER_LETOFF + m0 * (w3 - 2 * w2 + w) + d * (3 * w2 - 2 * w3) + m1 * (w3 - w2);
 }
 
-/** at the string and after: the linger, then a critically damped rebound into the check */
+/**
+ * At the string and after: the linger; the rebound, fast, the catcher meeting
+ * the check felt on the way and sinking into it, past the check by
+ * `overshoot`; then the felt springing it back, an elastic ease-out: out past
+ * the check by `ratio` of that, and settling (about one and a half swings to
+ * see, then nothing).
+ */
 export function strikeCurve(c: HammerShape, dt: number): number {
   if (dt < c.linger) return 1;
-  const s = (dt - c.linger) / c.tau;
-  return c.check + (1 - c.check) * (1 + s) * Math.exp(-s);
+  const s = dt - c.linger;
+  const low = c.check - c.overshoot;
+  if (s < c.rebound) {
+    const x = s / c.rebound;
+    return 1 - (1 - low) * x * x * (3 - 2 * x);
+  }
+  // a damped swing about the check, released from its deepest point: extremes every `swing`, each `ratio` of the last
+  const tau = s - c.rebound;
+  const w = Math.PI / c.swing;
+  const sigma = -Math.log(c.ratio) / c.swing;
+  return c.check - c.overshoot * Math.exp(-sigma * tau) * (Math.cos(w * tau) + (sigma / w) * Math.sin(w * tau));
 }
 
-/** the return to the rail: starts and ends at rest, no bounce */
-const returnEnvelope = (x: number) => (x <= 0 ? 1 : x >= 1 ? 0 : 1 - x * x * (3 - 2 * x));
+/**
+ * Back to the rail after the key lets go: the hammer falls, gathering speed
+ * (from h, at `x` of its return), meets the rail's felt and comes off it,
+ * keeping `restitution` of its speed, in one small bounce and a smaller one.
+ * Returned as the height above the rail, at time `dt` after it let go;
+ * `still` is where it would be meanwhile had it not been let go (a settle in
+ * the check that carries on under the fall).
+ */
+export function returnCurve(c: HammerShape, h0: number, dt: number, still = h0): number {
+  if (dt <= 0) return still;
+  const x = dt / c.ret;
+  if (x < 1) return still * (1 - x * x);
+  // arriving at 2 h0 / ret, it comes off the felt at restitution times that
+  const up = c.restitution * ((2 * h0) / c.ret);
+  const a = (up * c.bounce) / Math.PI;
+  return settleDips((dt - c.ret) / c.bounce, a);
+}
 
 const atRest = () => 0;
 
@@ -147,15 +196,12 @@ function strokeHammer(strokes: readonly KeyStroke[], j: number, t: number, rest:
   const s = strokes[j];
   const c = hammerShape(s);
   const before = (at: number) => (j > 0 && depth < 4 ? strokeHammer(strokes, j - 1, at, rest, depth + 1) : rest(at));
-  let h: number;
   if (t < c.start) return before(t);
-  if (t < s.bottom) h = riseCurve(Math.max(rest(c.start), before(c.start)), (t - c.start) / c.rise);
-  else h = strikeCurve(c, t - s.bottom);
-  if (t > s.release) {
-    const r = rest(t);
-    h = r + (h - r) * returnEnvelope((t - s.release) / c.ret);
-  }
-  return h;
+  if (t < s.bottom) return riseCurve(Math.max(rest(c.start), before(c.start)), (t - c.start) / c.rise);
+  if (t <= s.release) return strikeCurve(c, t - s.bottom);
+  // let go: from wherever it was in the check (still settling, perhaps), back to the rail and off it
+  const r = rest(t);
+  return r + returnCurve(c, strikeCurve(c, s.release - s.bottom) - rest(s.release), t - s.release, strikeCurve(c, t - s.bottom) - r);
 }
 
 /** a key's hammer at t: 0 against its rest rail, 1 at the string (`rest`: where the rail holds it, soft pedal) */
@@ -284,5 +330,39 @@ export function bridleAt(i: number, strokes: readonly KeyStroke[], t: number): n
 /** all 88 bridles at t */
 export function bridlesAt(strokes: readonly (readonly KeyStroke[])[], t: number, out = new Float32Array(KEY_COUNT)): Float32Array {
   for (let i = 0; i < KEY_COUNT; i++) out[i] = bridleAt(i, strokes[i], t);
+  return out;
+}
+
+// ---------------------------------------------------------------- not quite planar, and the check
+
+/**
+ * A hammer never swings in a perfect plane: each leans a little to one side as
+ * it rises (a few tenths of a millimetre at the head over the whole blow) and
+ * each strike a little differently again. Radians of sideways tilt at the full
+ * blow; the renderer scales it by how far the hammer has come (none at rest).
+ */
+export function hammerLeanAt(i: number, strokes: readonly KeyStroke[], t: number): number {
+  const fixed = 0.0026 * (2 * hash01(i, 51) - 1);
+  const j = strokeIndexAt(strokes, t);
+  if (j < 0) return fixed;
+  const n = strokes[j].note;
+  return fixed + 0.0008 * (2 * hash01(n.midi * 100003 + Math.round(n.start * 1000), 52) - 1);
+}
+
+/** all 88 hammers' lean at t */
+export function hammerLeansAt(strokes: readonly (readonly KeyStroke[])[], t: number, out = new Float32Array(KEY_COUNT)): Float32Array {
+  for (let i = 0; i < KEY_COUNT; i++) out[i] = hammerLeanAt(i, strokes[i], t);
+  return out;
+}
+
+/** where the backcheck holds key i's hammer for its current stroke (the check felt is set to meet it there) */
+export function checkAt(strokes: readonly KeyStroke[], t: number): number {
+  const j = strokeIndexAt(strokes, t);
+  return j < 0 ? HAMMER_CHECK : hammerShape(strokes[j]).check;
+}
+
+/** all 88 checks at t */
+export function checksAt(strokes: readonly (readonly KeyStroke[])[], t: number, out = new Float32Array(KEY_COUNT)): Float32Array {
+  for (let i = 0; i < KEY_COUNT; i++) out[i] = checkAt(strokes[i], t);
   return out;
 }

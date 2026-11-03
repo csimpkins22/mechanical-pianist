@@ -41,7 +41,7 @@ import {
   speakingLength,
   stringZ,
 } from './ActionLayout';
-import { ActionParts } from './ActionParts';
+import { ActionParts, damperQuaternion, hammerQuaternion } from './ActionParts';
 import { patch } from './shaderPatch';
 
 const N_DAMPED = UNDAMPED_FROM - LOWEST_MIDI;
@@ -695,7 +695,7 @@ export class PianoInterior {
     const { m4, q, q2, p, one, xAxis } = this;
     for (let i = 0; i < KEY_COUNT; i++) {
       const [x, y, z] = pivotOf(i);
-      q.setFromAxisAngle(xAxis, HAMMER_REST * (1 - f.hammers[i]));
+      hammerQuaternion(i, f.hammers[i], f.leans[i], q);
       m4.compose(p.set(x, y, z), q, one);
       this.hammerFelt.setMatrixAt(i, m4);
       this.hammerUnder.setMatrixAt(i, m4);
@@ -703,8 +703,7 @@ export class PianoInterior {
     }
     for (let i = 0; i < N_DAMPED; i++) {
       const [x, y, z] = this.dampPivot[i];
-      q2.setFromAxisAngle(xAxis, DAMPER_SWING * f.dampers[i]);
-      q.copy(this.leans[i]).multiply(q2);
+      damperQuaternion(i, f.dampers[i], this.leans[i], DAMPER_SWING, q);
       m4.compose(p.set(x, y, z), q, one);
       this.damperFelt.setMatrixAt(i, m4);
       this.damperWood.setMatrixAt(i, m4);

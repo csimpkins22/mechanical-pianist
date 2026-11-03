@@ -86,6 +86,31 @@ describe('timeline', { timeout: 120000 }, () => {
     expect(worst, where).toBeLessThan(0.002);
   });
 
+  test('no fingertip ends up inside its key as the key comes back up and dips at its rest stop', () => {
+    const tl = demoTimeline();
+    let worst = 0;
+    let where = '';
+    for (const n of tl.perf.notes) {
+      if (n.flags.includes('chord-overflow')) continue;
+      // from the release, through the key's return and its dips below rest
+      for (let t = n.keyEnd; t < n.keyEnd + 0.2; t += 0.002) {
+        const s = tl.evaluate(t);
+        for (const hand of ['L', 'R'] as const)
+          for (let f = 1; f <= 5; f++) {
+            const st = s.hands[hand].states[f];
+            if (!st.note) continue;
+            // the target is the fingertip's centre resting on the key's surface: never below it
+            const into = st.target[1] - st.tip[1];
+            if (into > worst) {
+              worst = into;
+              where = `${hand}${f} ${noteName(st.note.note.midi)} at ${t.toFixed(3)} (${st.phase})`;
+            }
+          }
+      }
+    }
+    expect(worst, where).toBeLessThan(0.0005);
+  });
+
   test('the same time always gives the same state, in any visiting order', () => {
     const tl = demoTimeline();
     const probes = [0.5, 3.21, 12.9, 26.04, 33.5, 41.7, 47.3, 55.55, 63.0, 79.9];

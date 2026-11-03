@@ -15,6 +15,12 @@
 //              front of the wippen, slack, swaying a little after each blow
 //   spoon      a brass wire on the wippen that pushes the damper lever's tail
 //              toward the strings, taking the damper off them
+//   backcheck  a felt-faced block on its wire at the front of the wippen, that
+//              the hammer's catcher lands in as it comes back from the string:
+//              the felt gives under it and springs it back (ActionMechanics'
+//              settle), and holds it while the key is down. The wire leans in
+//              as the key goes down and out of the catcher's way as it rises
+//              (our keyboard's lever alone would not move it far enough)
 //
 // and the small parts: balance pins and their felt punchings, the back rail
 // cloth, the main rail with a flange screw for every hammer, centre pins at
@@ -30,7 +36,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { KEYS, KEY_COUNT, LOWEST_MIDI, PIVOT_Y, keyAngle } from '../core/keyboard';
-import { HAMMER_LETOFF, JACK_TRIP_AT, UNDAMPED_FROM } from '../performance/ActionMechanics';
+import { hash01 } from '../core/random';
+import { HAMMER_CHECK, HAMMER_LETOFF, JACK_TRIP_AT, UNDAMPED_FROM } from '../performance/ActionMechanics';
 import type { FrameState } from '../performance/PerformanceTimeline';
 import { BASS_N, CROWN, DAMPER_SWING, HAMMER_REST, HAMMER_SPAN, HAMMER_X, SHANK, STRIKE_Y, STRUT_X, stringRadius, stringZ } from './ActionLayout';
 import { patch } from './shaderPatch';
@@ -65,8 +72,8 @@ const CAPSTAN_TOP = 0.0095;
 const KEYBACK_FRONT = -0.158;
 const keyBackEnd = (i: number) => hammerPivot(i)[2] + 0.012;
 /** the bridle wire's hook (wippen-local), and where the tape is fixed on the catcher (hammer-local) */
-const BRIDLE_HOOK: C3 = [0, 0.058, 0.047];
-const BRIDLE_ANCHOR: C3 = [0, 0.026, 0.028];
+const BRIDLE_HOOK: C3 = [-0.0035, 0.058, 0.047];
+const BRIDLE_ANCHOR: C3 = [-0.0035, 0.026, 0.028];
 /** the spoon: its root on the wippen (wippen-local), reaching the damper lever's tail (damper-local) */
 const SPOON_ROOT: C3 = [0.00575, 0.006, 0.006];
 const DAMPER_TAIL: [C3, C3] = [
@@ -75,6 +82,38 @@ const DAMPER_TAIL: [C3, C3] = [
 ];
 /** the main action rail, moved back to let the jacks up in front of it: its run in the bass and in the rest */
 const MAIN_RAIL_Y: [number, number] = [0.104, 0.122];
+
+/** the catcher's lower front edge (hammer-local), which lands in the backcheck */
+const CATCHER_EDGE: C3 = [0, 0.024, 0.046];
+/** the backcheck's wire rises from the front of the wippen (wippen-local); its felt, and how far it leans out of the way */
+const CHECK_ROOT: C3 = [0.0015, 0.008, 0.046];
+const CHECK_FELT = 0.0055;
+const CHECK_AWAY = 0.22;
+
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+const qa = new THREE.Quaternion();
+const qb = new THREE.Quaternion();
+
+/**
+ * A hammer's turn for blow fraction h, not quite in a plane: leaning `lean`
+ * (rad at the full blow) to one side and twisting a hint about its shank, both
+ * growing with the blow, so that nothing moves at rest.
+ */
+export function hammerQuaternion(i: number, h: number, lean: number, q: THREE.Quaternion): THREE.Quaternion {
+  const k = Math.max(0, h);
+  q.setFromAxisAngle(X_AXIS, HAMMER_REST * (1 - h));
+  q.multiply(qa.setFromAxisAngle(Z_AXIS, lean * k));
+  return q.multiply(qb.setFromAxisAngle(Y_AXIS, 0.004 * (2 * hash01(i, 53) - 1) * k));
+}
+
+/** a damper's turn off its strings (`lift`), leaning with its strings in the bass and a hint to one side as it lifts */
+export function damperQuaternion(i: number, lift: number, lean: THREE.Quaternion, swing: number, q: THREE.Quaternion): THREE.Quaternion {
+  q.setFromAxisAngle(X_AXIS, swing * lift);
+  q.premultiply(lean);
+  return q.multiply(qa.setFromAxisAngle(Z_AXIS, 0.0015 * (2 * hash01(i, 54) - 1) * Math.max(0, lift)));
+}
 
 /** a key's hammer centre pin (as PianoInterior) */
 export function hammerPivot(i: number): C3 {
@@ -159,6 +198,12 @@ export class ActionParts {
   private tails: THREE.InstancedMesh;
   private spoons: THREE.InstancedMesh;
   private tape: THREE.Mesh;
+  private checks: THREE.InstancedMesh;
+  private checkFelts: THREE.InstancedMesh;
+  /** the backcheck in its own frame (origin at its root, as set for a held key and an average check): where its felt meets the catcher, and which way it faces */
+  private checkFace: C3 = [0, 0, 0];
+  private checkNormal: C3 = [0, 0, 0];
+  private checkPad: C3 = [0, 0, 0];
   private moving: THREE.InstancedMesh[];
   /** per key: the key back's rest transform (before the key turns), the wippen's heel (wippen-local) and jack rest length */
   private backRest: THREE.Matrix4[] = [];
@@ -180,6 +225,8 @@ export class ActionParts {
   private tmp = new THREE.Matrix4();
   private tmp2 = new THREE.Matrix4();
   private scl = new THREE.Vector3();
+  private unit = new THREE.Vector3(1, 1, 1);
+  private feltScale = new THREE.Vector3();
 
   constructor(opts: ActionPartsOptions) {
     this.opts = opts;
@@ -262,7 +309,42 @@ export class ActionParts {
       N_DAMPED,
       false,
     );
-    this.moving = [this.keyBacks, this.capstans, this.wippens, this.jacks, this.heels, this.tails, this.spoons];
+    // the backcheck: its wire and block (one rigid piece about its root), and the felt, squeezed by the catcher
+    {
+      const i = 40;
+      const P = hammerPivot(i);
+      const W: C3 = [P[0], WIPPEN_Y, wippenZ(i)];
+      const phi = this.wippenAngle(i, keyAngle(KEYS[i], 1));
+      const root = add(W, rotX(CHECK_ROOT, phi));
+      const th = HAMMER_REST * (1 - HAMMER_CHECK);
+      const K = add(P, rotX(CATCHER_EDGE, th));
+      // the catcher's way as it comes back from the string; the felt faces it
+      const e = CATCHER_EDGE;
+      const my = -(e[1] * Math.sin(th) + e[2] * Math.cos(th));
+      const mz = e[1] * Math.cos(th) - e[2] * Math.sin(th);
+      const ml = Math.hypot(my, mz);
+      this.checkNormal = [0, -my / ml, -mz / ml];
+      this.checkFace = sub(K, root);
+    }
+    const n = this.checkNormal;
+    // the felt is centred a little back under the catcher's head, which lands on it by its front edge
+    const tang: C3 = [0, -n[2], n[1]];
+    if (tang[2] > 0) (tang[1] = -tang[1]), (tang[2] = -tang[2]);
+    this.checkPad = [0, 0.0025 * tang[1], 0.0025 * tang[2]];
+    const F = add(this.checkFace, this.checkPad);
+    const back = sub(F, [0, n[1] * (CHECK_FELT + 0.006), n[2] * (CHECK_FELT + 0.006)]);
+    const align = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, n[1], n[2]));
+    const block = new THREE.BoxGeometry(0.006, 0.006, 0.011).applyQuaternion(align);
+    const mid = sub(F, [0, n[1] * (CHECK_FELT + 0.003), n[2] * (CHECK_FELT + 0.003)]);
+    this.checks = instanced(
+      merged([rod([0, 0, 0], [0, back[1], back[2]], 0.0007, STEEL, 6), part(block.translate(0, mid[1], mid[2]), BEECH)]),
+      wood,
+      KEY_COUNT,
+      false,
+    );
+    // the felt: unit thickness along its own +y (scaled each frame), its back on the block
+    this.checkFelts = instanced(part(new THREE.BoxGeometry(0.0062, 1, 0.0115).translate(0, 0.5, 0), [0.93, 0.9, 0.84]), wood, KEY_COUNT, false);
+    this.moving = [this.keyBacks, this.capstans, this.wippens, this.jacks, this.heels, this.tails, this.spoons, this.checks, this.checkFelts];
     this.root.add(...this.moving);
 
     // ---- the bridle tapes: one mesh, its points laid out every frame
@@ -315,8 +397,8 @@ export class ActionParts {
       span([-0.0035, heel[1] + 0.003, heel[2] - 0.005], [0.0035, -0.006, heel[2] + 0.005], BEECH), // heel
       span([-0.0037, heel[1], heel[2] - 0.0045], [0.0037, heel[1] + 0.003, heel[2] + 0.0045], RED_FELT), // heel felt on the capstan
       rod([-0.0045, 0, 0], [0.0045, 0, 0], 0.0008, STEEL, 6), // centre pin
-      rod([0, 0.008, 0.045], BRIDLE_HOOK, 0.0005, STEEL, 5), // bridle wire
-      span([-0.0006, BRIDLE_HOOK[1] - 0.001, BRIDLE_HOOK[2]], [0.0006, BRIDLE_HOOK[1] + 0.0012, BRIDLE_HOOK[2] + 0.003], STEEL), // its hook
+      rod([BRIDLE_HOOK[0], 0.008, 0.045], BRIDLE_HOOK, 0.0005, STEEL, 5), // bridle wire
+      span([BRIDLE_HOOK[0] - 0.0006, BRIDLE_HOOK[1] - 0.001, BRIDLE_HOOK[2]], [BRIDLE_HOOK[0] + 0.0006, BRIDLE_HOOK[1] + 0.0012, BRIDLE_HOOK[2] + 0.003], STEEL), // its hook
       rod([-0.0025, JACK_FOOT[1], JACK_FOOT[2]], [0.0025, JACK_FOOT[1], JACK_FOOT[2]], 0.0007, STEEL, 6), // the jack's centre pin
       span([-0.002, 0.008, 0.026], [0.002, 0.011, 0.034], GREEN_FELT), // the jack spring's felt
     ]);
@@ -444,8 +526,9 @@ export class ActionParts {
       // the hammer, as PianoInterior poses it
       const P = hammerPivot(i);
       const theta = HAMMER_REST * (1 - f.hammers[i]);
-      q2.setFromAxisAngle(xAxis, theta);
+      hammerQuaternion(i, f.hammers[i], f.leans[i], q2);
       this.heels.setMatrixAt(i, m4.compose(p.set(P[0], P[1], P[2]), q2, one));
+      this.poseBackcheck(i, W, phi, P, f.checks[i], theta, f.keys[i]);
       // the jack: from its foot on the wippen to the butt's heel; tripped, it swings forward from under it
       const foot = add(W, rotX(JACK_FOOT, phi));
       const heel = add(P, rotX(BUTT_HEEL, theta));
@@ -460,8 +543,7 @@ export class ActionParts {
       // the damper lever's tail, and the spoon reaching it
       if (i < N_DAMPED) {
         const dp = this.opts.dampPivot[i];
-        q.setFromAxisAngle(xAxis, DAMPER_SWING * f.dampers[i]);
-        q.premultiply(this.opts.leans[i]);
+        damperQuaternion(i, f.dampers[i], this.opts.leans[i], DAMPER_SWING, q);
         this.tails.setMatrixAt(i, m4.compose(p.set(dp[0], dp[1], dp[2]), q, one));
         const root = add(W, rotX(SPOON_ROOT, phi));
         const tip = add(W, rotX(this.spoonTip[i], phi));
@@ -476,10 +558,10 @@ export class ActionParts {
       const c = dist(A, B);
       const L = this.tapeLen[i];
       const sag = c < L ? Math.sqrt((3 * c * (L - c)) / 8) : 0;
-      // the bow: perpendicular to the chord in the y-z plane, toward +z
+      // the bow: perpendicular to the chord in the y-z plane, toward the strings (clear of the backcheck)
       let ny = -(A[2] - B[2]);
       let nz = A[1] - B[1];
-      if (nz < 0) {
+      if (nz > 0) {
         ny = -ny;
         nz = -nz;
       }
@@ -514,6 +596,48 @@ export class ActionParts {
     for (const m of this.moving) m.instanceMatrix.needsUpdate = true;
     tapePos.needsUpdate = true;
     tapeNrm.needsUpdate = true;
+  }
+
+  /**
+   * The backcheck on key i's wippen: leaning so that its felt meets the
+   * catcher where this stroke's check is (the felt at rest on the catcher's
+   * way), out of the way while the key is up, and its felt squeezed by however
+   * far the catcher has sunk into it.
+   */
+  private poseBackcheck(i: number, W: C3, phi: number, P: C3, check: number, theta: number, depth: number) {
+    const root = add(W, rotX(CHECK_ROOT, phi));
+    const K = add(P, rotX(CATCHER_EDGE, HAMMER_REST * (1 - check)));
+    const F = this.checkFace;
+    const n = this.checkNormal;
+    // the lean that puts the felt's face through the catcher's edge at the check
+    const miss = (psi: number) => {
+      const f = rotX(F, psi);
+      const nn = rotX(n, psi);
+      return (K[1] - root[1] - f[1]) * nn[1] + (K[2] - root[2] - f[2]) * nn[2];
+    };
+    let psi = 0;
+    for (let k = 0; k < 4; k++) {
+      const m0 = miss(psi);
+      const d = (miss(psi + 1e-4) - m0) / 1e-4;
+      if (Math.abs(d) < 1e-9) break;
+      psi -= m0 / d;
+    }
+    // out of the way as the key comes up
+    const u = Math.min(1, Math.max(0, (depth - 0.5) / 0.4));
+    psi += CHECK_AWAY * (1 - u * u * (3 - 2 * u));
+    const { m4, q, p } = this;
+    q.setFromAxisAngle(this.xAxis, psi);
+    this.checks.setMatrixAt(i, m4.compose(p.set(root[0], root[1], root[2]), q, this.unit));
+    // the felt: how far the catcher's edge is past its face
+    const face = add(root, rotX(F, psi));
+    const nn = rotX(n, psi);
+    const edge = add(P, rotX(CATCHER_EDGE, theta));
+    const into = -((edge[1] - face[1]) * nn[1] + (edge[2] - face[2]) * nn[2]);
+    const thick = CHECK_FELT - Math.min(0.8 * CHECK_FELT, Math.max(0, into));
+    const backC = add(root, rotX(sub(add(F, this.checkPad), [0, n[1] * CHECK_FELT, n[2] * CHECK_FELT]), psi));
+    this.dir.set(0, nn[1], nn[2]);
+    this.q2.setFromUnitVectors(this.up, this.dir);
+    this.checkFelts.setMatrixAt(i, m4.compose(p.set(root[0], backC[1], backC[2]), this.q2, this.feltScale.set(1, thick, 1)));
   }
 
   /** remember the moving parts' transforms as the shutter opened */
