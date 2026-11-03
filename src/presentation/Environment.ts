@@ -235,11 +235,16 @@ export class Environment {
   private interiorOpen = false;
   private rakeAim: [number, number] = [0, 0];
 
-  /** with the piano open, the raking light's shadow also has to cover the action and strings inside */
+  /** with the piano open, the lights' shadows also have to cover the action and strings inside */
   setInteriorOpen(open: boolean) {
     if (open === this.interiorOpen) return;
     this.interiorOpen = open;
     this.aimRake(...this.rakeAim);
+    // the sun's reaches up under the lid, so the case and the parts high inside cast their shadows there too
+    const sc = this.lights.sun.shadow.camera;
+    sc.top = open ? 0.88 : 0.62;
+    sc.updateProjectionMatrix();
+    this.lights.sun.shadow.needsUpdate = true;
   }
 
   private aimRake(angleDeg: number, dirDeg: number) {

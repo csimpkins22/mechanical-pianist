@@ -181,6 +181,11 @@ export class ActionParts {
   private tmp2 = new THREE.Matrix4();
   private scl = new THREE.Vector3();
 
+  /** the instanced parts that stand in rows, instance i beside i ± 1 (for InteriorLighting's slot shading) */
+  rows(): THREE.InstancedMesh[] {
+    return [this.wippens, this.jacks];
+  }
+
   constructor(opts: ActionPartsOptions) {
     this.opts = opts;
     this.root.name = 'ActionParts';
