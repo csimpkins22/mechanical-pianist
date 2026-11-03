@@ -88,10 +88,19 @@ The moving parts are pure functions of time from the same key strokes that move 
 
 A string vibrates far faster than any frame rate, so a camera never sees a moving wire. It sees the envelope of the swing over the exposure, which is how the strings are drawn. Each string is a ribbon facing the camera, as wide as the wire plus the part of its swing seen across the line of sight, with the first mode's shape: widest at mid-span and pinched at the bridge and the top bearing. Every pixel takes the share of the exposure the wire covers it, so a swinging string becomes a translucent band, brightest at its edges where the wire lingers as it turns. The band holds exactly the wire's light, however wide it spreads. In practice only loud bass notes blur visibly, and mostly when seen from above or from the side. The same filter gives distant strings, thinner than a pixel, a steady faint line instead of a broken, flickering one. The normal across the ribbon is the round wire's, so light runs along each string in a bright streak; where a wire is only a pixel or two wide, its highlight broadens instead of depending on where the pixel falls.
 
-Hammers, dampers and wippens are instanced, and keep their transforms from the start of the shutter for motion blur. The lighting, bounce, occlusion and reflections take the inside in, and its surfaces get less of the room's light the deeper they sit in the case. With the piano open, the cinematic director also cuts to four shots inside it:
+Hammers, dampers and wippens are instanced, and keep their transforms from the start of the shutter for motion blur.
 
-* *The hammers*, a close-up above the leading hand;
-* *Along the hammer line*;
+The light inside (`presentation/InteriorLight.ts`): with the panel off, the case is a deep box with one opening, and nearly all its light comes in through it.
+
+* **Direct light** reaches a point inside only along a line through the opening. This is tested analytically for every light at every pixel. The penumbra grows with the distance to the opening's edge and with the size of the source: crisp for the sun and the raking lamp, wide for the fill and the window. So the light falls in under the lid's edge and across the action from the window's side, and leaves the top of the case, the pins and the far corners in shadow. The shadow maps still draw what the parts inside cast on one another, and the sun's map reaches up under the lid while the piano is open.
+* **Light from the room** (sky fill, bounced light, reflections) is scaled by how much of what a surface faces is the opening rather than the dark inside of the case, with a little left over for what the inside bounces about. Reflections look out along the mirror direction.
+* **Between the rows**: hammers, dampers and wippens stand a millimetre or two apart. Where a part's neighbour stands level with it, the slot between them is dark: its faces see out only near the mouth, and the faces beside it darken toward the gap. When a neighbour rises out of the row, the slot opens and lights up. Each part carries its neighbours' state as instance attributes, worked out every frame from the posed parts themselves.
+* **No relighting delay**: the room's bounced light and the hands' reflections are prepared at load for the piano both open and closed, so opening or closing it relights at once, on the next frame.
+
+With the piano open, the cinematic director also goes inside now and then: about one cut in six or seven, never twice running, and not in the first two shots or the last. It chooses the moments for a soft or held passage, a big chord at the cut, or the start of a phrase. Inside, the focus is pulled from hammer to hammer with the melody, the top note of the hand's chords. A focus puller would start each pull a little ahead of the note, ease it to a stop, and take longer for a longer distance. A pull that starts before the last has finished carries on from its speed, so the focus never jerks. There are four shots inside:
+
+* *The hammers*, a close-up above the leading hand, focused on the melody's hammer where it stands while its note sounds;
+* *Along the hammer line*, a long lens wide open from one end, the focus travelling along the line with the melody;
 * *Through the action*, looking out past the dampers and hammers to the hands;
 * *The plate and the pins*, a crane down from the tuning pins to the hammers.
 

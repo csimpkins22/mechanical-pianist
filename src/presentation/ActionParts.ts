@@ -228,6 +228,11 @@ export class ActionParts {
   private unit = new THREE.Vector3(1, 1, 1);
   private feltScale = new THREE.Vector3();
 
+  /** the instanced parts that stand in rows, instance i beside i ± 1 (for InteriorLighting's slot shading) */
+  rows(): THREE.InstancedMesh[] {
+    return [this.wippens, this.jacks];
+  }
+
   constructor(opts: ActionPartsOptions) {
     this.opts = opts;
     this.root.name = 'ActionParts';

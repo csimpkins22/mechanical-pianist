@@ -11,6 +11,12 @@
 // close-ups on the hand that leads. The edit is computed once, so a camera
 // state is still a pure function of t.
 //
+// Inside the open piano the edit goes in now and then, not all the time:
+// about one cut in six or seven, never twice running, chosen for a soft or
+// held passage, a big chord, or the start of a phrase. There the focus is
+// pulled from hammer to hammer with the melody, a little ahead of each note,
+// as a focus puller would.
+//
 // Shots. Each is a move over its segment (dolly, truck, crane, orbit, push,
 // a static locked-off frame) whose subject is pre-tracked: the camera knows
 // where the hands will be, so it follows them smoothly instead of chasing.
@@ -22,7 +28,7 @@ import { clamp } from '../core/math';
 import { drift } from '../core/random';
 import type { Hand } from '../core/types';
 import type { CameraState } from './CinematicCamera';
-import { STRIKE_Y, STRING_Z_TREBLE, hammerXAtKeyX } from './ActionLayout';
+import { HAMMER_X, STRIKE_Y, STRING_Z_TREBLE, hammerXAtKeyX } from './ActionLayout';
 
 export interface DirectorContext {
   duration: number;
@@ -51,7 +57,84 @@ interface Segment {
   side: number; // +1 right hand / treble side, -1 left / bass side
   key: NoteRef | null; // the note a key close-up waits for
   seed: number;
+  /** where the focus puller has the focus along the hammer line (x of a hammer) for a hand's melody */
+  melody: (h: Hand, t: number) => number;
 }
+
+/**
+ * The focus along the hammer line, following a hand's melody: the top note of
+ * each of its chords, pulled to a little before the note sounds, over a time
+ * that grows with the distance, easing out to a stop; between notes it holds.
+ * A pull that starts while the last is still under way carries on from where
+ * and how fast that one was going (a cubic from the position and speed then
+ * to the hammer, at rest), so the focus never jerks. A pure function of t:
+ * the state at the start of each pull is worked out in order once, when the
+ * path is made.
+ */
+export class MelodyFocus {
+  private t: number[] = [];
+  private x: number[] = [];
+  private from: number[] = [];
+  private speed: number[] = [];
+  private dur: number[] = [];
+  static readonly LEAD = 0.08;
+
+  constructor(notes: NoteRef[]) {
+    const sorted = notes.slice().sort((a, b) => a.start - b.start || b.midi - a.midi);
+    for (let i = 0; i < sorted.length; ) {
+      let j = i;
+      let top = sorted[i];
+      while (j < sorted.length && sorted[j].start - sorted[i].start < 0.04) {
+        if (sorted[j].midi > top.midi) top = sorted[j];
+        j++;
+      }
+      const x = HAMMER_X[clamp(top.midi - 21, 0, HAMMER_X.length - 1)];
+      if (!this.x.length || Math.abs(x - this.x[this.x.length - 1]) > 1e-6) {
+        this.t.push(sorted[i].start - MelodyFocus.LEAD);
+        this.x.push(x);
+      }
+      i = j;
+    }
+    let v = this.x[0] ?? 0;
+    let w = 0;
+    for (let k = 0; k < this.t.length; k++) {
+      if (k > 0) [v, w] = this.pull(k - 1, this.t[k]);
+      this.from.push(v);
+      this.speed.push(w);
+      this.dur.push(clamp(0.2 + 1.8 * Math.abs(this.x[k] - v), 0.2, 0.8));
+    }
+  }
+
+  /** position and speed at t during (or after) pull k */
+  private pull(k: number, t: number): [number, number] {
+    const T = this.dur[k];
+    const u = (t - this.t[k]) / T;
+    if (u >= 1) return [this.x[k], 0];
+    const p0 = this.from[k];
+    const m0 = this.speed[k] * T;
+    const p1 = this.x[k];
+    const u2 = u * u;
+    const u3 = u2 * u;
+    const p = (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * p1;
+    const dp = (6 * u2 - 6 * u) * p0 + (3 * u2 - 4 * u + 1) * m0 + (-6 * u2 + 6 * u) * p1;
+    return [p, dp / T];
+  }
+
+  at(t: number): number {
+    const T = this.t;
+    if (!T.length) return 0;
+    if (t <= T[0]) return this.x[0];
+    let lo = 0;
+    let hi = T.length - 1;
+    while (lo < hi) {
+      const m = (lo + hi + 1) >> 1;
+      if (T[m] <= t) lo = m;
+      else hi = m - 1;
+    }
+    return this.pull(lo, t)[0];
+  }
+}
+
 
 type Scale = 'wide' | 'medium' | 'close' | 'detail';
 
@@ -89,6 +172,15 @@ const around = (p: THREE.Vector3, az: number, d: number, h: number) => V(p.x + M
 
 function state(pos: THREE.Vector3, target: THREE.Vector3, focalLength: number, fstop: number, focusAt: THREE.Vector3 = target, roll = 0): CameraState {
   return { position: pos, target, focalLength, fstop, focus: pos.distanceTo(focusAt), roll };
+}
+
+/** where a hammer's head stands while its note sounds: caught in the check, a little over halfway from rest to the string */
+const MELODY_Z = STRING_Z_TREBLE + 0.031;
+
+/** p moved onto the line of sight at its own depth (the focus is a depth: a point off to the side is in focus at its depth, not its distance) */
+function atDepth(pos: THREE.Vector3, target: THREE.Vector3, p: THREE.Vector3): THREE.Vector3 {
+  const dir = target.clone().sub(pos).normalize();
+  return pos.clone().addScaledVector(dir, p.clone().sub(pos).dot(dir));
 }
 
 /** the shot's subject, pre-tracked: mostly where it will be mid-shot, following it gently */
@@ -358,8 +450,9 @@ const SHOTS: Shot[] = [
       const hx = hammerXAtKeyX(c.x);
       const target = V(hx + s.side * lerp(-0.01, 0.01, u), STRIKE_Y - 0.004, STRING_Z_TREBLE + 0.03);
       const pos = V(target.x + s.side * 0.07, lerp(0.42, 0.405, u), lerp(-0.1, -0.12, u));
-      // focus on the heads themselves, between rest and the string
-      return state(pos, target, 50, 7, V(target.x, STRIKE_Y, STRING_Z_TREBLE + 0.05));
+      // focus on the hammer of the melody, pulled from one to the next, where it stands while its note sounds (caught, a little over halfway to the string)
+      const fx = clamp(s.melody(s.hand, t), target.x - 0.075, target.x + 0.075);
+      return state(pos, target, 50, 5.6, atDepth(pos, target, V(fx, STRIKE_Y, MELODY_Z)));
     },
   },
   {
@@ -377,7 +470,8 @@ const SHOTS: Shot[] = [
       const end = hx > 0 ? -1 : 1;
       const pos = V(end * lerp(0.6, 0.55, u), lerp(0.405, 0.395, u), -0.13);
       const target = V(hx, STRIKE_Y - 0.01, -0.295);
-      return state(pos, target, 35, 8, target);
+      // a long lens wide open down the line: the focus travels along it with the melody
+      return state(pos, target, 40, 4, atDepth(pos, target, V(s.melody(s.hand, t), STRIKE_Y, MELODY_Z)));
     },
   },
   {
@@ -510,12 +604,8 @@ export class ShotDirector {
     cuts.reverse();
     if (cuts[cuts.length - 1] < D) cuts.push(D);
 
-    // shots by grammar
-    const seedBase = Math.round(sorted.reduce((s, n) => s + n.midi * 7 + n.start * 13, 17)) >>> 0;
-    const rand = rng(seedBase);
-    const recent: string[] = [];
-    let prevScale: Scale | null = null;
-    let prevHand: Hand | null = null;
+    // the features of every segment
+    const segs: { a: number; b: number; inSeg: NoteRef[]; f: Features }[] = [];
     for (let k = 0; k + 1 < cuts.length; k++) {
       const a = cuts[k];
       const b = cuts[k + 1];
@@ -546,9 +636,28 @@ export class ShotDirector {
         last: k + 2 === cuts.length,
         length: b - a,
       };
+      segs.push({ a, b, inSeg, f });
+    }
+
+    // inside the piano (open), now and then
+    const seedBase = Math.round(sorted.reduce((s, n) => s + n.midi * 7 + n.start * 13, 17)) >>> 0;
+    const inside = opts.open ? ShotDirector.insideMoments(segs, onsets, seedBase) : new Set<number>();
+
+    // shots by grammar
+    const rand = rng(seedBase);
+    const melody = { L: new MelodyFocus(sorted.filter((n) => n.hand === 'L')), R: new MelodyFocus(sorted.filter((n) => n.hand === 'R')) };
+    this.melody = (h: Hand, t: number) => melody[h].at(t);
+    const outsideShots = shots.filter((sh) => !sh.inside);
+    const insideShots = shots.filter((sh) => sh.inside);
+    const recent: string[] = [];
+    let prevScale: Scale | null = null;
+    let prevHand: Hand | null = null;
+    for (let k = 0; k < segs.length; k++) {
+      const { a, b, inSeg, f } = segs[k];
+      const lead = f.lead;
       let pick = SHOTS[0];
       let bestScore = -Infinity;
-      for (const shot of shots) {
+      for (const shot of inside.has(k) ? insideShots : outsideShots) {
         let sc = shot.fit(f);
         if (!isFinite(sc)) continue;
         const ago = recent.lastIndexOf(shot.id);
@@ -569,11 +678,51 @@ export class ShotDirector {
       if ((pick.scale === 'medium' || pick.scale === 'wide') && prevHand === lead && rand() < 0.35) hand = lead === 'R' ? 'L' : 'R';
       const handNotes = inSeg.filter((n) => n.hand === hand && n.start > a + 0.6 && n.start < b - 0.4);
       const key = handNotes.length ? handNotes.reduce((m, n) => (n.velocity > m.velocity ? n : m)) : null;
-      this.segments.push({ a, b, shot: pick, hand, side: hand === 'R' ? 1 : -1, key, seed: (seedBase + k * 101) >>> 0 });
+      this.segments.push({ a, b, shot: pick, hand, side: hand === 'R' ? 1 : -1, key, seed: (seedBase + k * 101) >>> 0, melody: this.melody });
       recent.push(pick.id);
       prevScale = pick.scale;
       prevHand = hand;
     }
+  }
+
+  /** where the focus puller has the focus along the hammer line for a hand's melody */
+  readonly melody: (h: Hand, t: number) => number = () => 0;
+
+  /**
+   * Which segments go inside the open piano: about one in six or seven, never
+   * two running (at least three outside between), not the first two or the
+   * last; the best moments for it first: a soft or held passage, a big chord
+   * at the cut, the start of a phrase (a breath before it).
+   */
+  static insideMoments(
+    segs: { a: number; b: number; inSeg: NoteRef[]; f: Features }[],
+    onsets: { t: number; vel: number; gap: number }[],
+    seed: number,
+  ): Set<number> {
+    const N = segs.length;
+    const want = N >= 6 ? Math.max(1, Math.round(N / 6.5)) : 0;
+    const scored: { k: number; score: number }[] = [];
+    for (let k = 2; k < N - 1; k++) {
+      const { a, inSeg, f } = segs[k];
+      if (f.length < 3.2) continue;
+      const soft = 1 - f.intensity;
+      const held = inSeg.length ? inSeg.reduce((s, n) => s + Math.min(1, (n.end - n.start) / 1.2), 0) / inSeg.length : 0;
+      const atCut = inSeg.filter((n) => n.start - a < 0.12);
+      const big = clamp((atCut.length - 2) / 3, 0, 1) * atCut.reduce((m, n) => Math.max(m, n.velocity), 0);
+      const o = onsets.find((p) => Math.abs(p.t - (a + 0.05)) < 0.02);
+      const phrase = o ? clamp(o.gap / 0.5, 0, 1) : 0;
+      const jitter = (Math.imul((k + 1) * 2654435761, (seed | 1) >>> 0) >>> 0) / 4294967296;
+      scored.push({ k, score: 0.45 * (0.6 * soft + 0.4 * held) + 0.35 * big + 0.35 * phrase + 0.12 * jitter });
+    }
+    scored.sort((p, q) => q.score - p.score || p.k - q.k);
+    const out = new Set<number>();
+    for (const { k } of scored) {
+      if (out.size >= want) break;
+      let ok = true;
+      for (const j of out) if (Math.abs(j - k) < 4) ok = false;
+      if (ok) out.add(k);
+    }
+    return out;
   }
 
   private segAt(t: number): Segment {
@@ -608,7 +757,7 @@ export class ShotDirector {
     const shot = SHOTS[index % SHOTS.length];
     const notes = this.segments.flatMap((sg) => (sg.key ? [sg.key] : []));
     const key = notes.length ? notes.reduce((m, n) => (Math.abs(n.start - t) < Math.abs(m.start - t) ? n : m)) : null;
-    const seg: Segment = { a: t - 3, b: t + 3, shot, hand, side: hand === 'R' ? 1 : -1, key, seed: 7 };
+    const seg: Segment = { a: t - 3, b: t + 3, shot, hand, side: hand === 'R' ? 1 : -1, key, seed: 7, melody: this.melody };
     return { name: shot.name, state: shot.frame(this.ctx, t, seg) };
   }
 }
