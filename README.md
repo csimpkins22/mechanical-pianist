@@ -1,3 +1,5 @@
+![Robotic hands playing an upright piano](docs/images/mechanical-pianist-header.jpg)
+
 # The Mechanical Pianist
 
 A browser application that turns a MIDI piano performance into a close, cinematic, real-time film of two articulated robotic hands playing an old upright piano.
