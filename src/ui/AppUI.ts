@@ -8,7 +8,6 @@ import { exportSize, exportSupport, exportVideo } from '../app/VideoExport';
 import { noteName } from '../core/keyboard';
 import type { Finger, Hand, PerformanceNote, TrackInfo } from '../core/types';
 import type { ParsedMidi } from '../interpretation/MidiEngine';
-import type { CameraMode } from '../presentation/CinematicCamera';
 import { DEFAULT_LOOK } from '../presentation/SceneRenderer';
 import { DEFAULT_LIGHTS } from '../presentation/Environment';
 import { DEFAULT_FRAMING } from '../presentation/CinematicCamera';
@@ -25,7 +24,13 @@ const ICON = {
   vol: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4zM15 8.5a5 5 0 010 7M17.5 6a8.5 8.5 0 010 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/>',
   mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   gear: '<path d="M12 8.6a3.4 3.4 0 100 6.8 3.4 3.4 0 000-6.8zm8.2 4.6l1.6 1.2-1.7 3-1.9-.7c-.5.4-1.1.8-1.7 1l-.3 2H12l-.3-2a7 7 0 01-1.7-1l-1.9.7-1.7-3 1.6-1.2a7 7 0 010-2l-1.6-1.2 1.7-3 1.9.7c.5-.4 1.1-.8 1.7-1l.3-2h3.4l.3 2c.6.2 1.2.6 1.7 1l1.9-.7 1.7 3-1.6 1.2a7 7 0 010 2z" transform="translate(-1.5 -1) scale(1.02)"/>',
-  loop: '<path d="M7 8h9.5a3 3 0 013 3v.5M17 16H7.5a3 3 0 01-3-3v-.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14.5 5.5L17 8l-2.5 2.5M9.5 18.5L7 16l2.5-2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  prev: '<path d="M14.5 6.5L9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  next: '<path d="M9.5 6.5L15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  // an upright piano, its upper panel on, and lifted off with the strings showing
+  pianoClosed:
+    '<path d="M5.5 13V5.6A1.6 1.6 0 017.1 4h9.8a1.6 1.6 0 011.6 1.6V13M5.5 16.6V20M18.5 16.6V20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.8 13h16.4v3.6H3.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 13v2M12 13v2M15.5 13v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  pianoOpen:
+    '<path d="M5.5 13V8.6M18.5 13V8.6M5.5 16.6V20M18.5 16.6V20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6.2 2.9l11.2-1.3.5 4.4-11.2 1.3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.6 9.2v3.4M10.8 9.2v3.4M13.2 9.2v3.4M15.4 9.2v3.4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity="0.8"/><path d="M3.8 13h16.4v3.6H3.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 13v2M12 13v2M15.5 13v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
 };
 
 
@@ -48,9 +53,10 @@ export class AppUI {
   private filming: AbortController | null = null;
   private filmState: { f: number; text: string } | null = null;
   private paintFilm: (() => void) | null = null;
-  private camBtns: Record<CameraMode, HTMLButtonElement> = {} as never;
+  private autoBtn!: HTMLButtonElement;
+  private shotLabel!: HTMLSpanElement;
+  private openBtn!: HTMLButtonElement;
   private volBtn!: HTMLButtonElement;
-  private loopBtn!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
   private library!: LibrarySheet;
   private debugInfo!: HTMLDivElement;
@@ -84,28 +90,34 @@ export class AppUI {
     const fwd = this.btn(ICON.fwd, 'Next frame (→)', () => this.app.step(1));
     this.timeLabel = el('span', 'time');
     left.append(restart, back, this.playBtn, fwd, this.timeLabel);
-    const mid = el('div', 'group cams');
-    for (const [m, label] of [
-      ['cinematic', 'Cinematic'],
-      ['follow', 'Follow'],
-      ['overhead', 'Overhead'],
-      ['macro', 'Macro'],
-    ] as [CameraMode, string][]) {
-      const b = el('button', 'seg', label);
-      b.title = `${label} camera (${{ cinematic: 1, follow: 2, overhead: 3, macro: 4 }[m]})${m === 'cinematic' ? ': designed shots, cut with the music' : ''}`;
-      b.onclick = () => this.app.setMode(m);
-      this.camBtns[m] = b;
-      mid.appendChild(b);
-    }
-    const right = el('div', 'group');
+    // the camera: the director's edit, or one of its shots held (stepped with the arrows)
+    const mid = el('div', 'group mid');
+    const cams = el('div', 'cams');
+    cams.setAttribute('role', 'group');
+    cams.setAttribute('aria-label', 'Camera');
+    this.autoBtn = el('button', 'seg', 'Cinematic');
+    this.autoBtn.title = 'Cinematic (1): the director cuts between shots with the music';
+    this.autoBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.app.setCamera('cinematic');
+    };
+    const prev = this.btn(ICON.prev, 'Previous shot (,)', () => this.app.stepShot(-1), 'step');
+    const next = this.btn(ICON.next, 'Next shot (.)', () => this.app.stepShot(1), 'step');
+    this.shotLabel = el('span', 'shot-name');
+    const picker = el('div', 'shot');
+    picker.append(prev, this.shotLabel, next);
+    cams.append(this.autoBtn, picker);
+    this.openBtn = el('button', 'pill open-btn');
+    this.openBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.app.setOpen(!this.app.view.look.openPiano);
+    };
+    mid.append(cams, this.openBtn);
+    const right = el('div', 'group right');
     this.speedSel = el('select', 'speed');
     this.speedSel.title = 'Playback speed ([ and ])';
     for (const s of SPEEDS) this.speedSel.appendChild(new Option(`${s}×`, String(s), s === 1, s === 1));
     this.speedSel.onchange = () => this.app.setSpeed(parseFloat(this.speedSel.value));
-    this.loopBtn = this.btn(ICON.loop, 'Loop (L)', () => {
-      this.app.loop = !this.app.loop;
-      this.sync();
-    });
     this.volBtn = this.btn(ICON.vol, 'Mute (M)', () => {
       this.app.audio.setMuted(!this.app.audio.muted);
       this.app.settingsChanged();
@@ -122,14 +134,21 @@ export class AppUI {
       this.app.audio.setVolume(parseFloat(vol.value));
       this.app.settingsChanged();
     };
-    const lib = el('button', 'lib-btn', `${svg(NOTE_ICON, 17)}<span>Library</span>`);
+    const lib = el('button', 'pill lib-btn', `${svg(NOTE_ICON, 17)}<span>Library</span>`);
     lib.title = 'Choose a piece, or open your own MIDI file (O)';
+    lib.setAttribute('aria-label', 'Library');
     lib.onclick = (e) => {
       e.stopPropagation();
       this.library.toggle();
     };
-    const gear = this.btn(ICON.gear, 'Fingering, light, camera, sound and debug (A)', () => this.toggleDrawer());
-    right.append(this.speedSel, this.loopBtn, this.volBtn, vol, lib, gear);
+    const gear = el('button', 'pill set-btn', `${svg(ICON.gear, 17)}<span>Settings</span>`);
+    gear.title = 'Settings: fingering, light, camera, sound, export and debug (A)';
+    gear.setAttribute('aria-label', 'Settings');
+    gear.onclick = (e) => {
+      e.stopPropagation();
+      this.toggleDrawer();
+    };
+    right.append(this.speedSel, this.volBtn, vol, lib, gear);
     row.append(left, mid, right);
     this.bar.append(scrub, row);
     r.appendChild(this.bar);
@@ -195,6 +214,8 @@ export class AppUI {
       this.lastFingerRefresh = -1;
     }
     if (what === 'loading') this.renderTitle();
+    // the Camera tab says what the camera is doing
+    if (what === 'view' && this.drawer.classList.contains('open') && this.tab === 'camera') this.renderDrawer();
     this.library.refresh(what);
     if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Camera)`, 6000);
     if (what === 'audio') {
@@ -219,13 +240,28 @@ export class AppUI {
     const u = Math.min(1, a.t / d);
     this.fill.style.width = `${u * 100}%`;
     this.handle.style.left = `${u * 100}%`;
-    for (const m of Object.keys(this.camBtns) as CameraMode[]) this.camBtns[m].classList.toggle('on', a.mode === m);
+    const auto = a.camView === 'cinematic';
+    this.autoBtn.classList.toggle('on', auto);
+    this.autoBtn.setAttribute('aria-pressed', String(auto));
+    const name = a.shotName();
+    if (this.shotLabel.textContent !== name) {
+      this.shotLabel.textContent = name;
+      this.shotLabel.title = auto ? `Now: ${name} (the director's choice; the arrows hold a shot)` : `Holding: ${name}`;
+    }
+    this.shotLabel.classList.toggle('held', !auto);
+    const open = a.view.look.openPiano;
+    if (this.openBtn.dataset.open !== String(open)) {
+      this.openBtn.dataset.open = String(open);
+      this.openBtn.innerHTML = `${svg(open ? ICON.pianoOpen : ICON.pianoClosed, 17)}<span>${open ? 'Close piano' : 'Open piano'}</span>`;
+      this.openBtn.title = `${open ? 'Close the piano: put the upper panel back' : 'Open the piano: take the upper panel off to see the hammers and strings'} (I)`;
+      this.openBtn.setAttribute('aria-pressed', String(open));
+      this.openBtn.classList.toggle('on', open);
+    }
     const vk = a.audio.muted ? 'mute' : 'vol';
     if (this.volBtn.dataset.icon !== vk) {
       this.volBtn.dataset.icon = vk;
       this.volBtn.innerHTML = svg(a.audio.muted ? ICON.mute : ICON.vol);
     }
-    this.loopBtn.classList.toggle('on', a.loop);
     this.speedSel.value = String(a.speed);
     document.body.classList.toggle('playing', a.playing);
     if (this.drawer.classList.contains('open')) {
@@ -425,16 +461,24 @@ export class AppUI {
           a.seek(a.duration);
           break;
         case '1':
-          a.setMode('cinematic');
+          a.setCamera('cinematic');
           break;
         case '2':
-          a.setMode('follow');
+          a.setCamera('follow');
           break;
         case '3':
-          a.setMode('overhead');
+          a.setCamera('overhead');
           break;
         case '4':
-          a.setMode('macro');
+          a.setCamera('macro');
+          break;
+        case ',':
+        case '<':
+          a.stepShot(-1);
+          break;
+        case '.':
+        case '>':
+          a.stepShot(1);
           break;
         case 'i':
         case 'I':
@@ -462,10 +506,6 @@ export class AppUI {
           if (this.drawer.classList.contains('open') && this.tab === 'light') this.renderDrawer();
           break;
         }
-        case 'l':
-        case 'L':
-          a.loop = !a.loop;
-          break;
         case '[':
         case ']': {
           const i = SPEEDS.indexOf(a.speed);
@@ -871,19 +911,17 @@ export class AppUI {
     const sl = (label: string, min: number, max: number, step: number, get: () => number, set: (v: number) => void, fmt?: (v: number) => string) =>
       this.slider(body, label, min, max, step, get, set, fmt);
 
-    if (a.piece && a.mode === 'cinematic') {
+    if (a.piece && a.camView === 'cinematic') {
       const sh = a.piece.camera.director.shotAt(a.t);
       body.appendChild(
-        el('p', 'note', `Cinematic cuts between designed camera moves at phrase points. Now: shot ${sh.index + 1} of ${sh.count}, “${sh.name}”. Follow, Overhead and Macro are single continuous cameras; the settings below shape them.`),
+        el('p', 'note', `Cinematic cuts between designed camera moves at phrase points. Now: shot ${sh.index + 1} of ${sh.count}, “${escapeHtml(sh.name)}”. The arrows on the bar hold one shot instead (, and .), following the hands gently; Open piano adds the shots inside it.`),
       );
+    } else if (a.piece) {
+      body.appendChild(el('p', 'note', `Holding “${escapeHtml(a.shotName())}”, following the hands gently. Cinematic on the bar (1) hands the camera back to the director.`));
     }
-    this.sectionToggle(body, 'Open the piano', () => look.openPiano, (v) => a.setOpen(v));
-    body.appendChild(
-      el('p', 'note', 'The upper front panel off (I): the hammers strike, the dampers lift and the strings shimmer as the hands play. Cinematic adds shots inside the piano.'),
-    );
     const drama = this.sectionToggle(body, 'Camera drama', () => f().dramaOn, (v) => (a.framing.dramaOn = v));
     drama([sl('Amount', 0, 1, 0.01, () => f().drama, (v) => (a.framing.drama = v), (v) => `${Math.round(v * 100)}%`)]);
-    body.appendChild(el('p', 'note', 'For Follow, Overhead and Macro: slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));
+    body.appendChild(el('p', 'note', 'For the Follow, Overhead and Macro cameras: slow push-ins at the peaks of a phrase, focus racked to whichever hand leads, and longer lenses from further back.'));
 
     body.appendChild(el('div', 'sec', 'Lens'));
     sl('Depth of field', 0, 2, 0.01, () => look.dofScale, (v) => (look.dofScale = v));
@@ -971,10 +1009,10 @@ export class AppUI {
     if (!f || !p) return;
     const lines: string[] = [];
     lines.push(`t ${a.t.toFixed(3)} s   ${a.fps.toFixed(0)} fps   pedal ${(f.pedal * 100).toFixed(0)}%`);
-    if (a.mode === 'cinematic') {
+    if (a.camView === 'cinematic') {
       const sh = p.camera.director.shotAt(a.t);
       lines.push(`shot ${sh.index + 1}/${sh.count}  ${sh.name}  ${sh.start.toFixed(1)}–${sh.end.toFixed(1)} s`);
-    }
+    } else lines.push(`holding  ${a.shotName()}${typeof a.camView === 'object' ? `  (${a.camView.hand})` : ''}`);
     for (const h of ['L', 'R'] as Hand[]) {
       const hp = f.hands[h];
       lines.push(`${h} wrist ${hp.wrist.map((v) => (v * 1000).toFixed(0)).join(', ')} mm`);

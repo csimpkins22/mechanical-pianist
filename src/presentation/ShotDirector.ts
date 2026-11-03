@@ -136,7 +136,7 @@ export class MelodyFocus {
 }
 
 
-type Scale = 'wide' | 'medium' | 'close' | 'detail';
+export type Scale = 'wide' | 'medium' | 'close' | 'detail';
 
 interface Features {
   intensity: number; // 0..1
@@ -509,6 +509,9 @@ const SHOTS: Shot[] = [
 
 const SCALE_ORDER: Scale[] = ['wide', 'medium', 'close', 'detail'];
 
+/** shots made for one moment of the edit, which a viewer cannot hold */
+const HELD_EXCLUDED = new Set(['pullback', 'key-xcu']);
+
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
   return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
@@ -743,9 +746,30 @@ export class ShotDirector {
   }
 
   /** the shot on screen at t, for the interface */
-  shotAt(t: number): { name: string; index: number; count: number; start: number; end: number } {
+  shotAt(t: number): { id: string; name: string; hand: Hand; index: number; count: number; start: number; end: number } {
     const s = this.segAt(clamp(t, 0, this.ctx.duration));
-    return { name: s.shot.name, index: this.segments.indexOf(s), count: this.segments.length, start: s.a, end: s.b };
+    return { id: s.shot.id, name: s.shot.name, hand: s.hand, index: this.segments.indexOf(s), count: this.segments.length, start: s.a, end: s.b };
+  }
+
+  /**
+   * The shots a viewer can hold (chosen with the arrows), in the order they
+   * step through: wide to close, then inside the piano. Two are left out
+   * because they are made for one moment of the edit: the closing pull-back
+   * and the close-up waiting on one key.
+   */
+  static heldShots(): { id: string; name: string; scale: Scale; inside: boolean }[] {
+    return SHOTS.filter((sh) => !HELD_EXCLUDED.has(sh.id)).map((sh) => ({ id: sh.id, name: sh.name, scale: sh.scale, inside: !!sh.inside }));
+  }
+
+  /**
+   * One shot held at t, framed through `ctx` (whose subject curves the camera
+   * smooths further, so the frame follows the hands gently): the shot's move
+   * is held at its middle, and its subject is where the hands are now.
+   */
+  held(id: string, hand: Hand, t: number, ctx: DirectorContext): CameraState {
+    const shot = SHOTS.find((sh) => sh.id === id) ?? SHOTS[0];
+    const seg: Segment = { a: t - 4, b: t + 4, shot, hand, side: hand === 'R' ? 1 : -1, key: null, seed: 7, melody: this.melody };
+    return shot.frame(ctx, t, seg);
   }
 
   static get shotCount() {

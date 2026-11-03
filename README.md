@@ -33,7 +33,7 @@ To use a different SoundFont 2 piano, run `python tools/sf2-to-samples.py <file.
 
 Choose a piece from the **Library** (the button in the control bar, the title, or `O`). To perform your own `.mid` file, use **Open a MIDI file** there or drop the file anywhere on the window. Files with several parts ask which tracks to perform, with piano parts preselected. Your files are kept under "Your files" in this browser (IndexedDB), along with the parts you chose.
 
-URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
+URL options for development: `?demo=<library id>` (for example `nocturne-op9-2`, `raindrop` or `nocturne`; see `src/app/library.ts`), `?t=12.5` (start time), `?camera=cinematic|follow|overhead|macro`, `?shot=<shot id>` (hold one of the director's shots, `&hand=L` to favour the left hand), `?settings=default` (ignore saved settings), `?quality=high|medium|low`, `?debug=1`, `?play=1`, `?ui=0` (no interface, for stills).
 
 ### Publishing on GitHub Pages
 
@@ -49,7 +49,7 @@ The repository carries only music that can be shared freely. To build a version 
 
 ### Open the piano
 
-⚙ → Camera → **Open the piano** (or **I**) takes the upper front panel off, with its music desk and candle sconces, and shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
+**Open piano** on the control bar (or **I**) takes the upper front panel off, with its music desk and candle sconces, and shows the action at work. It is built in three.js from the same keyboard layout as the keys (`presentation/ActionLayout.ts`, `presentation/PianoInterior.ts`), so every hammer stands behind its key and every string runs where its hammer strikes:
 
 * a hammer per key, its head of thick cream felt wrapped over a red underfelt and a beech moulding, nearly as wide as the keys' spacing allows, so that at rest the row reads as one ribbed wall. The head is longer from the moulding to the crown than it is tall, with a broad round crown, pressed smoother and a little yellowed at the strike line, where the strings have left their grooves. Each head has its number stamped on its upper side. It sits on a maple shank and a buckskin butt.
 * a damper per key up to E6 (F6 and above have none, as in the sound), a soft block of felt glued with red cloth to a wooden head, and a wire running down beside the hammer.
@@ -121,15 +121,16 @@ With the piano open, the cinematic director also goes inside now and then: about
 | Back / forward 1 s | Shift + ← / → |
 | Start / end, restart | Home / End, ⏮ |
 | Speed (0.25×–1.5×) | the speed menu, `[` / `]` |
-| Cinematic / Follow / Overhead / Macro camera | 1 / 2 / 3 / 4, or the camera switch |
+| Cinematic: the director cuts between shots | 1, or Cinematic on the bar |
+| Previous / next shot, held with a gentle follow | , / . or ‹ › on the bar |
+| Hold the Follow, Overhead or Macro shot | 2 / 3 / 4 |
 | Next / previous visual style | S / Shift + S |
-| Loop | L |
 | Mute, volume | M, the volume slider |
 | Library: choose a piece or open a file | O, the Library button, or the title |
 | Close the library, a dialog or the drawer | Esc |
-| Settings drawer (fingering, light, camera, sound, debug) | A, or ⚙ |
+| Settings drawer (fingering, light, camera, sound, export, debug) | A, or Settings |
 | Kinematics overlay | D |
-| Open the piano (upper panel off: hammers, dampers, strings) | I, or ⚙ → Camera |
+| Open / close the piano (upper panel off: hammers, dampers, strings) | I, or Open piano on the bar |
 
 ## The library
 
@@ -227,13 +228,11 @@ The robot's dimensions live in `src/core/hand_spec.json`, read by the Blender bu
   * Studio
 
   Every slider still applies after choosing one.
-* **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. There are four modes:
-  * **Cinematic** is the director (`ShotDirector.ts`): nineteen designed camera moves cut together at musical moments, described below.
-  * **Follow** is one continuous treble-end three-quarter view down the keyboard.
-  * **Overhead** looks over the player's shoulder.
-  * **Macro** is low and close at the right hand's fingertips.
+* **`CinematicCamera`** analyses the performance ahead of time into slowly varying curves: a region of interest, phrase peaks (attack density weighted by loudness) and which hand leads. That hand is chosen decisively, with a minimum hold, the way a focus puller commits. The camera control on the bar has two parts:
+  * **Cinematic** is the director (`ShotDirector.ts`): designed camera moves cut together at musical moments, described below. The label beside it names the shot on screen.
+  * **‹ ›** step through the same shots in a fixed order (wide, medium, close, macro, then the inside shots while the piano is open) and hold the chosen one, following the hands gently. The arrows start from whatever shot is on screen; Cinematic hands the camera back to the director. Three continuous views are in the cycle too: **Follow**, one treble-end three-quarter view down the keyboard; **Overhead**, over the player's shoulder; and **Macro**, low and close at the right hand's fingertips. Closing the piano on an inside shot moves to the nearest shot outside.
 
-  Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous modes. Switching modes blends over 1.8 s; cuts within Cinematic are hard cuts.
+  Camera drama adds slow push-ins at phrase peaks, rack focus between the hands and longer lenses to the continuous views. Stepping between held shots cuts, as the director does.
 * **`ShotDirector`** edits the piece like a concert film.
   * **Cutting:** every onset is a candidate cut, scored for attack strength, a breath before it, a bar line and a new bass note. A cut in the middle of a fast run is penalised. Dynamic programming chooses cuts that aim for shots of 6–9 s in calm passages and 3–5 s as the music builds. Each cut falls 50 ms before an attack, so the new shot sees it land.
   * **Shot choice:** shots are assigned by film grammar. The edit opens low along the keys into the light (from the treble end, the hands backlit by the window, a slow push-in with the keys falling into soft focus) and ends on a pull-back reveal. It alternates wide, medium, close and detail, never repeats a recent shot, and gives close-ups to the leading hand.

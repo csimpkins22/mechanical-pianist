@@ -52,7 +52,7 @@ body.playing .title-card.busy, body.idle .title-card.busy { opacity: 0.85; }
 /* control bar */
 .bar {
   position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
-  width: min(1040px, calc(100vw - 32px)); box-sizing: border-box;
+  width: min(1180px, calc(100vw - 32px)); box-sizing: border-box; container-type: inline-size;
   padding: 10px 14px 8px; border-radius: 14px;
   background: var(--glass); backdrop-filter: blur(14px) saturate(1.1); -webkit-backdrop-filter: blur(14px) saturate(1.1);
   border: 1px solid var(--line); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
@@ -68,8 +68,9 @@ body.idle { cursor: none; }
 .track:hover .handle, .track.drag .handle { transform: scale(1.25); }
 .track .hover-tip { position: absolute; bottom: 20px; transform: translateX(-50%); font-size: 11px; color: var(--ink-dim); background: var(--glass-strong); padding: 2px 6px; border-radius: 5px; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; }
 .track:hover .hover-tip { opacity: 1; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px 10px; flex-wrap: wrap; }
 .group { display: flex; align-items: center; gap: 4px; }
+.group.mid { gap: 8px; }
 button.icon { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--ink-dim); transition: background 0.2s, color 0.2s; }
 button.icon:hover { background: rgba(236, 228, 216, 0.08); color: var(--ink); }
 button.icon.on { color: var(--accent); }
@@ -77,20 +78,52 @@ button.icon.play { width: 40px; height: 40px; background: rgba(236, 228, 216, 0.
 button.icon.play.loading { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(233, 200, 154, 0.15); } }
 .time { font-variant-numeric: tabular-nums; color: var(--ink-dim); margin-left: 8px; min-width: 104px; font-size: 12px; }
-.cams { background: rgba(0, 0, 0, 0.25); border-radius: 10px; padding: 3px; }
+.cams { display: flex; align-items: center; gap: 2px; background: rgba(0, 0, 0, 0.25); border-radius: 10px; padding: 3px; min-width: 0; }
+/* the shot picker: ‹ name › (the director's current shot in Cinematic, else the shot held) */
+.shot { display: flex; align-items: center; min-width: 0; }
+button.icon.step { width: 28px; height: 30px; border-radius: 7px; flex: none; }
+.shot-name { width: 15em; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; letter-spacing: 0.01em; color: var(--ink-dim); transition: color 0.2s; }
+.shot-name.held { color: var(--ink); }
 button.seg { border: 0; background: transparent; color: var(--ink-dim); padding: 6px 11px; border-radius: 7px; font-size: 12px; letter-spacing: 0.02em; }
 button.seg:hover { color: var(--ink); }
 button.seg.on { background: rgba(236, 228, 216, 0.12); color: var(--ink); }
 select { background: rgba(0, 0, 0, 0.25); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12px; color: var(--ink-dim); }
 select option { background: var(--panel); color: var(--ink); }
 input.vol { width: 72px; accent-color: var(--accent); }
-button.lib-btn { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px 0 10px; margin: 0 2px 0 6px; border: 1px solid rgba(233, 200, 154, 0.32); border-radius: 999px; background: rgba(233, 200, 154, 0.08); color: var(--ink); font-size: 12px; letter-spacing: 0.04em; transition: background 0.2s, border-color 0.2s; }
-button.lib-btn svg { color: var(--accent); }
-button.lib-btn:hover { background: rgba(233, 200, 154, 0.16); border-color: rgba(233, 200, 154, 0.55); }
-body.library-open button.lib-btn { background: var(--accent); border-color: var(--accent); color: #1b140e; }
-body.library-open button.lib-btn svg { color: #1b140e; }
+/* labelled buttons: Open piano, Library, Settings */
+button.pill { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px 0 10px; border: 1px solid rgba(233, 200, 154, 0.32); border-radius: 999px; background: rgba(233, 200, 154, 0.08); color: var(--ink); font-size: 12px; letter-spacing: 0.04em; white-space: nowrap; flex: none; transition: background 0.2s, border-color 0.2s; }
+button.pill svg { color: var(--accent); flex: none; }
+button.pill:hover { background: rgba(233, 200, 154, 0.16); border-color: rgba(233, 200, 154, 0.55); }
+button.lib-btn { margin-left: 6px; }
+button.open-btn.on { background: rgba(233, 200, 154, 0.18); border-color: rgba(233, 200, 154, 0.6); }
+body.library-open button.lib-btn, body.drawer-open button.set-btn { background: var(--accent); border-color: var(--accent); color: #1b140e; }
+body.library-open button.lib-btn svg, body.drawer-open button.set-btn svg { color: #1b140e; }
+.bar button:focus-visible, .bar select:focus-visible, .bar input:focus-visible { outline: 1px solid rgba(233, 200, 154, 0.75); outline-offset: 2px; }
+/* the bar wraps when its controls do not fit on one line: the camera and Open piano move to a row of their own */
+@container (max-width: 1140px) {
+  .group.mid { order: 3; flex-basis: 100%; justify-content: center; }
+}
+/* phones: three rows (transport; camera; the rest), bigger targets, Library and
+   Settings as icons alone (named for screen readers), the volume left to the device */
+@container (max-width: 600px) {
+  .row { justify-content: center; column-gap: 6px; }
+  .group.mid, .group.right { display: contents; }
+  .row > .group:first-child { order: 1; flex: 1 1 100%; justify-content: center; }
+  .cams { order: 2; flex: 1 1 100%; }
+  .open-btn, .speed, .group.right > button { order: 3; }
+  .shot { flex: 1; justify-content: space-between; }
+  .shot-name { width: auto; flex: 1; }
+  button.icon, button.icon.step { width: 40px; height: 40px; }
+  button.icon.play { width: 44px; height: 44px; }
+  button.seg { height: 40px; }
+  button.pill { height: 40px; }
+  select.speed { height: 40px; width: 58px; padding: 0 4px 0 8px; }
+  button.lib-btn, button.set-btn { width: 40px; padding: 0; justify-content: center; margin-left: 0; }
+  button.lib-btn span, button.set-btn span { display: none; }
+  .time { min-width: 0; margin-left: 4px; }
+  input.vol { display: none; }
+}
 @media (max-width: 760px) {
-  .cams { order: 3; width: 100%; justify-content: center; }
   input.vol { display: none; }
   .title-card .name { font-size: 24px; }
 }
