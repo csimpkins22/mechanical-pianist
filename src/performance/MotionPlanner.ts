@@ -192,6 +192,28 @@ export interface MotionPlan {
   t1: number;
 }
 
+/** chain each finger's notes, in order, through prev/next */
+export function linkFingers(fingers: PlannedNote[][]) {
+  for (const lst of fingers) {
+    for (let i = 0; i < lst.length; i++) {
+      lst[i].prev = lst[i - 1] ?? null;
+      lst[i].next = lst[i + 1] ?? null;
+    }
+  }
+}
+
+/**
+ * Break the prev/next chains (linkFingers restores them from the finger
+ * lists). Copying a plan as plain data (postMessage, structuredClone,
+ * IndexedDB, planCodec) recurses along each chain, and a long piece's chain
+ * is deep enough to overflow the stack.
+ */
+export function unlinkPlan(plan: MotionPlan) {
+  for (const track of Object.values(plan.hands)) {
+    for (const lst of track.fingers) for (const pn of lst) pn.prev = pn.next = null;
+  }
+}
+
 /** Canonical rest tip (right-hand frame) rotated by yaw, mirrored for the left hand: world offset from the wrist. */
 export function tipOffsetWorld(f: number, sx: number, yaw: number): [number, number, number] {
   const p = REST_TIPS[f];
@@ -249,13 +271,8 @@ function planHand(perf: Performance, hand: Hand, t0: number, n: number, rest?: n
   // each finger's notes in order
   const fingers: PlannedNote[][] = [[], [], [], [], [], []];
   for (const pn of planned) fingers[pn.finger].push(pn);
-  for (const lst of fingers) {
-    lst.sort((a, b) => a.stroke.contact - b.stroke.contact);
-    for (let i = 0; i < lst.length; i++) {
-      lst[i].prev = lst[i - 1] ?? null;
-      lst[i].next = lst[i + 1] ?? null;
-    }
-  }
+  for (const lst of fingers) lst.sort((a, b) => a.stroke.contact - b.stroke.contact);
+  linkFingers(fingers);
   // after release the fingertip rides its key up, for less time when the
   // finger is needed again soon, or when the hand has to go somewhere the
   // key cannot come along to

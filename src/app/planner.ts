@@ -10,6 +10,7 @@
 import { Signal } from '../core/math';
 import type { Override, Performance } from '../core/types';
 import { KeyMechanics } from '../performance/KeyMechanics';
+import { linkFingers, unlinkPlan } from '../performance/MotionPlanner';
 import { PerformanceTimeline } from '../performance/PerformanceTimeline';
 import { decodePlan } from './planCodec';
 
@@ -103,6 +104,7 @@ export function revive(data: { perf: Performance; timeline: PerformanceTimeline 
     for (const k of Object.keys(r)) walk(r[k]);
   };
   walk(tl.plan);
+  for (const track of Object.values(tl.plan.hands)) linkFingers(track.fingers);
   return { perf: data.perf, timeline: tl };
 }
 
@@ -247,6 +249,7 @@ export class Planner {
         await new Promise((r) => setTimeout(r, 30));
         if (!live()) return;
         const res = planChecked(buildScore(readMidi(req.bytes, req.name), req.tracks), req.overrides);
+        unlinkPlan(res.timeline.plan);
         done({ perf: res.perf, timeline: structuredClone(res.timeline) as unknown as PerformanceTimeline });
       } catch (err) {
         fail(err instanceof Error ? err.message : String(err));

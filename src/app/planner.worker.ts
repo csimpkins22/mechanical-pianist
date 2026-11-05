@@ -3,6 +3,7 @@
 // out, with progress along the way. See planner.ts for the other side.
 import type { Override } from '../core/types';
 import { buildScore, readMidi } from '../interpretation/MidiEngine';
+import { unlinkPlan } from '../performance/MotionPlanner';
 import { planChecked } from './plan';
 
 interface Request {
@@ -26,6 +27,7 @@ self.onmessage = (e: MessageEvent<Request>) => {
         post({ type: 'progress', fraction, label });
       }
     });
+    unlinkPlan(res.timeline.plan);
     post({ type: 'done', perf: res.perf, timeline: res.timeline });
   } catch (err) {
     post({ type: 'error', message: err instanceof Error ? err.message : String(err) });

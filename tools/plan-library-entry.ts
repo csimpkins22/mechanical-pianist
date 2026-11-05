@@ -3,6 +3,7 @@
 import { LIBRARY } from '../src/app/library';
 import { planChecked } from '../src/app/plan';
 import { encodePlan, fingerprint } from '../src/app/planCodec';
+import { unlinkPlan } from '../src/performance/MotionPlanner';
 import { buildScore, defaultTrackSelection, readMidi } from '../src/interpretation/MidiEngine';
 
 function request(id: string) {
@@ -23,5 +24,6 @@ export function pieces() {
 export function plan(id: string): Uint8Array {
   const r = request(id);
   const { perf, timeline } = planChecked(buildScore(readMidi(r.bytes, r.name), r.tracks), new Map());
+  unlinkPlan(timeline.plan);
   return encodePlan({ perf, timeline });
 }
