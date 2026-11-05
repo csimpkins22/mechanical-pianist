@@ -447,7 +447,7 @@ export class AudioEngine {
     }
   }
 
-  private releaseNoise(n: PerformanceNote) {
+  private releaseNoise(n: PerformanceNote, at?: number) {
     const buf = this.release.get(n.midi);
     if (!buf || !this.ctx) return;
     const ctx = this.ctx;
@@ -456,10 +456,83 @@ export class AudioEngine {
     const g = ctx.createGain();
     g.gain.value = 0.03 + 0.037 * n.velocity; // the key-release thump: texture, not a feature
     src.connect(g).connect(this.dry);
-    const when = Math.max(ctx.currentTime, this.toAudio(n.keyEnd));
+    const when = Math.max(ctx.currentTime, at ?? this.toAudio(n.keyEnd));
     src.start(when);
     src.stop(when + Math.min(1.2, buf.duration));
     this.voices.push({ src, gain: g, end: when + 1.2 });
+  }
+
+  // ------------------------------------------------------------ live playing
+  // Notes struck as they are played, before anyone knows how long they will
+  // last: a voice starts at a moment on the context's clock and is damped
+  // later (see LiveSession). Times here are the context's (currentTime).
+
+  /** the delay between the context's clock and what is heard */
+  get outputDelay(): number {
+    return this.ctx ? (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0) : 0;
+  }
+
+  /** strike a key at `when`; returns how to damp it (the dampers fall back on the strings) */
+  liveStrike(midi: number, velocity: number, when: number): { damp(at: number): void } | null {
+    if (!this.ctx || !this.ready) return null;
+    const ctx = this.ctx;
+    when = Math.max(ctx.currentTime, when);
+    const loud = 0.12 + 0.88 * Math.pow(velocity, 1.6);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400 + 15000 * Math.pow(velocity, 1.7);
+    filter.Q.value = 0.4;
+    const out = ctx.createGain();
+    out.gain.value = loud * 0.9 * this.gain;
+    filter.connect(out);
+    out.connect(this.dry);
+    out.connect(this.send);
+    const mine: Voice[] = [];
+    for (const p of this.pick(midi, velocity)) {
+      const src = ctx.createBufferSource();
+      src.buffer = p.buf;
+      src.playbackRate.value = p.rate;
+      const g = ctx.createGain();
+      g.gain.value = p.gain;
+      src.connect(g).connect(filter);
+      src.start(when);
+      const v = { src, gain: g, end: when + p.buf.duration / p.rate };
+      this.voices.push(v);
+      mine.push(v);
+    }
+    const damped = midi < UNDAMPED_FROM;
+    const releaseTau = 0.06 + 0.22 * Math.max(0, (72 - midi) / 51);
+    let done = false;
+    return {
+      damp: (at: number) => {
+        if (done || !this.ctx) return;
+        done = true;
+        const t = Math.max(this.ctx.currentTime, at, when);
+        const tEnd = damped ? t : t + 1.5;
+        for (const v of mine) {
+          try {
+            v.gain.gain.setValueAtTime(v.gain.gain.value, tEnd);
+            v.gain.gain.setTargetAtTime(0, tEnd, damped ? releaseTau : 0.8);
+            v.src.stop(tEnd + (damped ? releaseTau * 8 : 4));
+            v.end = Math.min(v.end, tEnd + (damped ? releaseTau * 8 : 4));
+          } catch {
+            /* already stopped */
+          }
+        }
+      },
+    };
+  }
+
+  /** the soft thump of a key coming back up, at `when` */
+  liveKeyUp(midi: number, velocity: number, when: number) {
+    this.releaseNoise({ midi, velocity, keyEnd: 0 } as PerformanceNote, when);
+  }
+
+  /** the pedal's halo (more of the room while the dampers are off), from `when` */
+  livePedal(down: boolean, when: number) {
+    if (!this.ctx) return;
+    this.send.gain.setTargetAtTime(1 + HALO * (down ? 1 : 0), Math.max(this.ctx.currentTime, when), 0.05);
+    this.voices = this.voices.filter((v) => v.end > this.ctx!.currentTime);
   }
 
   /** quickly fade out everything (seek, pause): no stuck notes */

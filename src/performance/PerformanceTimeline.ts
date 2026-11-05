@@ -26,7 +26,22 @@ import { bridlesAt, checksAt, dampersAt, hammerLeansAt, hammersAt, jacksAt } fro
 import { StringMechanics } from './StringMechanics';
 import { SOFT_BLOW, SOFT_RAMP, SUSTAIN_RAMP, levelAt, railTravel, sustainLevels } from './Pedals';
 import { handOverlap, liftToClear } from './HandCollision';
-import { RATE, leaveInTime, planMotion, type HandTrack, type MotionPlan } from './MotionPlanner';
+import { RATE, leaveInTime, planMotion, type HandTrack, type MotionOptions, type MotionPlan } from './MotionPlanner';
+
+/**
+ * How thoroughly to plan. The defaults are for a whole piece planned ahead;
+ * live playing plans a few seconds at a time and has a few tens of
+ * milliseconds for it, so it checks the contacts once and lets go of keys the
+ * hand cannot hold without planning again.
+ */
+export interface TimelineOptions extends MotionOptions {
+  /** plan, check the holds, release what cannot be held, plan again: up to this many times */
+  rounds?: number;
+  /** passes of the contact correction per round */
+  refinePasses?: number;
+  /** a last round of keeping the hands apart and correcting the contacts again */
+  settle?: boolean;
+}
 
 const STRINGS = new WeakMap<KeyMechanics, StringMechanics>();
 const LEVELS = new WeakMap<object, PedalLevel[]>();
@@ -59,6 +74,9 @@ export interface FrameState {
   sounding: PerformanceNote[];
 }
 
+/** the parts of a frame inside the piano */
+export type InteriorState = Pick<FrameState, 'hammers' | 'dampers' | 'strings' | 'damperRail' | 'softPedal' | 'jacks' | 'bridles' | 'leans' | 'checks'>;
+
 export class PerformanceTimeline {
   keys: KeyMechanics;
   plan: MotionPlan;
@@ -74,7 +92,10 @@ export class PerformanceTimeline {
   constructor(
     readonly perf: Performance,
     progress?: (fraction: number) => void,
+    opts: TimelineOptions = {},
   ) {
+    const rounds = opts.rounds ?? 4;
+    const passes = opts.refinePasses ?? 3;
     this.duration = perf.score.duration;
     // let go of keys in time to strike them again, and in time to leap
     restrikeRepeats(perf.notes);
@@ -93,27 +114,28 @@ export class PerformanceTimeline {
       this.soundEnd[i] = m;
     });
     this.keys = new KeyMechanics(perf.notes);
-    this.plan = planMotion(perf);
+    this.plan = planMotion(perf, opts);
     this.clearHands();
     // Plan, check every held key against the hand that holds it, and where the
     // hand must leave before the notated release, let that key come up as it
     // goes (the sound still lasts the full note); then plan again.
     // (Progress assumes two rounds, which is what most pieces take.)
     progress?.(0.05);
-    for (let round = 0; round < 4; round++) {
+    for (let round = 0; round < rounds; round++) {
       for (const hand of ['L', 'R'] as Hand[])
-        this.refine(this.plan.hands[hand], progress && ((u) => progress(Math.min(0.98, 0.05 + 0.47 * (round + (hand === 'L' ? 0 : 0.5) + 0.5 * u)))));
-      if (round === 3 || !this.releaseUnheldKeys()) break;
+        this.refine(this.plan.hands[hand], progress && ((u) => progress(Math.min(0.98, 0.05 + 0.47 * (round + (hand === 'L' ? 0 : 0.5) + 0.5 * u)))), passes);
+      if (round === rounds - 1 || !this.releaseUnheldKeys()) break;
       this.keys = new KeyMechanics(perf.notes);
-      this.plan = planMotion(perf);
+      this.plan = planMotion(perf, opts);
       this.clearHands();
     }
     // the contact corrections can pull a lifted hand back into the other:
     // alternate the two so they settle on a pose that keeps both
-    for (let i = 0; i < 1; i++) {
-      if (!this.clearHands()) break;
-      for (const hand of ['L', 'R'] as Hand[]) this.refine(this.plan.hands[hand]);
-    }
+    if (opts.settle ?? true)
+      for (let i = 0; i < 1; i++) {
+        if (!this.clearHands()) break;
+        for (const hand of ['L', 'R'] as Hand[]) this.refine(this.plan.hands[hand], undefined, passes);
+      }
   }
 
   /**
@@ -244,8 +266,8 @@ export class PerformanceTimeline {
    * smooth local correction, so that the hand is carried by the plan rather
    * than snapping back when the contact lets go. Up to three passes.
    */
-  private refine(track: HandTrack, progress?: (fraction: number) => void) {
-    for (let pass = 0; pass < 3; pass++) {
+  private refine(track: HandTrack, progress?: (fraction: number) => void, passes = 3) {
+    for (let pass = 0; pass < passes; pass++) {
       const n = track.x.data.length;
       const cx = new Float32Array(n);
       const cy = new Float32Array(n);
@@ -261,12 +283,12 @@ export class PerformanceTimeline {
       };
       let done = 0;
       for (const pn of track.notes) {
-        if (progress && ++done % 64 === 0) progress((pass + done / track.notes.length) / 3);
+        if (progress && ++done % 64 === 0) progress((pass + done / track.notes.length) / passes);
         // the landing, the onset, every 0.2 s of the hold (on a common grid),
         // the release, and once while the fingertip rides the key back up
         const rel = pn.stroke.release;
         const times = [pn.stroke.contact, pn.note.start];
-        if (pass < 2) for (let i = Math.ceil((pn.note.start + 0.1) / HOLD_PROBE); i * HOLD_PROBE < rel - 0.05; i++) times.push(i * HOLD_PROBE);
+        if (pass < passes - 1) for (let i = Math.ceil((pn.note.start + 0.1) / HOLD_PROBE); i * HOLD_PROBE < rel - 0.05; i++) times.push(i * HOLD_PROBE);
         else times.push((pn.note.start + rel) / 2); // the last pass only measures
         times.push(rel);
         if (pn.leave - rel > 0.02) times.push((rel + pn.leave) / 2);
@@ -298,7 +320,7 @@ export class PerformanceTimeline {
         }
         this.contactError.set(pn.note.id, e);
       }
-      if (pass === 2 || worst < 0.0008) break;
+      if (pass === passes - 1 || worst < 0.0008) break;
       const avg = (arr: Float32Array) => {
         const o = new Float32Array(n);
         for (let k = 0; k < n; k++) o[k] = cw[k] > 0 ? arr[k] / Math.max(1, cw[k]) : 0;
@@ -374,15 +396,24 @@ export class PerformanceTimeline {
   evaluate(t: number): FrameState {
     const keys = this.keys.evaluate(t, new Float32Array(KEY_COUNT));
     const pedal = this.pedalAt(t);
-    const rail = railTravel(levelAt(this.sustain(), t, SUSTAIN_RAMP));
-    const soft = this.perf.score.soft;
-    const softPedal = soft ? levelAt(soft, t, SOFT_RAMP) : 0;
-    const rest = soft ? (x: number) => SOFT_BLOW * levelAt(soft, x, SOFT_RAMP) : undefined;
     return {
       t,
       keys,
       hands: { L: poseHand(this.plan.hands.L, this.keys, t), R: poseHand(this.plan.hands.R, this.keys, t) },
       pedal,
+      ...this.interior(t),
+      effort: { L: this.effort('L', t), R: this.effort('R', t) },
+      sounding: this.sounding(t),
+    };
+  }
+
+  /** inside the piano at t: the hammers, dampers, strings, rails, jacks and tapes (as evaluate gives them) */
+  interior(t: number): InteriorState {
+    const rail = railTravel(levelAt(this.sustain(), t, SUSTAIN_RAMP));
+    const soft = this.perf.score.soft;
+    const softPedal = soft ? levelAt(soft, t, SOFT_RAMP) : 0;
+    const rest = soft ? (x: number) => SOFT_BLOW * levelAt(soft, x, SOFT_RAMP) : undefined;
+    return {
       hammers: hammersAt(this.keys.strokes, t, rest),
       dampers: dampersAt(this.keys.strokes, t, rail),
       strings: this.stringMechanics().evaluate(t),
@@ -392,8 +423,6 @@ export class PerformanceTimeline {
       bridles: bridlesAt(this.keys.strokes, t),
       leans: hammerLeansAt(this.keys.strokes, t),
       checks: checksAt(this.keys.strokes, t),
-      effort: { L: this.effort('L', t), R: this.effort('R', t) },
-      sounding: this.sounding(t),
     };
   }
 

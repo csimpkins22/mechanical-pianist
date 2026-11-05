@@ -237,7 +237,7 @@ function engagement(pn: PlannedNote, t: number, lead: number): number {
   return 1 - smoothstep(e, e + 0.16, t);
 }
 
-function planHand(perf: Performance, hand: Hand, t0: number, n: number): HandTrack {
+function planHand(perf: Performance, hand: Hand, t0: number, n: number, rest?: number): HandTrack {
   const sx: 1 | -1 = hand === 'R' ? 1 : -1;
   const list = perf.byHand[hand].filter((x) => !x.flags.includes('chord-overflow'));
   const planned: PlannedNote[] = list.map((note) => {
@@ -289,7 +289,7 @@ function planHand(perf: Performance, hand: Hand, t0: number, n: number): HandTra
       lead[i] = clamp(s - prevOnset, 0.08, 0.65);
     }
   }
-  const home = planned.length ? planned[0].key.x - sx * REST_TIPS[3][0] : sx * 0.25;
+  const home = planned.length ? planned[0].key.x - sx * REST_TIPS[3][0] : (rest ?? sx * 0.25);
 
   // --- 1. depth (z) ---------------------------------------------------------
   const zNum = new Float32Array(n);
@@ -632,12 +632,17 @@ export function give(sig: Signal, hz: number, zeta: number, gain: number, cap: n
   for (let k = 0; k < n; k++) x[k] -= cap * Math.tanh((gain * dev[k]) / cap);
 }
 
-export function planMotion(perf: Performance): MotionPlan {
+export interface MotionOptions {
+  /** where a hand with nothing to play waits (wrist x); by default a little outside the middle */
+  home?: Partial<Record<Hand, number>>;
+}
+
+export function planMotion(perf: Performance, opts: MotionOptions = {}): MotionPlan {
   const t0 = -1;
   const t1 = perf.score.duration + 1;
   const n = Math.ceil((t1 - t0) * RATE) + 1;
-  const L = planHand(perf, 'L', t0, n);
-  const R = planHand(perf, 'R', t0, n);
+  const L = planHand(perf, 'L', t0, n, opts.home?.L);
+  const R = planHand(perf, 'R', t0, n, opts.home?.R);
   separateHands(L, R);
   tuckThumbs(L, R);
   for (const tr of [L, R]) {

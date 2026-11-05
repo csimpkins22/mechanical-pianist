@@ -86,7 +86,7 @@ async function keyOf(req: PlanRequest): Promise<string> {
 }
 
 /** give the plain data its classes back */
-function revive(data: { perf: Performance; timeline: PerformanceTimeline }): Planned {
+export function revive(data: { perf: Performance; timeline: PerformanceTimeline }): Planned {
   const tl = data.timeline;
   Object.setPrototypeOf(tl, PerformanceTimeline.prototype);
   Object.setPrototypeOf(tl.keys, KeyMechanics.prototype);

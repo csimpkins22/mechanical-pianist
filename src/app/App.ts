@@ -15,6 +15,7 @@ import { DEFAULT_LIGHTS, type LightSettings } from '../presentation/Environment'
 import { DEFAULT_LOOK, SceneRenderer, shutterTime } from '../presentation/SceneRenderer';
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
+import { DEFAULT_LIVE, LiveSession, type LiveSettings } from '../live/LiveSession';
 
 export type PieceSource = { kind: 'library'; id: string } | { kind: 'file'; id: string; name: string };
 
@@ -442,7 +443,7 @@ export class App {
 
   // ------------------------------------------------------------- transport
   async play() {
-    if (!this.piece) return;
+    if (!this.piece || this.live) return;
     if (this.t >= this.duration - 0.02) this.t = 0;
     this.playing = true;
     this.lastWall = performance.now();
@@ -546,6 +547,7 @@ export class App {
     this.view.look.openPiano = open;
     this.view.setOpen(open);
     this.piece?.camera.setOpen(open);
+    this.live?.camera.setOpen(open);
     // a shot held inside the piano moves to the nearest one outside once it closes
     if (!open && this.piece) this.camView = this.piece.camera.whenClosed(this.camView);
     this.settingsChanged();
@@ -560,11 +562,13 @@ export class App {
   }
 
   cameraAt(t: number): CameraState {
-    return this.piece!.camera.evaluate(this.camView, t, this.framing, this.view.camera.aspect);
+    const camera = this.live ? this.live.camera : this.piece!.camera;
+    return camera.evaluate(this.camView, t, this.framing, this.view.camera.aspect);
   }
 
   renderNow() {
     if (!this.piece) return;
+    if (this.live) return this.renderLive(this.live);
     const t = this.viewTime();
     const cam = this.cameraAt(t);
     // motion blur: where everything was as the shutter opened (in performance
@@ -583,6 +587,58 @@ export class App {
     this.view.camera.updateMatrixWorld();
     if (this.debug?.visible)
       this.debug.update(frame, this.piece.timeline.plan.hands, this.view.hands, this.view.camera, window.innerWidth, window.innerHeight);
+    this.view.render(cam, t);
+    this.dirty = false;
+  }
+
+  // ------------------------------------------------------------- playing live
+  /** a live session: the player plays, the robot follows (null when performing a piece) */
+  live: LiveSession | null = null;
+  liveSettings: LiveSettings = { ...DEFAULT_LIVE };
+  private liveFrom: { t: number } | null = null;
+
+  /** start playing live (from a click or a key: the sound starts here) */
+  enterLive() {
+    if (this.live || !this.ready) return;
+    // the audio context must be made in the gesture itself
+    void this.audio.init().catch((e) => console.warn('audio unavailable', e));
+    if (this.playing) this.pause();
+    this.liveFrom = { t: this.t };
+    if (this.debug?.visible) this.setDebug(false);
+    this.live = new LiveSession(this.audio, this.liveSettings);
+    this.live.camera.setOpen(this.view.look.openPiano);
+    this.live.onChange = () => this.emit('live');
+    this.emit('live');
+  }
+
+  /** back to the piece, where it was */
+  exitLive() {
+    if (!this.live) return;
+    this.live.dispose();
+    this.live = null;
+    if (this.liveFrom) this.t = this.liveFrom.t;
+    this.liveFrom = null;
+    this.renderNow();
+    this.emit('live');
+  }
+
+  /** a live frame: the robot as it is now (drawn for when the frame is seen, like a playing piece) */
+  private renderLive(L: LiveSession) {
+    const t = L.now() + Math.min(0.05, this.frameDt) + this.syncMs / 1000;
+    L.frame(t);
+    const cam = this.cameraAt(t);
+    const open = shutterTime(this.view.look);
+    if (open > 0 && this.view.post.quality !== 'low') {
+      const t0 = t - open;
+      const cut = this.camView === 'cinematic' && L.camera.director.shotAt(t).start > t0;
+      this.view.setPrevious(L.performer.evaluate(t0), cut ? cam : this.cameraAt(t0));
+    }
+    const frame = L.performer.evaluate(t);
+    this.frame = frame;
+    this.view.update(frame);
+    this.view.camera.position.copy(cam.position);
+    this.view.camera.lookAt(cam.target);
+    this.view.camera.updateMatrixWorld();
     this.view.render(cam, t);
     this.dirty = false;
   }
@@ -609,7 +665,7 @@ export class App {
       this.fps = this.fpsAcc.n / this.fpsAcc.t;
       this.fpsAcc = { n: 0, t: 0 };
       // keep playback smooth on slower machines: step quality down once
-      if (this.playing && this.autoQuality && document.visibilityState === 'visible') {
+      if ((this.playing || this.live) && this.autoQuality && document.visibilityState === 'visible') {
         this.slowFor = this.fps < 28 ? this.slowFor + 0.5 : 0;
         if (this.slowFor >= 3 && this.view.post.quality !== 'low') {
           this.view.setQuality(this.view.post.quality === 'high' ? 'medium' : 'low');
@@ -617,6 +673,10 @@ export class App {
           this.emit('quality');
         }
       }
+    }
+    if (this.live) {
+      this.renderNow();
+      return;
     }
     if (this.playing && this.piece) {
       // the audio clock is the master while sound is running
