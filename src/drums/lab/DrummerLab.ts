@@ -13,6 +13,9 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostPipeline, type PostParams } from '../../presentation/PostPipeline';
 import { createPose, limitViolations, refreshKit, solveDrummer, type DrummerPose, type DrummerTargets } from '../DrummerIK';
 import { useLayout, type LayoutName } from './ProposedLayout';
+import { forwardKinematics } from '../DrummerSpec';
+
+const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 import { SWEEP, blendTargets, emptyTargets, namedPoses, type NamedPose } from '../DrummerPoses';
 import { clearance, describe } from '../DrummerClearance';
 import { SkeletonFigure } from './SkeletonFigure';
@@ -41,6 +44,12 @@ const VIEWS: Record<string, View> = {
   side: { pos: [-1.85, 1.0, -0.2], target: [-0.1, 0.78, -0.2], focal: 55 },
   backClose: { pos: [0.35, 1.25, 0.85], target: [0.0, 1.05, 0.05], focal: 60 },
   label: { pos: [0.06, 1.12, 0.55], target: [0.0, 1.08, 0.06], focal: 70 },
+  // the waist and lower back: from the drummer's left, from behind on the left, from the front on the right
+  waistSide: { pos: [-1.35, 0.92, 0.1], target: [0.0, 0.78, 0.06], focal: 50 },
+  waistBack: { pos: [-0.95, 1.05, 0.95], target: [0.0, 0.78, 0.05], focal: 50 },
+  waistFront: { pos: [0.95, 1.0, -0.9], target: [0.0, 0.8, 0.0], focal: 50 },
+  // side-on from the drummer's right, as the concert footage (clip 8)
+  sideR: { pos: [1.75, 1.12, 0.02], target: [0.0, 0.86, -0.02], focal: 50 },
   portrait: { pos: [0.75, 1.3, -1.45], target: [-0.02, 0.98, -0.08], focal: 55 },
   grip: { pos: [-0.62, 0.98, -0.78], target: [-0.2, 0.8, -0.16], focal: 85 },
   // as the reference footage (clip 4): above the drummer's right, looking down across the kit
@@ -202,6 +211,11 @@ class Lab {
   solve() {
     const { targets, name, open } = this.targets();
     solveDrummer(targets, this.pose);
+    if (this.current === 'rest' && !this.sweeping) {
+      // the model as built: every joint at its identity rest rotation (seated upright, arms hanging)
+      for (let j = 0; j < this.pose.local.length; j += 9) this.pose.local.set(IDENTITY, j);
+      forwardKinematics(this.pose.local, this.pose.root, this.pose.world, this.pose.pos);
+    }
     this.skeleton.update(this.pose);
     this.rig?.apply(this.pose);
     this.kit.update(this.pose.pedal, open);
@@ -237,6 +251,7 @@ class Lab {
     };
     h('Poses');
     for (const p of this.poses) add(p.label, () => this.setPose(p.name));
+    add('Rest (the model as built)', () => this.setPose('rest'));
     add('Slow sweep between spots', () => this.setPose('sweep'), 'accent');
     h('View');
     for (const v of Object.keys(VIEWS)) add(v, () => this.setView(v), 'small');

@@ -291,7 +291,9 @@ refreshKit();
 const CLEAR = 0.02;
 const OBSTACLE_WEIGHT = 150;
 /** how much more an actual penetration costs than the clearance zone */
-const PENETRATION = 40;
+const PENETRATION = 100;
+/** the gap kept between the two arms and sticks (metres) */
+const ARM_GAP = 0.003;
 
 // ---------------------------------------------------------------- the grip: fingers wrapped round the stick
 // Finger poses are solved once, at load, for a range of rock angles with the
@@ -594,9 +596,10 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
     const ds = segSegDistance(obButt, obTip, obA, obB) - STICK_R - ro;
     const dh = segSegDistance(out.wrist, obK, obA, obB) - CAPS.hand * 0.8 - ro;
     const df = segSegDistance(out.elbow, out.wrist, obA, obB) - CAPS.forearm - ro;
-    if (ds < CLEAR) pen += (CLEAR - ds) * (CLEAR - ds) + (ds < 0 ? PENETRATION * ds * ds : 0);
-    if (dh < CLEAR) pen += (CLEAR - dh) * (CLEAR - dh) + (dh < 0 ? PENETRATION * dh * dh : 0);
-    if (df < CLEAR) pen += (CLEAR - df) * (CLEAR - df) + (df < 0 ? PENETRATION * df * df : 0);
+    // the arms only keep out of each other (a clearance zone between them would flip the way one passes the other)
+    if (ds < ARM_GAP) pen += (1 + PENETRATION) * (ARM_GAP - ds) * (ARM_GAP - ds);
+    if (dh < ARM_GAP) pen += (1 + PENETRATION) * (ARM_GAP - dh) * (ARM_GAP - dh);
+    if (df < ARM_GAP) pen += (1 + PENETRATION) * (ARM_GAP - df) * (ARM_GAP - df);
   }
   return pen;
 }
@@ -677,7 +680,9 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
     const hi = ARM_LIMITS[i][1] - LIMIT_MARGIN;
     const x = A[i];
     const ex = x < lo ? lo - x : x > hi ? x - hi : 0;
-    over += ex * ex;
+    // inside the margin it is a preference; past the joint's real stop it is not allowed
+    const hard = Math.max(0, ex - LIMIT_MARGIN);
+    over += ex * ex + 30 * hard * hard;
   }
   const back = Math.max(0, -A[0] - 0.05);
   const wing = Math.max(0, A[1] - 0.55);
@@ -782,7 +787,7 @@ function liftStroke(inp: ArmIn, out: ArmOut, Rp: Mat3, swivel: number): number {
   lsOut = out;
   const h0 = liftTip(0);
   let lo = 0;
-  let hi = 1.75;
+  let hi = 1.9;
   for (let i = 0; i < 17; i++) {
     const mid = 0.5 * (lo + hi);
     if (liftTip(mid) - h0 < inp.lift) lo = mid;

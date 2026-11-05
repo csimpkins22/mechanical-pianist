@@ -96,8 +96,9 @@ export function namedPoses(): NamedPose[] {
     // cymbals
     { name: 'hihatClosed', label: 'Hi-hat, closed', targets: pose(groove(stroke('hihat')), stroke('snare', 'head', 0.06), 'R', { L: hatClosed() }), strikes: ['R'] },
     { name: 'hihatOpen', label: 'Hi-hat, open', targets: pose(stroke('hihat', 'head', 0, { open: true }), stroke('snare', 'head', 0.06), 'R', { L: hatOpen() }), strikes: ['R'] },
-    { name: 'rideBow', label: 'Ride, bow', targets: pose(stroke('ride'), stroke('snare', 'head', 0.06), 'R'), strikes: ['R'] },
-    { name: 'rideBell', label: 'Ride, bell', targets: pose(stroke('ride', 'bell'), stroke('snare', 'head', 0.06), 'R'), strikes: ['R'] },
+    // turned toward the ride, the left hand drifts toward the snare's middle, clear of the hi-hat
+    { name: 'rideBow', label: 'Ride, bow', targets: pose(stroke('ride'), stroke('snare', 'head', 0.06, { across: 0.04 }), 'R'), strikes: ['R'] },
+    { name: 'rideBell', label: 'Ride, bell', targets: pose(stroke('ride', 'bell'), stroke('snare', 'head', 0.06, { across: 0.04 }), 'R'), strikes: ['R'] },
     { name: 'crash', label: 'Crash, edge (left hand)', targets: pose(stroke('snare', 'head', 0.15), stroke('crash', 'edge'), 'L', { R: kickUp(1) }), strikes: ['L'] },
     { name: 'crashR', label: 'Crash, edge (right hand)', targets: pose(stroke('crash', 'edge'), stroke('snare', 'head', 0.1), 'R', { R: kickUp(1) }), strikes: ['R'] },
     // feet
@@ -107,7 +108,7 @@ export function namedPoses(): NamedPose[] {
     { name: 'groove', label: 'Crossed-hands hi-hat groove (backbeat)', targets: pose(stroke('hihat', 'head', 0.05), stroke('snare'), 'L', { R: kickUp(0.2) }), strikes: ['L'] },
     { name: 'fill', label: 'Fill across the toms to the floor tom', targets: pose(stroke('floorTom'), stroke('tom2', 'head', 0.08), 'R', { R: kickUp(0.6) }), strikes: ['R'] },
     { name: 'ghost', label: 'Ghost note (left, 2.5 cm)', targets: pose(stroke('hihat', 'head', 0.03), stroke('snare', 'head', 0.025), 'L'), strikes: [] },
-    { name: 'accent', label: 'Accent preparation (left, stick high)', targets: pose(stroke('hihat', 'head', 0.03), stroke('snare', 'head', 0.4), 'L'), strikes: [] },
+    { name: 'accent', label: 'Accent preparation (left, stick high)', targets: pose(stroke('hihat', 'head', 0.03), stroke('snare', 'head', 0.38, { across: 0.06 }), 'L'), strikes: [] },
   ];
   return list;
 }

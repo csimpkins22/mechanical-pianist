@@ -40,8 +40,8 @@
       "parent": "Pelvis",
       "offset": [
         0.0,
-        0.075,
-        0.055
+        0.095,
+        0.0
       ],
       "kind": "euler_yxz",
       "dofs": [
@@ -73,7 +73,7 @@
       "parent": "Spine1",
       "offset": [
         0.0,
-        0.13,
+        0.12,
         0.0
       ],
       "kind": "euler_yxz",
@@ -106,8 +106,8 @@
       "parent": "Spine2",
       "offset": [
         0.0,
-        0.13,
-        -0.005
+        0.12,
+        0.0
       ],
       "kind": "euler_yxz",
       "dofs": [
@@ -140,7 +140,7 @@
       "offset": [
         0.0,
         0.2,
-        0.005
+        0.055
       ],
       "kind": "euler_yxz",
       "dofs": [
@@ -206,7 +206,7 @@
       "offset": [
         0.028,
         0.12,
-        -0.12
+        -0.07
       ],
       "kind": "clavicle",
       "dofs": [
@@ -481,7 +481,7 @@
       "offset": [
         -0.028,
         0.12,
-        -0.12
+        -0.07
       ],
       "kind": "clavicle",
       "dofs": [

@@ -66,6 +66,8 @@ ROOT = DS.ROOT
 OUT = next((a for a in ARGS if a.endswith(".glb")), os.path.join(ROOT, "public", "assets", "robot_drummer.glb"))
 PREVIEW = ARGS[ARGS.index("--preview") + 1] if "--preview" in ARGS else None
 POSE = ARGS[ARGS.index("--pose") + 1] if "--pose" in ARGS else None
+if "--check-torso" in ARGS:
+    os.environ.setdefault("NO_BAKE", "1")
 
 SPEC = DS.write_spec()
 JS = {j["name"]: j for j in SPEC["joints"]}
@@ -197,96 +199,199 @@ def glow_line(glow, pts, r=0.0011):
 # -----------------------------------------------------------------------------
 # Body parts (right side; the left is mirrored)
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# The torso: shells that telescope like armour
+# -----------------------------------------------------------------------------
+# Every torso shell is a superellipse section round the body's centre line (the y axis of its joint, which sits
+# on that line where the shells overlap), so a joint turning moves its shell about the shell's own centre and
+# the overlap stays closed. Spine1 (the waist) is the narrowest ring: its bottom tucks inside the pelvis's rim,
+# its top inside Spine2, whose top tucks inside the chest. Each shell's rims roll inward, any opening at the front
+# has a rolled lip with the glass sunk under it, and a dark graphite liner covers the shell's inside.
+SHELL_T = 0.0035     # porcelain thickness of the torso's shells
+LIP_SPAN = 0.13      # how far round (radians) a window's lip rolls in
+RIM_SPAN = 0.009     # how far up (metres) a rim rolls in
+SHELLS = {}          # each torso node's outer shell, for the clearance check
+
+
+def _dense(t):
+    """rows crowded toward both ends (for lips and rims)"""
+    return 0.5 - 0.5 * math.cos(math.pi * t)
+
+
+def shell_point(d, u, th, inset=0.0, lips=True):
+    """a point on shell d at height parameter u and angle th (front = -pi/2), `inset` metres inside its surface"""
+    W, D, ZC, n = d["W"], d["D"], d["ZC"], d["n"]
+    y = lerp(d["y0"], d["y1"], u)
+    x, z = superellipse(th, W(u) / 2, D(u) / 2, n)
+    r = math.hypot(x, z) or 1e-6
+    k = inset
+    if lips:
+        a = d["open"](u) if d.get("open") else 0.0
+        if a > 1e-4:
+            front = -math.pi / 2
+            e = min((th - (front + a)) % TAU, ((front - a) - th) % TAU)
+            k += d["lip"] * smooth01(a / 0.12) * (1 - smooth01(e / LIP_SPAN))
+        if d.get("rim0"):
+            k += d["rim0"] * (1 - smooth01((y - d["y0"]) / RIM_SPAN))
+        if d.get("rim1"):
+            k += d["rim1"] * (1 - smooth01((d["y1"] - y) / RIM_SPAN))
+    s = 1 - k / r
+    if d.get("dome1"):
+        s *= common.end_round(u, 0.0, d["dome1"])
+    return V(x * s, y, ZC(u) + z * s)
+
+
+def torso_shell(mb, mat, d, inset=0.0, theta=None, u0=0.0, u1=1.0, lips=True, nu=26, nv=88):
+    """a shell (or its liner, or the glass in its window) on definition d, between heights u0..u1 of it"""
+    front = -math.pi / 2
+
+    def rng(u):
+        if theta:
+            return theta
+        a = d["open"](u) if d.get("open") else 0.0
+        return (front + a, front + TAU - a)
+    closed = theta is None and not d.get("open")
+
+    def fn(t, v):
+        u = lerp(u0, u1, _dense(t))
+        a0, a1 = rng(u)
+        th = a0 + (a1 - a0) * (v if closed else _dense(v))
+        return shell_point(d, u, th, inset, lips)
+    pole = None
+    if d.get("dome1") and u1 >= 1.0:
+        pole = shell_point(d, 1.0, 0.0, inset, lips)
+        pole.x = 0.0
+        pole.z = d["ZC"](1.0)
+    common.grid_surface(mb, fn, max(4, round(nu * DETAIL)), max(12, round(nv * DETAIL)), mat, closed_v=closed, pole1=pole)
+
+
+def window_glass(mb, d, a, nu=12, nv=40):
+    """glass across the front window (half-angle a), sunk under the shell's lips"""
+    front = -math.pi / 2
+    span = (front - a - 0.6 * LIP_SPAN, front + a + 0.6 * LIP_SPAN)
+    torso_shell(mb, "glass", d, inset=d["lip"] + 0.0006, theta=span, u0=0.02, u1=0.98 if not d.get("dome1") else 0.93,
+                lips=False, nu=nu, nv=nv)
+
+
+def _pelvis_def():
+    def f(u):
+        # the bottom rounds in toward the seat
+        return 0.56 + 0.44 * math.sin(0.5 * math.pi * min(1.0, u / 0.42))
+    return dict(y0=-0.074, y1=0.118, n=2.3, lip=0.005, rim1=0.0025,
+                W=lambda u: 0.306 * f(u) * (1 - 0.045 * u), D=lambda u: 0.2 * f(u) * (1 - 0.05 * u),
+                ZC=lambda u: 0.012 * (1 - u) ** 1.5,
+                # open at the front below the abdomen for the thighs, closing into a full rim at the top
+                open=lambda u: 0.95 * (1 - smooth01((u - 0.3) / 0.58)))
+
+
 def build_pelvis(parent):
-    shell, core, hw, glow = MB(), MB(), MB(), MB()
-    # the pelvic shell wraps the back and sides, open at the front below the abdomen where the thighs leave
-    W = lambda u: lerp(0.305, 0.262, smooth01(u))
-    Dp = lambda u: lerp(0.205, 0.172, u)
-    Z = lambda u: lerp(0.034, 0.052, u)
-    pill(shell, "shell", 0.072, -0.108, W, Dp, n=2.6, e0=0.3, e1=0.0, th=(-0.62, math.pi + 0.62), yoff=Z, xf=xf_up(),
-         nu=30, nv=72)
-    pill(core, "graphite", 0.06, -0.10, lambda u: W(u) * 0.86, lambda u: Dp(u) * 0.82, n=2.8, e0=0.25, e1=0.0, yoff=Z,
+    shell, liner, core, hw, glow = MB(), MB(), MB(), MB(), MB()
+    d = _pelvis_def()
+    SHELLS["Pelvis"] = d
+    torso_shell(shell, "shell", d, nu=34, nv=96)
+    torso_shell(liner, "graphite", d, inset=SHELL_T + 0.0016, u0=0.25, u1=0.985, lips=False, nu=12, nv=64)
+    pill(core, "graphite", 0.06, -0.07, lambda u: 0.25, lambda u: 0.15, n=2.8, e0=0.25, e1=0.0, yoff=0.01,
          xf=xf_up(), nu=16, nv=40)
-    # the belt: a chrome band along the top edge, a line of light below it
-    ring_y(hw, 0.106, 0.133, 0.088, 0.0042, "chrome", cz=0.052)
-    ring_y(glow, 0.094, 0.1355, 0.0905, 0.0011, "glow", cz=0.051)
+    # a chrome bead along the rim, and a line of light round the hips below it
+    ring = [shell_point(d, 1.0, TAU * i / 128, 0.0016) for i in range(129)]
+    tube(hw, ring, 0.0028, "chrome", 10)
+    glw = [shell_point(d, 0.9, TAU * i / 128, -0.0004) for i in range(129)]
+    tube(glow, glw, 0.0010, "glow", 6)
     # the hip joints: chrome balls in graphite sockets, a ring of light on the outer cap
     for s in (1, -1):
         c = V(s * DS.HIP_HALF, 0.0, 0.0)
         sphere(core, 0.058, "graphite", 32, 16, center=tuple(c + V(s * 0.012, 0, 0.006)))
         ball_joint(hw, glow, 0.05, tr(*c), ring_axis=V(s, 0, 0), ring_at=0.62)
-    return node("Pelvis", [(shell, {"solid": 0.004, "bevel": 0.0012, "bseg": 2}), (core, {}), (hw, {}), (glow, {})],
-                off("Pelvis"), parent)
+    return node("Pelvis", [(shell, {"solid": 0.004, "bevel": 0.0012, "bseg": 2}), (liner, {}), (core, {}), (hw, {}),
+                           (glow, {})], off("Pelvis"), parent)
 
 
-def spine_band(name, parent, y0, y1, w0, w1, d0, d1, top_band=False):
-    """one segment of the abdomen: a porcelain band round the back and sides, glass over the lit spine
-    mechanics at the front, a chrome vertebra at the joint"""
-    shell, glass, core, hw, glow = MB(), MB(), MB(), MB(), MB()
-    W = lambda u: lerp(w0, w1, u)
-    Dd = lambda u: lerp(d0, d1, u)
-    Z = -0.058
-    pill(shell, "shell", -y0, -y1, W, Dd, n=2.6, e0=0, e1=0, th=(-1.02, math.pi + 1.02), yoff=Z, xf=xf_up(), nu=6,
-         nv=64)
-    pill(glass, "glass", -y0 - 0.004, -y1 + 0.004, lambda u: W(u) * 1.004, lambda u: Dd(u) * 1.004, n=2.6, e0=0,
-         e1=0, th=(math.pi + 0.94, TAU - 0.94), yoff=Z, xf=xf_up(), nu=4, nv=32)
-    # inside: a graphite column, chrome actuator rods and lines of light
-    pill(core, "graphite", -y0 + 0.004, -y1 - 0.004, lambda u: W(u) * 0.62, lambda u: Dd(u) * 0.6, n=3.0, e0=0,
-         e1=0, yoff=Z + 0.008, xf=xf_up(), nu=4, nv=32)
+def _band_def(y0, y1, w0, w1, d0, d1, z0, z1, flare=0.0):
+    """a band; `flare` widens its bottom rim (where it overlaps the band below), like an armour plate's lip"""
+    fl = lambda u: flare * (1 - smooth01(u / 0.3))
+    return dict(y0=y0, y1=y1, n=2.3, lip=0.0035, rim0=0.0025, rim1=0.0025,
+                W=lambda u: lerp(w0, w1, u) + fl(u), D=lambda u: lerp(d0, d1, u) + fl(u), ZC=lambda u: lerp(z0, z1, u),
+                open=lambda u: BAND_WINDOW)
+
+
+BAND_WINDOW = 0.92   # half-angle of the abdomen's front window (radians)
+
+
+def spine_band(name, parent, d):
+    """a segment of the abdomen: a porcelain band, its window over the lit spine sunk under rolled lips, a chrome
+    vertebra and a ring of light at its joint (the body's centre line)"""
+    shell, liner, glass, core, hw, glow = MB(), MB(), MB(), MB(), MB(), MB()
+    SHELLS[name] = d
+    y0, y1 = d["y0"], d["y1"]
+    torso_shell(shell, "shell", d, nu=22, nv=88)
+    torso_shell(liner, "graphite", d, inset=SHELL_T + 0.0014, lips=False, nu=6, nv=56)
+    window_glass(glass, d, BAND_WINDOW)
+    # inside: the spine (a graphite column and chrome vertebrae on the centre line), actuator rods and lines of
+    # light in front of it, behind the glass
+    zf = d["ZC"](0.5) - d["D"](0.5) / 2 * 0.62
+    cyl_z(core, 0.022, y0 + 0.004, y1 - 0.004, "graphite", 32, xf=rot_x(-math.pi / 2))
+    for yy in (0.0, 0.5 * (y0 + y1)):
+        lathe(hw, [(0.0, yy + 0.009), (0.029, yy + 0.009), (0.032, yy + 0.005), (0.032, yy - 0.005), (0.029, yy - 0.009),
+                   (0.0, yy - 0.009)], "chrome", 48, rot_x(-math.pi / 2))
+    torus_z(glow, 0.034, 0.0016, "glow", 72, 8, rot_x(math.pi / 2))
+    pill(core, "graphite", -(y0 + 0.006), -(y1 - 0.006), lambda u: d["W"](u) * 0.6, lambda u: d["D"](u) * 0.42, n=3.0,
+         e0=0, e1=0, yoff=lambda u: d["ZC"](u) - 0.012, xf=xf_up(), nu=4, nv=32)
     for x in (-0.05, 0.05):
-        cyl_z(hw, 0.0055, y0, y1, "chrome", 20, center=(x, 0.0), xf=tr(0, 0, Z - 0.052) @ rot_x(-math.pi / 2))
+        cyl_z(hw, 0.0055, y0 + 0.004, y1 - 0.004, "chrome", 20, center=(x, 0.0), xf=tr(0, 0, zf) @ rot_x(-math.pi / 2))
     for x in (-0.026, 0.0, 0.026):
-        glow_line(glow, [V(x, y0 + 0.006, Z - 0.056), V(x, y1 - 0.006, Z - 0.056)], 0.0016)
-    # the vertebra at this joint (its bottom), with a ring of light
-    lathe(hw, [(0.0, 0.011), (0.03, 0.011), (0.034, 0.006), (0.034, -0.006), (0.03, -0.011), (0.0, -0.011)], "chrome",
-          48, rot_x(math.pi / 2))
-    torus_z(glow, 0.036, 0.0016, "glow", 72, 8, rot_x(math.pi / 2))
-    cyl_z(core, 0.024, 0.0, y1, "graphite", 32, xf=rot_x(-math.pi / 2))
-    parts = [(shell, {"solid": 0.0035, "bevel": 0.001}), (glass, {"solid": 0.0016, "bevel": 0.0005}), (core, {}),
-             (hw, {}), (glow, {})]
+        glow_line(glow, [V(x, y0 + 0.008, zf - 0.004), V(x, y1 - 0.008, zf - 0.004)], 0.0016)
+    parts = [(shell, {"solid": SHELL_T, "bevel": 0.001}), (liner, {}), (glass, {"solid": 0.0016, "bevel": 0.0005}),
+             (core, {}), (hw, {}), (glow, {})]
     return node(name, parts, off(name), parent)
 
 
-def build_chest(parent):
-    shell, glass, core, hw, glow = MB(), MB(), MB(), MB(), MB()
-    Z = -0.062
+CHEST_WIN = 0.2
+
+
+def _chest_def():
+    def fl(u):
+        # its bottom rim flares a little over Spine2, like an armour plate's lip
+        return 0.007 * (1 - smooth01(u / 0.22))
 
     def W(u):
-        # waist to shoulders: out to the ribs, in to the shoulders' yoke
-        return 0.262 + 0.05 * math.sin(math.pi * min(1.0, u * 1.05)) - 0.06 * smooth01((u - 0.7) / 0.3)
+        # from over the lower thorax out to the ribs, in to the shoulders' yoke
+        return 0.31 + 0.01 * math.sin(math.pi * min(1.0, u * 1.6)) - 0.054 * smooth01((u - 0.5) / 0.45) + fl(u)
 
-    def Dd(u):
-        return 0.178 + 0.03 * math.sin(math.pi * u * 0.9) - 0.04 * smooth01((u - 0.72) / 0.28)
+    def D(u):
+        return 0.211 + 0.006 * math.sin(math.pi * min(1.0, u * 1.4)) - 0.038 * smooth01((u - 0.6) / 0.4) + fl(u)
+    return dict(y0=-0.036, y1=0.205, n=2.4, lip=0.0035, rim0=0.0025, dome1=0.2, W=W, D=D,
+                ZC=lambda u: lerp(-0.004, -0.014, u), open=lambda u: CHEST_WIN)
 
-    y0, y1 = 0.0, 0.205
-    win = 0.2
-    pill(shell, "shell", -y0, -y1, W, Dd, n=2.5, e0=0, e1=0.2, th=(-math.pi / 2 + win, 3 * math.pi / 2 - win),
-         yoff=Z, xf=xf_up(), nu=36, nv=80)
-    pill(glass, "glass", -y0 - 0.006, -y1 + 0.004, lambda u: W(u) * 1.006, lambda u: Dd(u) * 1.006, n=2.5, e0=0,
-         e1=0.2, th=(3 * math.pi / 2 - win - 0.05, 3 * math.pi / 2 + win + 0.05), yoff=Z, xf=xf_up(), nu=24, nv=24)
-    pill(core, "graphite", -y0, -y1 + 0.01, lambda u: W(u) * 0.84, lambda u: Dd(u) * 0.8, n=2.8, e0=0, e1=0.18,
-         yoff=Z + 0.006, xf=xf_up(), nu=16, nv=40)
+
+def build_chest(parent):
+    shell, liner, glass, core, hw, glow = MB(), MB(), MB(), MB(), MB(), MB()
+    d = _chest_def()
+    SHELLS["Chest"] = d
+    torso_shell(shell, "shell", d, nu=40, nv=96)
+    torso_shell(liner, "graphite", d, inset=SHELL_T + 0.0016, lips=False, u1=0.86, nu=12, nv=64)
+    window_glass(glass, d, CHEST_WIN, nu=20, nv=24)
+    W, Dd, ZC = d["W"], d["D"], d["ZC"]
+    pill(core, "graphite", 0.03, -0.19, lambda u: 0.22, lambda u: 0.15, n=2.8, e0=0, e1=0.18, yoff=-0.01, xf=xf_up(),
+         nu=16, nv=40)
     # the lit core behind the sternum: a ring of light round a chrome hub, lines of light up to the collar
-    zc = Z - Dd(0.5) / 2 * 0.8 - 0.004
+    zc = ZC(0.55) - Dd(0.55) / 2 * 0.78
     for rr, mat, w in ((0.03, "glow", 0.0018), (0.022, "chrome", 0.003)):
         torus_z(glow if mat == "glow" else hw, rr, w, mat, 72, 8, tr(0, 0.11, zc))
     cyl_z(hw, 0.013, zc - 0.004, zc + 0.006, "chrome", 32, center=(0.0, 0.11))
     for x in (-0.012, 0.012):
-        glow_line(glow, [V(x, 0.03, zc + 0.004), V(x * 0.6, 0.08, zc), V(x * 0.5, 0.14, zc + 0.002), V(x * 2.2, 0.185, zc + 0.02)])
-    # a fine line of light round the ribs' lower edge
+        glow_line(glow, [V(x, 0.0, zc + 0.006), V(x * 0.6, 0.08, zc), V(x * 0.5, 0.14, zc + 0.002), V(x * 2.2, 0.185, zc + 0.02)])
+    # a fine line of light round the ribs, just above the bottom rim
+    u = (0.012 - d["y0"]) / (d["y1"] - d["y0"])
     pts = []
-    for i in range(97):
-        a = TAU * i / 96
-        x, z = superellipse(a, W(0.03) / 2 * 1.003, Dd(0.03) / 2 * 1.003, 2.5)
-        if abs(math.atan2(z, x) + math.pi / 2) < win:
-            continue
-        pts.append(V(x, 0.012, z + Z))
+    for i in range(129):
+        th = -math.pi / 2 + CHEST_WIN + 0.15 + (TAU - 2 * CHEST_WIN - 0.3) * i / 128
+        pts.append(shell_point(d, u, th, -0.0004))
     glow_line(glow, pts, 0.0010)
     # the sternoclavicular joints
     for s in (1, -1):
-        sphere(hw, 0.017, "chrome", 32, 16, center=tuple(V(*JS["ClavicleR"]["offset"]) * 1 if s > 0 else V(*JS["ClavicleL"]["offset"])))
-    parts = [(shell, {"solid": 0.004, "bevel": 0.0012}), (glass, {"solid": 0.0018, "bevel": 0.0006}), (core, {}),
-             (hw, {}), (glow, {})]
+        sphere(hw, 0.017, "chrome", 32, 16, center=tuple(V(*JS["ClavicleR" if s > 0 else "ClavicleL"]["offset"])))
+    parts = [(shell, {"solid": 0.004, "bevel": 0.0012}), (liner, {}), (glass, {"solid": 0.0018, "bevel": 0.0006}),
+             (core, {}), (hw, {}), (glow, {})]
     return node("Chest", parts, off("Chest"), parent)
 
 
@@ -712,29 +817,28 @@ def build_leg(s, pelvis):
 
 
 def build_label(chest):
-    """the maker's label, printed on the upper back: a thin curved decal with UVs"""
-    Z = -0.062
+    """the maker's label, printed on the upper back: a thin curved decal with UVs, on the chest's own surface"""
+    d = _chest_def()
     me = bpy.data.meshes.new("Label")
     verts, faces, uvs = [], [], []
     nu, nv = 24, 6
     w, h = 0.14, 0.0525
     yc = 0.135
 
-    def back_z(x, y):
-        # the chest's back surface (as build_chest's shell), a hair proud of it
-        u = y / 0.205
-        Wd = 0.262 + 0.05 * math.sin(math.pi * min(1.0, u * 1.05)) - 0.06 * smooth01((u - 0.7) / 0.3)
-        Dd = 0.178 + 0.03 * math.sin(math.pi * u * 0.9) - 0.04 * smooth01((u - 0.72) / 0.28)
-        a = Wd / 2
-        b = Dd / 2
+    def back_point(x, y):
+        # where the chest's back is at this height and across, a hair proud of it
+        u = (y - d["y0"]) / (d["y1"] - d["y0"])
+        a = d["W"](u) / 2
+        b = d["D"](u) / 2
         t = min(0.999, abs(x) / a)
-        return Z + b * (1 - t ** 2.5) ** (1 / 2.5) + 0.0004
+        z = b * (1 - t ** d["n"]) ** (1 / d["n"])
+        return V(x, y, d["ZC"](u) + z * common.end_round(u, 0.0, d["dome1"]) + 0.0004)
 
     for j in range(nv + 1):
         for i in range(nu + 1):
             x = -w / 2 + w * i / nu
             y = yc - h / 2 + h * j / nv
-            verts.append(to_blender(V(x, y, back_z(x, y))))
+            verts.append(to_blender(back_point(x, y)))
             uvs.append((i / nu, j / nv))
     for j in range(nv):
         for i in range(nu):
@@ -757,8 +861,10 @@ def build_label(chest):
 def build_drummer():
     root = node("Drummer", None, V(0, 0, 0))
     pelvis = build_pelvis(root)
-    s1 = spine_band("Spine1", pelvis, 0.012, 0.118, 0.272, 0.264, 0.18, 0.172)
-    s2 = spine_band("Spine2", s1, 0.012, 0.122, 0.266, 0.27, 0.174, 0.18)
+    # the waist ring: its bottom inside the pelvis's rim, its top inside Spine2 (9 mm clear of each other's inside)
+    s1 = spine_band("Spine1", pelvis, _band_def(-0.008, 0.112, 0.27, 0.268, 0.168, 0.166, 0.0, 0.0))
+    # over it, and inside the chest's lower rim
+    s2 = spine_band("Spine2", s1, _band_def(-0.03, 0.104, 0.291, 0.286, 0.189, 0.187, -0.002, -0.004, flare=0.008))
     chest = build_chest(s2)
     neck = build_neck(chest)
     build_head(neck)
@@ -929,6 +1035,9 @@ def preview(path, root):
         "side": (V(-2.3, 1.1, -0.25), V(0.0, 0.78, -0.08), 50, None),
         "back": (V(0.9, 1.5, 1.9), V(0.0, 0.95, 0.0), 45, None),
         "head": (V(0.35, 1.48, -0.75), V(0.0, 1.36, 0.02), 75, None),
+        "waistSide": (V(-1.35, 0.92, 0.1), V(0.0, 0.78, 0.06), 55, None),
+        "waistBack": (V(-0.95, 1.05, 0.95), V(0.0, 0.78, 0.05), 55, None),
+        "waistFront": (V(0.95, 1.0, -0.9), V(0.0, 0.8, 0.0), 55, None),
         "hands": (None, None, 60, "hands"),
         "handR": (None, None, 80, "handR"),
     }
@@ -969,6 +1078,106 @@ def preview(path, root):
         sc.render.filepath = path.replace(".png", f"_{name}.png") if len(shots) > 1 else path
         bpy.ops.render.render(write_still=True)
     root.matrix_basis = Matrix()
+
+
+# -----------------------------------------------------------------------------
+# Checking the torso's overlaps through poses (--check-torso poses.json)
+# -----------------------------------------------------------------------------
+# For each pose (from tools/drummer-pose.cjs all), the torso's shells must not pass into each other (their
+# porcelain and glass, as meshes), and each tucked rim must stay covered: the waist's bottom inside the pelvis's
+# rim, its top inside Spine2, Spine2's top inside the chest.
+JUNCTIONS = [
+    # (outer, inner, the inner's rim that must stay covered: 0 = its bottom under the outer's top, 1 = its top
+    #  above the outer's bottom)
+    ("Pelvis", "Spine1", 0),
+    ("Spine2", "Spine1", 1),
+    ("Chest", "Spine2", 1),
+]
+
+
+def three_matrix(ob):
+    """an object's world matrix in three.js axes"""
+    return common.C4_INV @ ob.matrix_world @ common.C4
+
+
+def shell_tris(ob, mats=("shell", "glass")):
+    me = ob.data
+    keep = {i for i, m in enumerate(me.materials) if m and m.name.split(".")[0] in mats}
+    polys = [list(p.vertices) for p in me.polygons if p.material_index in keep]
+    return [v.co.copy() for v in me.vertices], polys
+
+
+def check_torso(path):
+    from mathutils.bvhtree import BVHTree
+    poses = json.load(open(path))
+    obs = objects_by_name()
+    data = {n: shell_tris(obs[n]) for n in ("Pelvis", "Spine1", "Spine2", "Chest")}
+    worst_cover = {}
+    worst_in = {}
+    hits = []
+    for P in poses:
+        for name, R9 in P["local"].items():
+            if name in obs:
+                set_rot(obs[name], R9)
+        bpy.context.view_layer.update()
+        trees = {}
+        for n, (vs, polys) in data.items():
+            M = obs[n].matrix_world
+            trees[n] = BVHTree.FromPolygons([M @ v for v in vs], polys)
+        for outer, inner, rim in JUNCTIONS:
+            pairs = trees[outer].overlap(trees[inner])
+            if pairs:
+                mo, mi = obs[outer].data, obs[inner].data
+                po, pi = data[outer][1], data[inner][1]
+                ko = [i for i, p in enumerate(mo.polygons) if p.material_index in
+                      {j for j, m in enumerate(mo.materials) if m and m.name.split(".")[0] in ("shell", "glass")}]
+                ki = [i for i, p in enumerate(mi.polygons) if p.material_index in
+                      {j for j, m in enumerate(mi.materials) if m and m.name.split(".")[0] in ("shell", "glass")}]
+                what = sorted({(mo.materials[mo.polygons[ko[a]].material_index].name.split(".")[0],
+                                mi.materials[mi.polygons[ki[b]].material_index].name.split(".")[0]) for a, b in pairs})
+                ys = [(obs[outer].matrix_world @ mo.vertices[mo.polygons[ko[a]].vertices[0]].co) for a, b in pairs[:200]]
+                yl = sorted(c.z for c in ys)
+                hits.append(f"{P['pose']}: {outer}/{inner} {len(pairs)} triangle pairs intersect {what} "
+                            f"heights {yl[0]:.3f}..{yl[-1]:.3f}")
+            # the inner shell's rim (and its tucked zone) in the outer's frame
+            do, di = SHELLS[outer], SHELLS[inner]
+            Mo = three_matrix(obs[outer]).inverted() @ three_matrix(obs[inner])
+            cover = 1e9
+            inside = 1e9
+            for k in range(96):
+                th = TAU * k / 96
+                for uu in ((0.0, 0.08, 0.16) if rim == 0 else (1.0, 0.92, 0.86)):
+                    p = Mo @ shell_point(di, uu, th, 0.0, lips=False)
+                    # how far inside the outer's inner surface (positive: inside), where the outer is there
+                    u_o = (p.y - do["y0"]) / (do["y1"] - do["y0"])
+                    if not (0.0 <= u_o <= 1.0):
+                        continue
+                    ang = math.atan2(p.z - do["ZC"](u_o), p.x)
+                    a = do["open"](u_o) if do.get("open") else 0.0
+                    if a > 0.05 and abs(((ang + math.pi / 2 + math.pi) % TAU) - math.pi) < a:
+                        continue  # in the outer's opening (seen through it, or behind its glass)
+                    q = (abs(p.x) / (do["W"](u_o) / 2 - SHELL_T)) ** do["n"] + \
+                        (abs(p.z - do["ZC"](u_o)) / (do["D"](u_o) / 2 - SHELL_T)) ** do["n"]
+                    rr = math.hypot(p.x, p.z - do["ZC"](u_o))
+                    inside = min(inside, (1 - q ** (1 / do["n"])) * rr)
+                    if uu in (0.0, 1.0):
+                        cover = min(cover, (do["y1"] - p.y) if rim == 0 else (p.y - do["y0"]))
+            key = f"{outer}/{inner}"
+            if cover < worst_cover.get(key, (1e9,))[0]:
+                worst_cover[key] = (cover, P["pose"])
+            if inside < worst_in.get(key, (1e9,))[0]:
+                worst_in[key] = (inside, P["pose"])
+    print(f"checked {len(poses)} poses")
+    for key in worst_cover:
+        c, cp = worst_cover[key]
+        i, ip = worst_in[key]
+        print(f"  {key}: rim covered by at least {c * 1000:.1f} mm ({cp}); inner shell at least {i * 1000:.1f} mm "
+              f"inside the outer ({ip})")
+    for h in hits[:20]:
+        print("  INTERSECT", h)
+    ok = not hits and all(v[0] > 0.004 for v in worst_cover.values()) and all(v[0] > 0.0 for v in worst_in.values())
+    print("torso overlaps:", "OK" if ok else "FAIL")
+    return ok
 
 
 def main():
@@ -1017,6 +1226,11 @@ def main():
                               export_normals=True, export_texcoords=True, export_materials="EXPORT",
                               export_extras=False, export_cameras=False, export_lights=False)
     print("wrote", OUT)
+    if "--check-torso" in ARGS:
+        ok = check_torso(ARGS[ARGS.index("--check-torso") + 1])
+        reset_rest()
+        if not ok:
+            sys.exit(2)
     if POSE:
         apply_pose(POSE)
     if PREVIEW:

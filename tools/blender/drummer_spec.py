@@ -56,14 +56,16 @@ HIP_HALF = 0.090       # half the distance between the hip joints
 HIP_UP = 0.085         # hip joints above the seat
 SIT_Z = 0.075          # hip joints behind the seat's centre (the drummer sits a little back: see the report)
 
-# spine: hip-joint midpoint -> lumbar -> lower thorax -> chest -> neck base -> head pivot
-SPINE1 = (0.0, 0.075, 0.055)
-SPINE2 = (0.0, 0.130, 0.0)
-CHEST = (0.0, 0.130, -0.005)
-NECK = (0.0, 0.200, 0.005)
+# spine: hip-joint midpoint -> lumbar -> lower thorax -> chest -> neck base -> head pivot. The torso's three
+# joints sit on its centre line, at the heights where its shells overlap, so each shell turns about its own
+# centre and the overlaps (telescoping like armour) stay closed in every pose
+SPINE1 = (0.0, 0.095, 0.0)
+SPINE2 = (0.0, 0.120, 0.0)
+CHEST = (0.0, 0.120, 0.0)
+NECK = (0.0, 0.200, 0.055)
 HEAD = (0.0, 0.100, -0.012)
 # sternoclavicular joint (from the chest), then the shoulder joint (from it)
-CLAVICLE = (0.028, 0.120, -0.120)
+CLAVICLE = (0.028, 0.120, -0.070)
 SHOULDER = (0.158, 0.012, 0.075)
 
 # ----------------------------------------------------------------- the grip (right hand's canonical frame)
