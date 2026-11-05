@@ -5,9 +5,9 @@
 import type * as THREE from 'three';
 import { readDrumMidi, type DrumPerformance } from './DrumScore';
 import { KitMotion } from './KitMotion';
-import { assignLimbs, type Sticking } from './Sticking';
-import { DrummerMotion, blankTargets } from './DrummerMotion';
-import { createPose, type DrummerPose, type DrummerTargets } from './DrummerIK';
+import type { Sticking } from './Sticking';
+import type { DrummerMotion } from './DrummerMotion';
+import type { DrummerPose, DrummerTargets } from './DrummerIK';
 import type { DrumAudio } from './DrumAudio';
 import { DrumCamera, type DrumView } from '../presentation/DrumCamera';
 import { KIT_ORIGIN, type DrumStage } from '../presentation/DrumStage';
@@ -18,15 +18,25 @@ export interface DrumSource {
   id: string;
 }
 
+/**
+ * The drummer's modules (the sticking, his planned performance, his IK), loaded when a drum piece first opens:
+ * the piano's pages never load them.
+ */
+export async function loadDrummerModules() {
+  const [sticking, motion, ik] = await Promise.all([import('./Sticking'), import('./DrummerMotion'), import('./DrummerIK')]);
+  return { assignLimbs: sticking.assignLimbs, DrummerMotion: motion.DrummerMotion, blankTargets: motion.blankTargets, createPose: ik.createPose };
+}
+export type DrummerModules = Awaited<ReturnType<typeof loadDrummerModules>>;
+
 export class DrumSession {
   readonly perf: DrumPerformance;
   readonly motion: KitMotion;
   /** which limb plays each hit, and the drummer's performance planned from it */
   readonly sticking: Sticking;
   readonly drummer: DrummerMotion;
-  private targets: DrummerTargets = blankTargets();
-  private pose: DrummerPose = createPose();
-  private prevPose: DrummerPose = createPose();
+  private targets: DrummerTargets;
+  private pose: DrummerPose;
+  private prevPose: DrummerPose;
   private idle = 0;
   readonly camera: DrumCamera;
   view: DrumView = 'cinematic';
@@ -41,11 +51,15 @@ export class DrumSession {
     readonly year: string | undefined,
     readonly audio: DrumAudio,
     readonly stage: DrumStage,
+    m: DrummerModules,
   ) {
     this.perf = readDrumMidi(bytes, title);
     this.motion = new KitMotion(this.perf);
-    this.sticking = assignLimbs(this.perf);
-    this.drummer = new DrummerMotion(this.perf, this.sticking, this.motion);
+    this.sticking = m.assignLimbs(this.perf);
+    this.drummer = new m.DrummerMotion(this.perf, this.sticking, this.motion);
+    this.targets = m.blankTargets();
+    this.pose = m.createPose();
+    this.prevPose = m.createPose();
     // plan the arms' keys ahead in idle moments (a frame plans any it needs itself, in the same order)
     const ahead = () => {
       if (this.disposed || this.drummer.prepare(6)) return;

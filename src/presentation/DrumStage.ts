@@ -23,8 +23,7 @@ import { shutterTime, type Look } from './SceneRenderer';
 import { DrumKitModel } from './DrumKitModel';
 import type { DrumCameraState } from './DrumCamera';
 import type { KitState } from '../drums/KitMotion';
-import { DrummerRig, loadDrummer } from '../drums/DrummerRig';
-import { createDrummerPalette } from '../drums/drummerMaterials';
+import type { DrummerRig } from '../drums/DrummerRig';
 import type { DrummerPose } from '../drums/DrummerIK';
 import { drift } from '../core/random';
 
@@ -312,6 +311,8 @@ export class DrumStage {
   /** load the robot drummer and seat it at the kit (in the kit's frame: KitLayout's, as the IK poses it) */
   private async loadDrummer() {
     try {
+      // (loaded with the drum stage, so the piano's pages never load the drummer)
+      const [{ DrummerRig, loadDrummer }, { createDrummerPalette }] = await Promise.all([import('../drums/DrummerRig'), import('../drums/drummerMaterials')]);
       const palette = createDrummerPalette();
       const model = await loadDrummer('./assets/robot_drummer.glb', palette);
       const rig = new DrummerRig(model, palette);
