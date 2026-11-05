@@ -1,0 +1,823 @@
+{
+  "about": "The robot drummer's proportions: the single source of truth for its joints,\nwritten to src/drums/drummer_spec.json by build_drummer.py (or on its own with\n`python tools/blender/build_drummer.py --spec-only`) and read by the runtime\n(src/drums/DrummerSpec.ts) and the Blender build alike. See tools/blender/drummer_spec.py.",
+  "frame": "model frame: origin on the seat top's centre; three.js axes, metres, radians; +x right, +y up, -z forward. Every joint's rest rotation is the identity. Left joints mirror the right (x -> -x); their local rotations are the mirror images M R M of the right's, so joint angles mean the same on both sides.",
+  "joints": [
+    {
+      "name": "Pelvis",
+      "parent": null,
+      "offset": [
+        0.0,
+        0.085,
+        0.075
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.2094,
+            0.2094
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.2443,
+            0.1745
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.1396,
+            0.1396
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Spine1",
+      "parent": "Pelvis",
+      "offset": [
+        0.0,
+        0.095,
+        0.0
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.1745,
+            0.1745
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.3491,
+            0.2094
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.2094,
+            0.2094
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Spine2",
+      "parent": "Spine1",
+      "offset": [
+        0.0,
+        0.12,
+        0.0
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.3142,
+            0.3142
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.3142,
+            0.1745
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.2094,
+            0.2094
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chest",
+      "parent": "Spine2",
+      "offset": [
+        0.0,
+        0.12,
+        0.0
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.384,
+            0.384
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.2443,
+            0.1745
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.1745,
+            0.1745
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Neck",
+      "parent": "Chest",
+      "offset": [
+        0.0,
+        0.2,
+        0.055
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.6109,
+            0.6109
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.4363,
+            0.5236
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.2094,
+            0.2094
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Head",
+      "parent": "Neck",
+      "offset": [
+        0.0,
+        0.1,
+        -0.012
+      ],
+      "kind": "euler_yxz",
+      "dofs": [
+        {
+          "name": "yaw",
+          "limits": [
+            -0.6109,
+            0.6109
+          ]
+        },
+        {
+          "name": "pitch",
+          "limits": [
+            -0.4363,
+            0.4363
+          ]
+        },
+        {
+          "name": "roll",
+          "limits": [
+            -0.2094,
+            0.2094
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ClavicleR",
+      "parent": "Chest",
+      "offset": [
+        0.028,
+        0.12,
+        -0.07
+      ],
+      "kind": "clavicle",
+      "dofs": [
+        {
+          "name": "elevation",
+          "limits": [
+            -0.1396,
+            0.384
+          ]
+        },
+        {
+          "name": "protraction",
+          "limits": [
+            -0.2094,
+            0.4538
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "UpperArmR",
+      "parent": "ClavicleR",
+      "offset": [
+        0.158,
+        0.012,
+        0.075
+      ],
+      "kind": "shoulder",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -0.9599,
+            2.0944
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.6109,
+            1.6581
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -1.309,
+            1.3963
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ForearmR",
+      "parent": "UpperArmR",
+      "offset": [
+        0.0,
+        -0.29,
+        0.0
+      ],
+      "kind": "elbow",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            0.2618,
+            2.618
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ForearmTwistR",
+      "parent": "ForearmR",
+      "offset": [
+        0.0,
+        0.0,
+        -0.115
+      ],
+      "kind": "twist",
+      "dofs": [
+        {
+          "name": "supination",
+          "limits": [
+            -0.2618,
+            2.0944
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "HandR",
+      "parent": "ForearmTwistR",
+      "offset": [
+        0.0,
+        0.0,
+        -0.14
+      ],
+      "kind": "fixed",
+      "dofs": [],
+      "side": "R"
+    },
+    {
+      "name": "R_Palm",
+      "parent": "HandR",
+      "offset": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "kind": "wrist",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -1.2217,
+            1.2217
+          ]
+        },
+        {
+          "name": "deviation",
+          "limits": [
+            -0.6109,
+            0.384
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "StickR",
+      "parent": "R_Palm",
+      "offset": [
+        -0.03,
+        -0.052,
+        -0.135
+      ],
+      "kind": "stick",
+      "dofs": [
+        {
+          "name": "rock",
+          "limits": [
+            -0.2094,
+            0.384
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ThighR",
+      "parent": "Pelvis",
+      "offset": [
+        0.09,
+        0.0,
+        0.0
+      ],
+      "kind": "hip",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -0.4363,
+            1.2217
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.3491,
+            0.7854
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -0.6981,
+            0.6981
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ShinR",
+      "parent": "ThighR",
+      "offset": [
+        0.0,
+        0.0,
+        -0.42
+      ],
+      "kind": "knee",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            0.1745,
+            2.4435
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -0.5585,
+            0.5585
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "FootR",
+      "parent": "ShinR",
+      "offset": [
+        0.0,
+        -0.42,
+        0.0
+      ],
+      "kind": "ankle",
+      "dofs": [
+        {
+          "name": "plantar",
+          "limits": [
+            -0.5585,
+            0.8378
+          ]
+        },
+        {
+          "name": "inversion",
+          "limits": [
+            -0.2618,
+            0.3491
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.384,
+            0.384
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ToesR",
+      "parent": "FootR",
+      "offset": [
+        0.0,
+        -0.058,
+        -0.15
+      ],
+      "kind": "toes",
+      "dofs": [
+        {
+          "name": "dorsiflexion",
+          "limits": [
+            -0.0873,
+            0.9599
+          ]
+        }
+      ],
+      "side": "R"
+    },
+    {
+      "name": "ClavicleL",
+      "parent": "Chest",
+      "offset": [
+        -0.028,
+        0.12,
+        -0.07
+      ],
+      "kind": "clavicle",
+      "dofs": [
+        {
+          "name": "elevation",
+          "limits": [
+            -0.1396,
+            0.384
+          ]
+        },
+        {
+          "name": "protraction",
+          "limits": [
+            -0.2094,
+            0.4538
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "UpperArmL",
+      "parent": "ClavicleL",
+      "offset": [
+        -0.158,
+        0.012,
+        0.075
+      ],
+      "kind": "shoulder",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -0.9599,
+            2.0944
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.6109,
+            1.6581
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -1.309,
+            1.3963
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "ForearmL",
+      "parent": "UpperArmL",
+      "offset": [
+        0.0,
+        -0.29,
+        0.0
+      ],
+      "kind": "elbow",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            0.2618,
+            2.618
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "ForearmTwistL",
+      "parent": "ForearmL",
+      "offset": [
+        0.0,
+        0.0,
+        -0.115
+      ],
+      "kind": "twist",
+      "dofs": [
+        {
+          "name": "supination",
+          "limits": [
+            -0.2618,
+            2.0944
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "HandL",
+      "parent": "ForearmTwistL",
+      "offset": [
+        0.0,
+        0.0,
+        -0.14
+      ],
+      "kind": "fixed",
+      "dofs": [],
+      "side": "L"
+    },
+    {
+      "name": "L_Palm",
+      "parent": "HandL",
+      "offset": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "kind": "wrist",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -1.2217,
+            1.2217
+          ]
+        },
+        {
+          "name": "deviation",
+          "limits": [
+            -0.6109,
+            0.384
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "StickL",
+      "parent": "L_Palm",
+      "offset": [
+        0.03,
+        -0.052,
+        -0.135
+      ],
+      "kind": "stick",
+      "dofs": [
+        {
+          "name": "rock",
+          "limits": [
+            -0.2094,
+            0.384
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "ThighL",
+      "parent": "Pelvis",
+      "offset": [
+        -0.09,
+        0.0,
+        0.0
+      ],
+      "kind": "hip",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            -0.4363,
+            1.2217
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.3491,
+            0.7854
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -0.6981,
+            0.6981
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "ShinL",
+      "parent": "ThighL",
+      "offset": [
+        0.0,
+        0.0,
+        -0.42
+      ],
+      "kind": "knee",
+      "dofs": [
+        {
+          "name": "flexion",
+          "limits": [
+            0.1745,
+            2.4435
+          ]
+        },
+        {
+          "name": "rotation",
+          "limits": [
+            -0.5585,
+            0.5585
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "FootL",
+      "parent": "ShinL",
+      "offset": [
+        0.0,
+        -0.42,
+        0.0
+      ],
+      "kind": "ankle",
+      "dofs": [
+        {
+          "name": "plantar",
+          "limits": [
+            -0.5585,
+            0.8378
+          ]
+        },
+        {
+          "name": "inversion",
+          "limits": [
+            -0.2618,
+            0.3491
+          ]
+        },
+        {
+          "name": "abduction",
+          "limits": [
+            -0.384,
+            0.384
+          ]
+        }
+      ],
+      "side": "L"
+    },
+    {
+      "name": "ToesL",
+      "parent": "FootL",
+      "offset": [
+        -0.0,
+        -0.058,
+        -0.15
+      ],
+      "kind": "toes",
+      "dofs": [
+        {
+          "name": "dorsiflexion",
+          "limits": [
+            -0.0873,
+            0.9599
+          ]
+        }
+      ],
+      "side": "L"
+    }
+  ],
+  "segments": {
+    "upperArm": 0.29,
+    "forearm": 0.255,
+    "twistAt": 0.115,
+    "thigh": 0.42,
+    "shin": 0.42
+  },
+  "foot": {
+    "ankleHeight": 0.078,
+    "ball": [
+      0.0,
+      -0.058,
+      -0.15
+    ],
+    "heel": [
+      0.0,
+      -0.078,
+      0.04
+    ],
+    "toe": 0.062,
+    "soleWidth": 0.092,
+    "soleLength": 0.27
+  },
+  "seat": {
+    "hipUp": 0.085,
+    "sitZ": 0.075,
+    "hipHalf": 0.09
+  },
+  "grip": {
+    "fulcrum": [
+      -0.03,
+      -0.052,
+      -0.135
+    ],
+    "direction": [
+      -0.741811,
+      -0.059892,
+      -0.667929
+    ],
+    "rockAxis": [
+      0.669131,
+      0.0,
+      -0.743145
+    ],
+    "fulcrumFromButt": 0.135333
+  },
+  "stick": {
+    "length": 0.406,
+    "diameter": 0.0145,
+    "tipDiameter": 0.011,
+    "shoulderFromTip": 0.052,
+    "taper": 0.062
+  },
+  "capsules": {
+    "upperArm": 0.05,
+    "forearm": 0.04,
+    "hand": 0.045,
+    "thigh": 0.072,
+    "shin": 0.052,
+    "torso": 0.115,
+    "head": 0.105
+  },
+  "hand": {
+    "spec": "src/core/hand_spec.json",
+    "prefix": {
+      "R": "R_",
+      "L": "L_"
+    }
+  }
+}
