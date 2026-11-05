@@ -62,9 +62,10 @@ export function logoAtlas(): THREE.Texture {
     g.font = `italic 800 ${b.h * 0.34}px Georgia, "Times New Roman", serif`;
     sp(4);
     g.fillText(MAKERS.heads, b.x + b.w / 2, b.y + b.h * 0.38);
-    g.font = `600 ${b.h * 0.13}px Helvetica, Arial, sans-serif`;
-    sp(b.h * 0.035);
-    g.fillText('COATED  ·  MEDIUM  ·  MADE BY HAND', b.x + b.w / 2, b.y + b.h * 0.72);
+    // (kept between the rules: a wider line ran out of its region into the kick's emblem)
+    g.font = `600 ${b.h * 0.085}px Helvetica, Arial, sans-serif`;
+    sp(b.h * 0.018);
+    g.fillText('COATED  ·  MEDIUM  ·  MADE BY HAND', b.x + b.w / 2, b.y + b.h * 0.72, b.w * 0.74);
     g.fillRect(b.x + b.w * 0.12, b.y + b.h * 0.61, b.w * 0.76, b.h * 0.012);
     g.fillRect(b.x + b.w * 0.12, b.y + b.h * 0.83, b.w * 0.76, b.h * 0.012);
   }
@@ -107,10 +108,10 @@ export function logoAtlas(): THREE.Texture {
     g.fillStyle = '#f00';
     g.font = `700 ${b.h * 0.42}px Georgia, "Times New Roman", serif`;
     sp(b.h * 0.08);
-    g.fillText(MAKERS.cymbals.toUpperCase(), b.x + b.w / 2, b.y + b.h * 0.36);
+    g.fillText(MAKERS.cymbals.toUpperCase(), b.x + b.w / 2, b.y + b.h * 0.36, b.w * 0.9);
     g.font = `600 ${b.h * 0.2}px Helvetica, Arial, sans-serif`;
     sp(b.h * 0.05);
-    g.fillText(`${model}  ·  B20`, b.x + b.w / 2, b.y + b.h * 0.78);
+    g.fillText(`${model}  ·  B20`, b.x + b.w / 2, b.y + b.h * 0.78, b.w * 0.9);
   }
   // the shells' badge: an oval plate with the maker's name and a serial
   {
@@ -126,12 +127,13 @@ export function logoAtlas(): THREE.Texture {
     g.ellipse(cx, cy, b.w * 0.42, b.h * 0.42, 0, 0, Math.PI * 2);
     g.fill();
     g.fillStyle = '#f00';
-    g.font = `italic 700 ${b.h * 0.2}px Georgia, serif`;
+    g.font = `italic 700 ${b.h * 0.17}px Georgia, serif`;
     sp(1);
-    g.fillText('Corbel & Wren', cx, cy - b.h * 0.06);
-    g.font = `600 ${b.h * 0.075}px Helvetica, Arial, sans-serif`;
+    g.fillText('Corbel', cx, cy - b.h * 0.14, b.w * 0.7);
+    g.fillText('& Wren', cx, cy + b.h * 0.04, b.w * 0.7);
+    g.font = `600 ${b.h * 0.06}px Helvetica, Arial, sans-serif`;
     sp(3);
-    g.fillText('No. 30417  ·  MAPLE', cx, cy + b.h * 0.17);
+    g.fillText('No. 30417  ·  MAPLE', cx, cy + b.h * 0.22, b.w * 0.6);
   }
   // the beater patch: a black disc with a thin ring and the head maker's mark
   {
@@ -216,7 +218,7 @@ void mpFlakes(vec3 p, float foot) {
 `;
 
 function shellMaterial(): THREE.MeshPhysicalMaterial {
-  const m = patch(new THREE.MeshPhysicalMaterial({ color: 0x0a1a3c, metalness: 0.45, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.03, ior: 1.5 }), {
+  const m = patch(new THREE.MeshPhysicalMaterial({ color: 0x0a1a3c, metalness: 0.45, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.05, ior: 1.5 }), {
     fragHead: DETAIL_GLSL + FLAKE_GLSL + PRINTS_GLSL,
     afterMap: /* glsl */ `
     {
@@ -226,13 +228,13 @@ function shellMaterial(): THREE.MeshPhysicalMaterial {
       vec3 base = vec3(0.008, 0.024, 0.11);
       vec3 flake = vec3(0.55, 0.66, 0.92) * (0.7 + 0.6 * mpHash(floor(vOPos / 0.00055) + 5.3));
       // far off, the flakes and the pigment average to a blue metallic
-      vec3 avg = vec3(0.16, 0.25, 0.56);
+      vec3 avg = vec3(0.1, 0.16, 0.38);
       diffuseColor.rgb = mix(avg, mix(base, flake, mpFlakeOn), mpFlakeFade);
       // the finish is never perfectly even: a slow cloud in the density of the flakes
       diffuseColor.rgb *= 0.9 + 0.2 * mpFbm(vOPos * 18.0);
     }`,
-    afterMetal: /* glsl */ `metalnessFactor = mix(0.72, mix(0.05, 1.0, mpFlakeOn), mpFlakeFade);`,
-    afterRough: /* glsl */ `roughnessFactor = mix(0.32, mix(0.5, 0.16, mpFlakeOn), mpFlakeFade);`,
+    afterMetal: /* glsl */ `metalnessFactor = mix(0.58, mix(0.05, 1.0, mpFlakeOn), mpFlakeFade);`,
+    afterRough: /* glsl */ `roughnessFactor = mix(0.46, mix(0.5, 0.16, mpFlakeOn), mpFlakeFade);`,
     afterNormal: /* glsl */ `normal = normalize(normal + mat3(viewMatrix) * mpFlakeTilt * 0.32 * mpFlakeOn * mpFlakeFade);`,
   });
   // the clear coat: thick and glossy, with a hint of orange peel, smudges and the odd fingerprint where hands go
@@ -262,7 +264,7 @@ function shellMaterial(): THREE.MeshPhysicalMaterial {
  * own frame), and every head's own radius comes in aRadius.
  */
 function headMaterial(atlas: THREE.Texture, shimmer: { value: number[] }): THREE.MeshPhysicalMaterial {
-  const m = patch(new THREE.MeshPhysicalMaterial({ color: 0xd8d2c2, roughness: 0.62, clearcoat: 0.35, clearcoatRoughness: 0.4, sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff4e0) }), {
+  const m = patch(new THREE.MeshPhysicalMaterial({ color: 0xd8d2c2, roughness: 0.62, clearcoat: 0.35, clearcoatRoughness: 0.4, sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xfff4e0), side: THREE.DoubleSide }), {
     uniforms: { uAtlas: { value: atlas }, uRectHead: { value: rect(ATLAS.head) }, uRectPatch: { value: rect(ATLAS.patch) } },
     vertexHead: /* glsl */ `attribute vec2 aHead; varying vec2 vHead;`,
     vertexEnd: /* glsl */ `vHead = aHead;`,
@@ -328,6 +330,9 @@ function headMaterial(atlas: THREE.Texture, shimmer: { value: number[] }): THREE
       diffuseColor.rgb = coat;
       mpShim = id < 6 ? uShimmer[id] : 0.0;
     }`,
+    // the back of a head faces into its drum: little of the room's light reaches it there
+    // (the fills cast no shadows, so their direct light is damped there too)
+    afterAO: /* glsl */ `if (!gl_FrontFacing) { reflectedLight.indirectDiffuse *= 0.2; reflectedLight.indirectSpecular *= 0.15; reflectedLight.directDiffuse *= 0.15; reflectedLight.directSpecular *= 0.1; }`,
     afterRough: /* glsl */ `
     {
       float r = length(vOPos.xz) / vHead.y;
@@ -375,7 +380,7 @@ function frontHeadMaterial(atlas: THREE.Texture, R: number): THREE.MeshPhysicalM
 
 // ---------------------------------------------------------------- metal
 function chromeMaterial(): THREE.MeshPhysicalMaterial {
-  return patch(new THREE.MeshPhysicalMaterial({ color: 0xf0f1f3, metalness: 1, roughness: 0.06 }), {
+  return patch(new THREE.MeshPhysicalMaterial({ color: 0xf0f1f3, metalness: 1, roughness: 0.1 }), {
     fragHead: DETAIL_GLSL + PRINTS_GLSL,
     afterRough: /* glsl */ `
     {
@@ -399,7 +404,7 @@ function chromeMaterial(): THREE.MeshPhysicalMaterial {
 
 /** the hoops: chrome, with marks where the stick has hit the rim (on the drummer's side) */
 function hoopMaterial(): THREE.MeshPhysicalMaterial {
-  return patch(new THREE.MeshPhysicalMaterial({ color: 0xeceef1, metalness: 1, roughness: 0.07 }), {
+  return patch(new THREE.MeshPhysicalMaterial({ color: 0xeceef1, metalness: 1, roughness: 0.09 }), {
     vertexHead: /* glsl */ `attribute vec2 aHead; varying vec2 vHead;`,
     vertexEnd: /* glsl */ `vHead = aHead;`,
     fragHead: DETAIL_GLSL + 'varying vec2 vHead; float mpRim;',
@@ -681,6 +686,8 @@ export function createDrumPalette(kickRadius: number): DrumPalette {
       float lines = 0.5 + 0.5 * sin(vOPos.y * 1800.0 + mpFbm(vec3(a * 30.0, vOPos.y * 40.0, 0.0)) * 5.0);
       diffuseColor.rgb = vec3(0.42, 0.28, 0.16) * (0.85 + 0.2 * lines * mpRes(0.0015, mpFoot())) * (0.9 + 0.2 * mpFbm(vOPos * 80.0));
     }`,
+    // the wood is mostly the inside of the shell, a cavity the room's light hardly enters
+    afterAO: /* glsl */ `reflectedLight.indirectDiffuse *= 0.35; reflectedLight.indirectSpecular *= 0.3; reflectedLight.directDiffuse *= 0.4; reflectedLight.directSpecular *= 0.3;`,
   });
   const nylon = patch(new THREE.MeshPhysicalMaterial({ color: 0xd9d3c3, roughness: 0.45, sheen: 0.3, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffffff) }), {
     afterMap: /* glsl */ `diffuseColor.rgb *= 0.92 + 0.12 * mpFbm(vOPos * 300.0);`,

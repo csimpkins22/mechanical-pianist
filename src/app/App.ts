@@ -484,6 +484,8 @@ export class App {
       this.drumStage = stage;
     }
     if (seq !== this.buildSeq) return;
+    // playing live is the piano's; the drums leave it
+    if (this.live) this.exitLive();
     const wasPlaying = this.playing;
     if (wasPlaying) this.pause();
     this.drumAudio.stop();

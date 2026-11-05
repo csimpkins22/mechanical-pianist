@@ -2,9 +2,10 @@
 // same renderer and post pipeline, in the same visual language: a room with
 // old oak boards and dark plaster, a tall window on the drummer's left behind
 // him, late sun through drawn curtains crossing the kit in shafts with dust
-// in them, a cool fill and rim, light bounced off the room (captured from the
-// lit scene at three heights, two bounces), reflections of the room itself in
-// the chrome and bronze, and the piano's grade, bloom, grain and motion blur.
+// in them, a cool fill, a lamp in the corner for a warm rim, light bounced
+// off the room (captured from the lit scene at three heights, two bounces),
+// reflections of the room itself in the chrome and bronze, and the piano's
+// grade, bloom, grain and motion blur.
 //
 // The kit stands in the room with its floor at the piano room's floor height
 // and the kit's middle where the piano's middle is, so the shared height
@@ -84,7 +85,6 @@ export class DrumStage {
   private win: THREE.RectAreaLight;
   private fill: THREE.HemisphereLight;
   private soft: THREE.DirectionalLight;
-  private rim: THREE.DirectionalLight;
   private lamp: THREE.PointLight;
   private dust: THREE.Points;
   private dustMat: THREE.ShaderMaterial;
@@ -144,10 +144,8 @@ export class DrumStage {
     this.lamp.position.copy(lampAt);
     this.scene.add(this.lamp);
     this.scene.add(buildLamp(lampAt));
-    // a cool rim from behind on the right
-    this.rim = new THREE.DirectionalLight(0x9ab4ff, 0.7);
-    this.rim.position.set(1.8, 1.6, 2.2);
-    this.scene.add(this.rim);
+    // the lamp is also the rim light: a directional rim casts no shadow here and, however faint, glints
+    // white off the chrome tom holder and lugs that should be in the drums' own shadow
     const d = buildDust(this.sunDir);
     this.dust = d.points;
     this.dustMat = d.mat;
@@ -297,8 +295,7 @@ export class DrumStage {
     this.dust.visible = s.shaftsOn && s.shafts > 0.001;
     this.fill.intensity = 0.45 * s.fill * (s.bounceOn ? 1 - 0.85 * Math.min(1, s.bounce) : 1);
     this.soft.intensity = 1.4 * s.fill;
-    this.lamp.intensity = 2.2 * Math.max(0.3, s.fill);
-    this.rim.intensity = 0.7 * s.rim;
+    this.lamp.intensity = 2.2 * Math.max(0.3, s.fill) * (0.7 + 0.3 * s.rim);
     this.shaftColor.copy(warm);
     if (this.ready) {
       clearTimeout(this.relightTimer);
