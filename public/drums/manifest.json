@@ -1,0 +1,1576 @@
+{
+ "name": "Big Rusty Drums",
+ "source": "https://github.com/sfzinstruments/karoryfer.big-rusty-drums",
+ "licence": "CC0 1.0 (Karoryfer Samples)",
+ "sampleRate": 44100,
+ "articulations": {
+  "kick": {
+   "layers": [
+    {
+     "velocity": 0.107,
+     "files": [
+      {
+       "file": "kick/kick-v2-1.mp3",
+       "attack": 0.00138,
+       "rms": 0.02556
+      },
+      {
+       "file": "kick/kick-v2-2.mp3",
+       "attack": 0.00141,
+       "rms": 0.024
+      },
+      {
+       "file": "kick/kick-v2-3.mp3",
+       "attack": 0.00136,
+       "rms": 0.0252
+      }
+     ]
+    },
+    {
+     "velocity": 0.321,
+     "files": [
+      {
+       "file": "kick/kick-v5-1.mp3",
+       "attack": 0.001,
+       "rms": 0.04515
+      },
+      {
+       "file": "kick/kick-v5-2.mp3",
+       "attack": 0.00104,
+       "rms": 0.04508
+      },
+      {
+       "file": "kick/kick-v5-3.mp3",
+       "attack": 0.00129,
+       "rms": 0.04746
+      }
+     ]
+    },
+    {
+     "velocity": 0.536,
+     "files": [
+      {
+       "file": "kick/kick-v8-1.mp3",
+       "attack": 0.00098,
+       "rms": 0.08477
+      },
+      {
+       "file": "kick/kick-v8-2.mp3",
+       "attack": 0.00093,
+       "rms": 0.0805
+      },
+      {
+       "file": "kick/kick-v8-3.mp3",
+       "attack": 0.00095,
+       "rms": 0.08551
+      }
+     ]
+    },
+    {
+     "velocity": 0.75,
+     "files": [
+      {
+       "file": "kick/kick-v11-1.mp3",
+       "attack": 0.00091,
+       "rms": 0.13879
+      },
+      {
+       "file": "kick/kick-v11-2.mp3",
+       "attack": 0.00091,
+       "rms": 0.14237
+      },
+      {
+       "file": "kick/kick-v11-3.mp3",
+       "attack": 0.00093,
+       "rms": 0.13686
+      }
+     ]
+    },
+    {
+     "velocity": 0.964,
+     "files": [
+      {
+       "file": "kick/kick-v14-1.mp3",
+       "attack": 0.00086,
+       "rms": 0.20274
+      },
+      {
+       "file": "kick/kick-v14-2.mp3",
+       "attack": 0.00088,
+       "rms": 0.20889
+      },
+      {
+       "file": "kick/kick-v14-3.mp3",
+       "attack": 0.00086,
+       "rms": 0.20201
+      }
+     ]
+    }
+   ]
+  },
+  "snare": {
+   "layers": [
+    {
+     "velocity": 0.05,
+     "files": [
+      {
+       "file": "snare/snare-v1-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.0078
+      },
+      {
+       "file": "snare/snare-v1-2.mp3",
+       "attack": 0.00018,
+       "rms": 0.00694
+      },
+      {
+       "file": "snare/snare-v1-3.mp3",
+       "attack": 0.00018,
+       "rms": 0.0081
+      }
+     ]
+    },
+    {
+     "velocity": 0.25,
+     "files": [
+      {
+       "file": "snare/snare-v3-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.01511
+      },
+      {
+       "file": "snare/snare-v3-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.01662
+      },
+      {
+       "file": "snare/snare-v3-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.02157
+      }
+     ]
+    },
+    {
+     "velocity": 0.45,
+     "files": [
+      {
+       "file": "snare/snare-v5-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.03119
+      },
+      {
+       "file": "snare/snare-v5-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.0297
+      },
+      {
+       "file": "snare/snare-v5-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.02963
+      }
+     ]
+    },
+    {
+     "velocity": 0.65,
+     "files": [
+      {
+       "file": "snare/snare-v7-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.04845
+      },
+      {
+       "file": "snare/snare-v7-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.04714
+      },
+      {
+       "file": "snare/snare-v7-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.04416
+      }
+     ]
+    },
+    {
+     "velocity": 0.85,
+     "files": [
+      {
+       "file": "snare/snare-v9-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.07676
+      },
+      {
+       "file": "snare/snare-v9-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.07336
+      },
+      {
+       "file": "snare/snare-v9-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.07779
+      }
+     ]
+    },
+    {
+     "velocity": 0.95,
+     "files": [
+      {
+       "file": "snare/snare-v10-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.08636
+      },
+      {
+       "file": "snare/snare-v10-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.09678
+      },
+      {
+       "file": "snare/snare-v10-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.08968
+      }
+     ]
+    }
+   ]
+  },
+  "rimshot": {
+   "layers": [
+    {
+     "velocity": 0.25,
+     "files": [
+      {
+       "file": "rimshot/rimshot-v2-1.mp3",
+       "attack": 0.00052,
+       "rms": 0.02201
+      },
+      {
+       "file": "rimshot/rimshot-v2-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.02176
+      },
+      {
+       "file": "rimshot/rimshot-v2-3.mp3",
+       "attack": 0.00041,
+       "rms": 0.02244
+      }
+     ]
+    },
+    {
+     "velocity": 0.583,
+     "files": [
+      {
+       "file": "rimshot/rimshot-v4-1.mp3",
+       "attack": 0.00048,
+       "rms": 0.04534
+      },
+      {
+       "file": "rimshot/rimshot-v4-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.04443
+      },
+      {
+       "file": "rimshot/rimshot-v4-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.04467
+      }
+     ]
+    },
+    {
+     "velocity": 0.917,
+     "files": [
+      {
+       "file": "rimshot/rimshot-v6-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.07056
+      },
+      {
+       "file": "rimshot/rimshot-v6-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.06601
+      },
+      {
+       "file": "rimshot/rimshot-v6-3.mp3",
+       "attack": 0.0005,
+       "rms": 0.06083
+      }
+     ]
+    }
+   ]
+  },
+  "crossStick": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "crossStick/crossStick-v1-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.00283
+      },
+      {
+       "file": "crossStick/crossStick-v1-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.00343
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "crossStick/crossStick-v2-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.01173
+      },
+      {
+       "file": "crossStick/crossStick-v2-2.mp3",
+       "attack": 2e-05,
+       "rms": 0.01252
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "crossStick/crossStick-v3-1.mp3",
+       "attack": 2e-05,
+       "rms": 0.02241
+      },
+      {
+       "file": "crossStick/crossStick-v3-2.mp3",
+       "attack": 2e-05,
+       "rms": 0.02552
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "crossStick/crossStick-v4-1.mp3",
+       "attack": 0.00084,
+       "rms": 0.02801
+      },
+      {
+       "file": "crossStick/crossStick-v4-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.03038
+      }
+     ]
+    }
+   ]
+  },
+  "tom1": {
+   "layers": [
+    {
+     "velocity": 0.083,
+     "files": [
+      {
+       "file": "tom1/tom1-v1-1.mp3",
+       "attack": 0.0002,
+       "rms": 0.02124
+      },
+      {
+       "file": "tom1/tom1-v1-2.mp3",
+       "attack": 0.00023,
+       "rms": 0.01716
+      },
+      {
+       "file": "tom1/tom1-v1-3.mp3",
+       "attack": 0.00023,
+       "rms": 0.01872
+      }
+     ]
+    },
+    {
+     "velocity": 0.417,
+     "files": [
+      {
+       "file": "tom1/tom1-v3-1.mp3",
+       "attack": 0.00018,
+       "rms": 0.04924
+      },
+      {
+       "file": "tom1/tom1-v3-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.04902
+      },
+      {
+       "file": "tom1/tom1-v3-3.mp3",
+       "attack": 0.00016,
+       "rms": 0.04873
+      }
+     ]
+    },
+    {
+     "velocity": 0.75,
+     "files": [
+      {
+       "file": "tom1/tom1-v5-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.09729
+      },
+      {
+       "file": "tom1/tom1-v5-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.08859
+      },
+      {
+       "file": "tom1/tom1-v5-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.09832
+      }
+     ]
+    },
+    {
+     "velocity": 0.917,
+     "files": [
+      {
+       "file": "tom1/tom1-v6-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.12306
+      },
+      {
+       "file": "tom1/tom1-v6-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.11991
+      },
+      {
+       "file": "tom1/tom1-v6-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.11485
+      }
+     ]
+    }
+   ]
+  },
+  "tom2": {
+   "layers": [
+    {
+     "velocity": 0.071,
+     "files": [
+      {
+       "file": "tom2/tom2-v1-1.mp3",
+       "attack": 0.00029,
+       "rms": 0.02395
+      },
+      {
+       "file": "tom2/tom2-v1-2.mp3",
+       "attack": 0.00025,
+       "rms": 0.03255
+      },
+      {
+       "file": "tom2/tom2-v1-3.mp3",
+       "attack": 0.00032,
+       "rms": 0.02266
+      }
+     ]
+    },
+    {
+     "velocity": 0.357,
+     "files": [
+      {
+       "file": "tom2/tom2-v3-1.mp3",
+       "attack": 0.0002,
+       "rms": 0.05926
+      },
+      {
+       "file": "tom2/tom2-v3-2.mp3",
+       "attack": 0.0002,
+       "rms": 0.05791
+      },
+      {
+       "file": "tom2/tom2-v3-3.mp3",
+       "attack": 0.0002,
+       "rms": 0.05741
+      }
+     ]
+    },
+    {
+     "velocity": 0.643,
+     "files": [
+      {
+       "file": "tom2/tom2-v5-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.09115
+      },
+      {
+       "file": "tom2/tom2-v5-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.09764
+      },
+      {
+       "file": "tom2/tom2-v5-3.mp3",
+       "attack": 0.00016,
+       "rms": 0.10016
+      }
+     ]
+    },
+    {
+     "velocity": 0.929,
+     "files": [
+      {
+       "file": "tom2/tom2-v7-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.14828
+      },
+      {
+       "file": "tom2/tom2-v7-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.13768
+      },
+      {
+       "file": "tom2/tom2-v7-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.15547
+      }
+     ]
+    }
+   ]
+  },
+  "floorTom": {
+   "layers": [
+    {
+     "velocity": 0.062,
+     "files": [
+      {
+       "file": "floorTom/floorTom-v1-1.mp3",
+       "attack": 0.00023,
+       "rms": 0.0267
+      },
+      {
+       "file": "floorTom/floorTom-v1-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.02336
+      },
+      {
+       "file": "floorTom/floorTom-v1-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.02596
+      }
+     ]
+    },
+    {
+     "velocity": 0.312,
+     "files": [
+      {
+       "file": "floorTom/floorTom-v3-1.mp3",
+       "attack": 0.00023,
+       "rms": 0.05316
+      },
+      {
+       "file": "floorTom/floorTom-v3-2.mp3",
+       "attack": 0.0002,
+       "rms": 0.05454
+      },
+      {
+       "file": "floorTom/floorTom-v3-3.mp3",
+       "attack": 0.00016,
+       "rms": 0.04794
+      }
+     ]
+    },
+    {
+     "velocity": 0.562,
+     "files": [
+      {
+       "file": "floorTom/floorTom-v5-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.09509
+      },
+      {
+       "file": "floorTom/floorTom-v5-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.09347
+      },
+      {
+       "file": "floorTom/floorTom-v5-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.09583
+      }
+     ]
+    },
+    {
+     "velocity": 0.938,
+     "files": [
+      {
+       "file": "floorTom/floorTom-v8-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.18976
+      },
+      {
+       "file": "floorTom/floorTom-v8-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.19392
+      },
+      {
+       "file": "floorTom/floorTom-v8-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.2008
+      }
+     ]
+    }
+   ]
+  },
+  "hhTight": {
+   "layers": [
+    {
+     "velocity": 0.188,
+     "files": [
+      {
+       "file": "hhTight/hhTight-v2-1.mp3",
+       "attack": 0.00018,
+       "rms": 0.00661
+      },
+      {
+       "file": "hhTight/hhTight-v2-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.00501
+      },
+      {
+       "file": "hhTight/hhTight-v2-3.mp3",
+       "attack": 0.00018,
+       "rms": 0.00515
+      }
+     ]
+    },
+    {
+     "velocity": 0.438,
+     "files": [
+      {
+       "file": "hhTight/hhTight-v4-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.00932
+      },
+      {
+       "file": "hhTight/hhTight-v4-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.00929
+      },
+      {
+       "file": "hhTight/hhTight-v4-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.00985
+      }
+     ]
+    },
+    {
+     "velocity": 0.688,
+     "files": [
+      {
+       "file": "hhTight/hhTight-v6-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.02577
+      },
+      {
+       "file": "hhTight/hhTight-v6-2.mp3",
+       "attack": 0.00025,
+       "rms": 0.01868
+      },
+      {
+       "file": "hhTight/hhTight-v6-3.mp3",
+       "attack": 0.00025,
+       "rms": 0.01757
+      }
+     ]
+    },
+    {
+     "velocity": 0.938,
+     "files": [
+      {
+       "file": "hhTight/hhTight-v8-1.mp3",
+       "attack": 0.00029,
+       "rms": 0.03497
+      },
+      {
+       "file": "hhTight/hhTight-v8-2.mp3",
+       "attack": 0.00034,
+       "rms": 0.03649
+      },
+      {
+       "file": "hhTight/hhTight-v8-3.mp3",
+       "attack": 0.00027,
+       "rms": 0.03022
+      }
+     ]
+    }
+   ]
+  },
+  "hhClosed": {
+   "layers": [
+    {
+     "velocity": 0.083,
+     "files": [
+      {
+       "file": "hhClosed/hhClosed-v1-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.00611
+      },
+      {
+       "file": "hhClosed/hhClosed-v1-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.00634
+      },
+      {
+       "file": "hhClosed/hhClosed-v1-3.mp3",
+       "attack": 0.00016,
+       "rms": 0.00602
+      }
+     ]
+    },
+    {
+     "velocity": 0.417,
+     "files": [
+      {
+       "file": "hhClosed/hhClosed-v3-1.mp3",
+       "attack": 0.00023,
+       "rms": 0.01561
+      },
+      {
+       "file": "hhClosed/hhClosed-v3-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.01013
+      },
+      {
+       "file": "hhClosed/hhClosed-v3-3.mp3",
+       "attack": 0.00014,
+       "rms": 0.01141
+      }
+     ]
+    },
+    {
+     "velocity": 0.75,
+     "files": [
+      {
+       "file": "hhClosed/hhClosed-v5-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.03923
+      },
+      {
+       "file": "hhClosed/hhClosed-v5-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.02312
+      },
+      {
+       "file": "hhClosed/hhClosed-v5-3.mp3",
+       "attack": 0.00011,
+       "rms": 0.03002
+      }
+     ]
+    },
+    {
+     "velocity": 0.917,
+     "files": [
+      {
+       "file": "hhClosed/hhClosed-v6-1.mp3",
+       "attack": 0.00018,
+       "rms": 0.0396
+      },
+      {
+       "file": "hhClosed/hhClosed-v6-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.03387
+      },
+      {
+       "file": "hhClosed/hhClosed-v6-3.mp3",
+       "attack": 0.00018,
+       "rms": 0.033
+      }
+     ]
+    }
+   ]
+  },
+  "hhLoose": {
+   "layers": [
+    {
+     "velocity": 0.083,
+     "files": [
+      {
+       "file": "hhLoose/hhLoose-v1-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.00983
+      },
+      {
+       "file": "hhLoose/hhLoose-v1-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.01196
+      }
+     ]
+    },
+    {
+     "velocity": 0.417,
+     "files": [
+      {
+       "file": "hhLoose/hhLoose-v3-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.02994
+      },
+      {
+       "file": "hhLoose/hhLoose-v3-2.mp3",
+       "attack": 0.00018,
+       "rms": 0.03466
+      }
+     ]
+    },
+    {
+     "velocity": 0.75,
+     "files": [
+      {
+       "file": "hhLoose/hhLoose-v5-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.03925
+      },
+      {
+       "file": "hhLoose/hhLoose-v5-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.03505
+      }
+     ]
+    },
+    {
+     "velocity": 0.917,
+     "files": [
+      {
+       "file": "hhLoose/hhLoose-v6-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.03789
+      },
+      {
+       "file": "hhLoose/hhLoose-v6-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.03039
+      }
+     ]
+    }
+   ]
+  },
+  "hhQuarter": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "hhQuarter/hhQuarter-v1-1.mp3",
+       "attack": 0.00018,
+       "rms": 0.01067
+      },
+      {
+       "file": "hhQuarter/hhQuarter-v1-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.01338
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "hhQuarter/hhQuarter-v2-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.03546
+      },
+      {
+       "file": "hhQuarter/hhQuarter-v2-2.mp3",
+       "attack": 7e-05,
+       "rms": 0.02656
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "hhQuarter/hhQuarter-v3-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.03664
+      },
+      {
+       "file": "hhQuarter/hhQuarter-v3-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.03943
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "hhQuarter/hhQuarter-v4-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.04817
+      },
+      {
+       "file": "hhQuarter/hhQuarter-v4-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.04469
+      }
+     ]
+    }
+   ]
+  },
+  "hhHalf": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "hhHalf/hhHalf-v1-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.01168
+      },
+      {
+       "file": "hhHalf/hhHalf-v1-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.01592
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "hhHalf/hhHalf-v2-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.02484
+      },
+      {
+       "file": "hhHalf/hhHalf-v2-2.mp3",
+       "attack": 0.00018,
+       "rms": 0.02172
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "hhHalf/hhHalf-v3-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.03815
+      },
+      {
+       "file": "hhHalf/hhHalf-v3-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.03666
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "hhHalf/hhHalf-v4-1.mp3",
+       "attack": 9e-05,
+       "rms": 0.05407
+      },
+      {
+       "file": "hhHalf/hhHalf-v4-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.05048
+      }
+     ]
+    }
+   ]
+  },
+  "hhOpen": {
+   "layers": [
+    {
+     "velocity": 0.083,
+     "files": [
+      {
+       "file": "hhOpen/hhOpen-v1-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.00839
+      },
+      {
+       "file": "hhOpen/hhOpen-v1-2.mp3",
+       "attack": 7e-05,
+       "rms": 0.00759
+      }
+     ]
+    },
+    {
+     "velocity": 0.417,
+     "files": [
+      {
+       "file": "hhOpen/hhOpen-v3-1.mp3",
+       "attack": 9e-05,
+       "rms": 0.01944
+      },
+      {
+       "file": "hhOpen/hhOpen-v3-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.02099
+      }
+     ]
+    },
+    {
+     "velocity": 0.75,
+     "files": [
+      {
+       "file": "hhOpen/hhOpen-v5-1.mp3",
+       "attack": 7e-05,
+       "rms": 0.04185
+      },
+      {
+       "file": "hhOpen/hhOpen-v5-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.03743
+      }
+     ]
+    },
+    {
+     "velocity": 0.917,
+     "files": [
+      {
+       "file": "hhOpen/hhOpen-v6-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.04714
+      },
+      {
+       "file": "hhOpen/hhOpen-v6-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.04174
+      }
+     ]
+    }
+   ]
+  },
+  "hhEdge": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "hhEdge/hhEdge-v1-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.01714
+      },
+      {
+       "file": "hhEdge/hhEdge-v1-2.mp3",
+       "attack": 0.0,
+       "rms": 0.01694
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "hhEdge/hhEdge-v2-1.mp3",
+       "attack": 0.00068,
+       "rms": 0.02809
+      },
+      {
+       "file": "hhEdge/hhEdge-v2-2.mp3",
+       "attack": 0.00066,
+       "rms": 0.03209
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "hhEdge/hhEdge-v3-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.0432
+      },
+      {
+       "file": "hhEdge/hhEdge-v3-2.mp3",
+       "attack": 0.00023,
+       "rms": 0.04798
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "hhEdge/hhEdge-v4-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.06966
+      },
+      {
+       "file": "hhEdge/hhEdge-v4-2.mp3",
+       "attack": 0.00036,
+       "rms": 0.08245
+      }
+     ]
+    }
+   ]
+  },
+  "hhPedal": {
+   "layers": [
+    {
+     "velocity": 0.1,
+     "files": [
+      {
+       "file": "hhPedal/hhPedal-v1-1.mp3",
+       "attack": 0.0005,
+       "rms": 0.01754
+      },
+      {
+       "file": "hhPedal/hhPedal-v1-2.mp3",
+       "attack": 0.00075,
+       "rms": 0.01731
+      },
+      {
+       "file": "hhPedal/hhPedal-v1-3.mp3",
+       "attack": 0.00029,
+       "rms": 0.01852
+      }
+     ]
+    },
+    {
+     "velocity": 0.5,
+     "files": [
+      {
+       "file": "hhPedal/hhPedal-v3-1.mp3",
+       "attack": 0.00023,
+       "rms": 0.03578
+      },
+      {
+       "file": "hhPedal/hhPedal-v3-2.mp3",
+       "attack": 0.00059,
+       "rms": 0.0405
+      },
+      {
+       "file": "hhPedal/hhPedal-v3-3.mp3",
+       "attack": 0.00057,
+       "rms": 0.03829
+      }
+     ]
+    },
+    {
+     "velocity": 0.9,
+     "files": [
+      {
+       "file": "hhPedal/hhPedal-v5-1.mp3",
+       "attack": 0.00029,
+       "rms": 0.06671
+      },
+      {
+       "file": "hhPedal/hhPedal-v5-2.mp3",
+       "attack": 0.00016,
+       "rms": 0.06423
+      },
+      {
+       "file": "hhPedal/hhPedal-v5-3.mp3",
+       "attack": 0.00063,
+       "rms": 0.06237
+      }
+     ]
+    }
+   ]
+  },
+  "hhSplash": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "hhSplash/hhSplash-v1-1.mp3",
+       "attack": 7e-05,
+       "rms": 0.01007
+      },
+      {
+       "file": "hhSplash/hhSplash-v1-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.01617
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "hhSplash/hhSplash-v2-1.mp3",
+       "attack": 0.00039,
+       "rms": 0.02404
+      },
+      {
+       "file": "hhSplash/hhSplash-v2-2.mp3",
+       "attack": 0.00014,
+       "rms": 0.01632
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "hhSplash/hhSplash-v3-1.mp3",
+       "attack": 0.00032,
+       "rms": 0.02625
+      },
+      {
+       "file": "hhSplash/hhSplash-v3-2.mp3",
+       "attack": 0.0002,
+       "rms": 0.02864
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "hhSplash/hhSplash-v4-1.mp3",
+       "attack": 0.00016,
+       "rms": 0.04813
+      },
+      {
+       "file": "hhSplash/hhSplash-v4-2.mp3",
+       "attack": 0.00018,
+       "rms": 0.05015
+      }
+     ]
+    }
+   ]
+  },
+  "crash": {
+   "layers": [
+    {
+     "velocity": 0.1,
+     "files": [
+      {
+       "file": "crash/crash-v1-1.mp3",
+       "attack": 2e-05,
+       "rms": 0.01057
+      },
+      {
+       "file": "crash/crash-v1-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.01217
+      }
+     ]
+    },
+    {
+     "velocity": 0.3,
+     "files": [
+      {
+       "file": "crash/crash-v2-1.mp3",
+       "attack": 2e-05,
+       "rms": 0.0137
+      },
+      {
+       "file": "crash/crash-v2-2.mp3",
+       "attack": 2e-05,
+       "rms": 0.01795
+      }
+     ]
+    },
+    {
+     "velocity": 0.5,
+     "files": [
+      {
+       "file": "crash/crash-v3-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.0342
+      },
+      {
+       "file": "crash/crash-v3-2.mp3",
+       "attack": 7e-05,
+       "rms": 0.0184
+      }
+     ]
+    },
+    {
+     "velocity": 0.7,
+     "files": [
+      {
+       "file": "crash/crash-v4-1.mp3",
+       "attack": 2e-05,
+       "rms": 0.03846
+      },
+      {
+       "file": "crash/crash-v4-2.mp3",
+       "attack": 2e-05,
+       "rms": 0.03887
+      }
+     ]
+    },
+    {
+     "velocity": 0.9,
+     "files": [
+      {
+       "file": "crash/crash-v5-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.03873
+      },
+      {
+       "file": "crash/crash-v5-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.04117
+      }
+     ]
+    }
+   ]
+  },
+  "crashChoke": {
+   "layers": [
+    {
+     "velocity": 1.0,
+     "files": [
+      {
+       "file": "crashChoke/crashChoke-v0-1.mp3",
+       "attack": 0.0,
+       "rms": 0.02373
+      },
+      {
+       "file": "crashChoke/crashChoke-v0-2.mp3",
+       "attack": 0.0,
+       "rms": 0.02663
+      },
+      {
+       "file": "crashChoke/crashChoke-v0-3.mp3",
+       "attack": 2e-05,
+       "rms": 0.03361
+      }
+     ]
+    }
+   ]
+  },
+  "ride": {
+   "layers": [
+    {
+     "velocity": 0.05,
+     "files": [
+      {
+       "file": "ride/ride-v1-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.00301
+      },
+      {
+       "file": "ride/ride-v1-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.00329
+      }
+     ]
+    },
+    {
+     "velocity": 0.25,
+     "files": [
+      {
+       "file": "ride/ride-v3-1.mp3",
+       "attack": 9e-05,
+       "rms": 0.00805
+      },
+      {
+       "file": "ride/ride-v3-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.0108
+      }
+     ]
+    },
+    {
+     "velocity": 0.45,
+     "files": [
+      {
+       "file": "ride/ride-v5-1.mp3",
+       "attack": 7e-05,
+       "rms": 0.01574
+      },
+      {
+       "file": "ride/ride-v5-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.01171
+      }
+     ]
+    },
+    {
+     "velocity": 0.65,
+     "files": [
+      {
+       "file": "ride/ride-v7-1.mp3",
+       "attack": 7e-05,
+       "rms": 0.02247
+      },
+      {
+       "file": "ride/ride-v7-2.mp3",
+       "attack": 7e-05,
+       "rms": 0.03175
+      }
+     ]
+    },
+    {
+     "velocity": 0.85,
+     "files": [
+      {
+       "file": "ride/ride-v9-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.03292
+      },
+      {
+       "file": "ride/ride-v9-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.02897
+      }
+     ]
+    },
+    {
+     "velocity": 0.95,
+     "files": [
+      {
+       "file": "ride/ride-v10-1.mp3",
+       "attack": 5e-05,
+       "rms": 0.04118
+      },
+      {
+       "file": "ride/ride-v10-2.mp3",
+       "attack": 5e-05,
+       "rms": 0.04085
+      }
+     ]
+    }
+   ]
+  },
+  "rideBell": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "rideBell/rideBell-v1-1.mp3",
+       "attack": 9e-05,
+       "rms": 0.0081
+      },
+      {
+       "file": "rideBell/rideBell-v1-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.00833
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "rideBell/rideBell-v2-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.02042
+      },
+      {
+       "file": "rideBell/rideBell-v2-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.01323
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "rideBell/rideBell-v3-1.mp3",
+       "attack": 9e-05,
+       "rms": 0.02264
+      },
+      {
+       "file": "rideBell/rideBell-v3-2.mp3",
+       "attack": 9e-05,
+       "rms": 0.02859
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "rideBell/rideBell-v4-1.mp3",
+       "attack": 0.00014,
+       "rms": 0.03031
+      },
+      {
+       "file": "rideBell/rideBell-v4-2.mp3",
+       "attack": 0.00011,
+       "rms": 0.02915
+      }
+     ]
+    }
+   ]
+  },
+  "rideEdge": {
+   "layers": [
+    {
+     "velocity": 0.125,
+     "files": [
+      {
+       "file": "rideEdge/rideEdge-v1-1.mp3",
+       "attack": 0.00063,
+       "rms": 0.00765
+      },
+      {
+       "file": "rideEdge/rideEdge-v1-2.mp3",
+       "attack": 0.0002,
+       "rms": 0.00565
+      }
+     ]
+    },
+    {
+     "velocity": 0.375,
+     "files": [
+      {
+       "file": "rideEdge/rideEdge-v2-1.mp3",
+       "attack": 0.00023,
+       "rms": 0.01239
+      },
+      {
+       "file": "rideEdge/rideEdge-v2-2.mp3",
+       "attack": 0.00113,
+       "rms": 0.01238
+      }
+     ]
+    },
+    {
+     "velocity": 0.625,
+     "files": [
+      {
+       "file": "rideEdge/rideEdge-v3-1.mp3",
+       "attack": 0.00109,
+       "rms": 0.0236
+      },
+      {
+       "file": "rideEdge/rideEdge-v3-2.mp3",
+       "attack": 0.00039,
+       "rms": 0.0201
+      }
+     ]
+    },
+    {
+     "velocity": 0.875,
+     "files": [
+      {
+       "file": "rideEdge/rideEdge-v4-1.mp3",
+       "attack": 0.00018,
+       "rms": 0.04176
+      },
+      {
+       "file": "rideEdge/rideEdge-v4-2.mp3",
+       "attack": 0.00043,
+       "rms": 0.04124
+      }
+     ]
+    }
+   ]
+  },
+  "rideChoke": {
+   "layers": [
+    {
+     "velocity": 1.0,
+     "files": [
+      {
+       "file": "rideChoke/rideChoke-v0-1.mp3",
+       "attack": 0.00011,
+       "rms": 0.02541
+      },
+      {
+       "file": "rideChoke/rideChoke-v0-2.mp3",
+       "attack": 0.0,
+       "rms": 0.03183
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

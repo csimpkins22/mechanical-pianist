@@ -4,18 +4,20 @@
 // joint) and the rendered pixels are identical each time.
 //
 //   npm run dev                      (in another terminal)
-//   node tools/determinism-test.cjs [http://127.0.0.1:5174/]
+//   node tools/determinism-test.cjs [http://127.0.0.1:5174/] [--drums]
+// With --drums it checks the drum stage (a Groove MIDI performance) instead.
 const { chromium } = require('playwright');
 
 (async () => {
-  const base = process.argv[2] || 'http://127.0.0.1:5174/';
+  const drums = process.argv.includes('--drums');
+  const base = process.argv.slice(2).find((a) => !a.startsWith('--')) || 'http://127.0.0.1:5174/';
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const page = await browser.newPage({ viewport: { width: 480, height: 270 } });
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.goto(base + '?demo=nocturne&quality=low&ui=0');
+  await page.goto(base + (drums ? '?demo=groove-rock&quality=low&ui=0' : '?demo=nocturne&quality=low&ui=0'), { timeout: 300000 });
   await page.waitForFunction('window.__ready === true', null, { timeout: 300000 });
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate((drums) => {
     const app = window.app;
     const gl = app.view.renderer.getContext();
     const pixels = () => {
@@ -33,7 +35,8 @@ const { chromium } = require('playwright');
     };
     const D = app.duration;
     // mid-chord, mid-transition, mid-press, during the scale, the leap, the release
-    const PROBES = [0.031, 1.012, 12.4, 26.95, 33.3, 41.17, 49.45, 51.5, 62.06, 66.3, 79.07, 85.0];
+    // drums: a crash ringing, inside a tom fill, an open hi-hat, a kick stroke, the floor tom's sixteenths
+    const PROBES = drums ? [0.031, 3.21, 9.62, 15.2, 21.4, 23.45, 34.55, 39.62, 43.3, 49.45, 56.6] : [0.031, 1.012, 12.4, 26.95, 33.3, 41.17, 49.45, 51.5, 62.06, 66.3, 79.07, 85.0];
     let s = 4242;
     const rnd = () => ((s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296);
     const orders = {
@@ -56,7 +59,7 @@ const { chromium } = require('playwright');
       same.push(probe(49.45));
     }
     return { out, same };
-  });
+  }, drums);
 
   let ok = true;
   for (const [t, byOrder] of Object.entries(result.out)) {
