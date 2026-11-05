@@ -106,6 +106,9 @@ const WARM_STEPS = 2;
 const KEY_COST = 0.6;
 /** a key is added between two where the interpolated arms cost this much more than either end */
 const REFINE_COST = 0.4;
+/** a frame whose arms cost this much more than the keys around it is refined on its own */
+const FIX_COST = 0.5;
+const FIX_RANGE = 2;
 
 export type StrokeKind = 'ready' | 'full' | 'down' | 'up' | 'tap' | 'double' | 'buzz' | 'grace' | 'choke';
 
@@ -413,8 +416,6 @@ export class DrummerMotion {
   private keyT = new Float64Array(0);
   private keyF = new Float64Array(0);
   private warmBuf: WarmStart = { R: new Float64Array(3), L: new Float64Array(3), steps: 0, smooth: true };
-  private lookBuf = [0, 0, 0] as V3;
-  private bodyBuf: BodyTarget = { yaw: 0, pitch: 0, roll: 0, shrugR: 0, shrugL: 0, nod: 0, headYaw: 0, breath: 0 };
   /** the time of the performance's first note */
   readonly first: number;
 
@@ -536,10 +537,10 @@ export class DrummerMotion {
       // --- the height of its preparation
       let H: number;
       if (s.kind === 'choke') H = 0.06;
-      else if (s.kind === 'grace') H = 0.02 + 0.012 * var1;
+      else if (s.kind === 'grace') H = Math.max(0.006, Math.min(0.02 + 0.012 * var1, maxLift(D)));
       else if (s.kind === 'double') {
         // off the rebound of the stroke before: lower, the fingers pushing it down again
-        H = D < 0.05 ? 0.004 + 0.004 * var1 : clamp(0.42 * a.prep, 0.008, maxLift(D));
+        H = D < 0.05 ? 0.004 + 0.004 * var1 : Math.min(Math.max(0.42 * a.prep, 0.008), Math.max(0.006, maxLift(D)));
         if (D < 0.05) s.kind = 'buzz';
       } else {
         const [lo, hi] = PREP[s.level];
@@ -623,8 +624,13 @@ export class DrummerMotion {
       s.ta = s.top - 0.01;
       s.tl = Math.max(leave, s.ta - Tm);
       if (s.ta - s.tl < 0.75 * Tm && dist > 0.03) s.ta = Math.min(s.t, s.tl + 0.75 * Tm);
-      if (s.ta - s.tl < 0.03) s.tl = s.ta - 0.03;
+      if (s.ta - s.tl < 0.03) s.ta = Math.min(s.t, s.tl + 0.03);
+      // (never before the last stroke has left the surface: it lands exactly on its own spot)
+      if (a.kind !== 'ready' && s.tl < t0) s.tl = t0;
+      if (s.ta <= s.tl) s.ta = Math.min(s.t, s.tl + 1e-3);
       s.clear = moving ? clearLift(a, s) : 0;
+      // crossing over the other arm on the way (Sticking's arm on top): over it, higher
+      if (moving && s.over === hand && s.piece !== 'hihat') s.clear += 0.1;
       // --- a crash follows through past its edge: along the stick's sweep and out, then the hand recovers
       if (s.piece === 'crash' && s.kind !== 'choke') {
         const d = DRUMS.crash;
@@ -932,6 +938,9 @@ export class DrummerMotion {
   }
   /** each key's arms' cost */
   private keyC = new Float64Array(0);
+  /** the keys' cost interpolated at the last warm start */
+  private warmCost = 0;
+  private fixBuf = new Float64Array(6);
 
   /** check the interpolation between the last key and (tb, Fb) at its middle, adding keys there as needed (depth-first, in time order) */
   private refine(tb: number, Fb: Float64Array, cb: number, depth: number) {
@@ -1026,6 +1035,7 @@ export class DrummerMotion {
     }
     o.steps = steps;
     o.smooth = true;
+    this.warmCost = this.keyC[lo] + (this.keyC[hi] - this.keyC[lo]) * u;
     return o;
   }
 
@@ -1035,7 +1045,9 @@ export class DrummerMotion {
     this.hands.R.evaluate(t, out.R);
     this.hands.L.evaluate(t, out.L);
     const S = this.sig;
-    const b = this.bodyBuf;
+    // (the body and the look are written into the targets' own objects: a key planned while a frame is being
+    // evaluated has targets of its own)
+    const b = (out.body ??= { yaw: 0, pitch: 0, roll: 0, shrugR: 0, shrugL: 0, nod: 0, headYaw: 0, breath: 0 });
     b.yaw = S.yaw.at(t);
     b.pitch = S.pitch.at(t);
     b.roll = S.roll.at(t);
@@ -1044,12 +1056,10 @@ export class DrummerMotion {
     b.nod = S.nod.at(t);
     b.headYaw = S.headYaw.at(t);
     b.breath = S.breath.at(t);
-    out.body = b;
-    const l = this.lookBuf;
+    const l = (out.look ??= [0, 0, 0]);
     l[0] = S.lx.at(t);
     l[1] = S.ly.at(t);
     l[2] = S.lz.at(t);
-    out.look = l;
     const ll = S.leadL.at(t);
     out.leadL = ll;
     out.lead = ll > 0.5 ? 'L' : 'R';
@@ -1069,8 +1079,30 @@ export class DrummerMotion {
 
   /** the drummer's pose at t: the targets, the planned warm start, the IK (nothing allocated) */
   pose(t: number, targets: DrummerTargets, pose: DrummerPose, steps = 0): DrummerPose {
+    const w = this.warm(t, steps);
     this.evaluate(t, targets);
-    return solveDrummer(targets, pose, this.warm(t, steps));
+    solveDrummer(targets, pose, w);
+    // where the interpolated arms cost much more than the keys around them (into the kit or the other arm, or a
+    // joint near its stop between two keys), refine this frame from there with a couple of Newton steps
+    const over = w ? pose.cost.R + pose.cost.L - this.warmCost - FIX_COST : 0;
+    if (w && over > 0) {
+      // the refined choices, eased in as the excess grows (so a frame never jumps to them)
+      const f = this.fixBuf;
+      f.set(w.R, 0);
+      f.set(w.L, 3);
+      w.steps = 2;
+      w.smooth = false;
+      solveDrummer(targets, pose, w);
+      const k = smooth(over / FIX_RANGE);
+      for (let i = 0; i < 3; i++) {
+        w.R[i] = f[i] + (pose.free.R[i] - f[i]) * k;
+        w.L[i] = f[3 + i] + (pose.free.L[i] - f[3 + i]) * k;
+      }
+      w.steps = 0;
+      w.smooth = true;
+      solveDrummer(targets, pose, w);
+    }
+    return pose;
   }
 }
 
@@ -1098,5 +1130,13 @@ export function blankStick(): StickTarget {
 }
 
 export function blankTargets(): DrummerTargets {
-  return { R: blankStick(), L: blankStick(), lead: 'R', feet: { R: { pedal: 'kickPedal', heel: 'up', press: 0 }, L: { pedal: 'hihatPedal', heel: 'down', press: 1 } } };
+  return {
+    R: blankStick(),
+    L: blankStick(),
+    lead: 'R',
+    leadL: 0,
+    feet: { R: { pedal: 'kickPedal', heel: 'up', heelLift: 1, press: 0 }, L: { pedal: 'hihatPedal', heel: 'down', heelLift: 0, press: 1 } },
+    look: [0, 0, 0],
+    body: { yaw: 0, pitch: 0, roll: 0, shrugR: 0, shrugL: 0, nod: 0, headYaw: 0, breath: 0 },
+  };
 }

@@ -81,7 +81,9 @@ const VIEWS: Record<string, View> = {
   // as clip 6: from the front at the snare, a little above it
   clip6: { pos: [-0.12, 1.0, -1.25], target: [-0.1, 0.85, -0.3], focal: 45 },
   // over the drummer's right shoulder, as from the stool
-  stool: { pos: [0.32, 1.55, 0.55], target: [-0.05, 0.8, -0.55], focal: 30 },
+  stool: { pos: [0.85, 1.75, 0.25], target: [-0.15, 0.8, -0.6], focal: 30 },
+  // the whole drummer from his right, a little in front (for the motion clips)
+  sideMid: { pos: [1.95, 1.15, -0.2], target: [0.0, 0.9, -0.3], focal: 36 },
 };
 
 class Lab {
