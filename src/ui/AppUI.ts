@@ -595,7 +595,8 @@ export class AppUI {
     for (const b of this.drawer.querySelectorAll<HTMLButtonElement>('.tab')) b.classList.toggle('on', b.dataset.tab === this.tab);
     const body = this.drawerBody;
     body.innerHTML = '';
-    if (this.tab === 'fingering') this.renderFingering(body);
+    if (this.tab === 'fingering' && this.app.drums) body.appendChild(el('p', 'note', 'The drums play themselves for now: there is no fingering (or sticking) to show until the robot drummer arrives.'));
+    else if (this.tab === 'fingering') this.renderFingering(body);
     else if (this.tab === 'light') this.renderLight(body);
     else if (this.tab === 'camera') this.renderCamera(body);
     else if (this.tab === 'sound') this.renderSound(body);
@@ -824,7 +825,7 @@ export class AppUI {
   /** a finished film of the performance: shape, size, frame rate, range; rendered offline, offered as an MP4 */
   private renderExport(body: HTMLElement) {
     const a = this.app;
-    const p = a.piece;
+    const p = a.drums ?? a.piece;
     if (!p) return;
     const film = this.film;
     body.appendChild(

@@ -67,7 +67,8 @@ export const DRUMS: Record<DrumId, DrumSpec> = {
   // the kick lies on its side: its batter head faces the drummer (+z), centred at the beater's height
   kick: { ...drum('kick', 'drum', 22, 18, [0.1, 0.29, -0.4], 90, 'RF'), yaw: 0 },
   snare: drum('snare', 'drum', 14, 5.5, [-0.13, 0.66, -0.3], 8, 'L'),
-  hihat: drum('hihat', 'cymbal', 14, 0, [-0.43, 0.9, -0.28], 4, 'R'),
+  // (x moved from -0.43 with the pedal below, so the pedal's footboard runs from the heel plate to the column's foot under the ball of the foot)
+  hihat: drum('hihat', 'cymbal', 14, 0, [-0.4, 0.9, -0.28], 4, 'R'),
   tom1: drum('tom1', 'drum', 10, 8, [-0.1, 0.82, -0.56], 14, 'either'),
   tom2: drum('tom2', 'drum', 12, 9, [0.18, 0.84, -0.58], 14, 'either'),
   floorTom: drum('floorTom', 'drum', 16, 16, [0.5, 0.6, -0.3], 3, 'R'),
@@ -78,7 +79,7 @@ export const DRUMS: Record<DrumId, DrumSpec> = {
 /** pedals: where the foot rests (the middle of the footboard) and where its heel sits */
 export const PEDALS: Record<PedalId, { ball: V3; heel: V3; drives: DrumId }> = {
   kickPedal: { ball: [0.12, 0.05, -0.29], heel: [0.12, 0.02, -0.06], drives: 'kick' },
-  hihatPedal: { ball: [-0.34, 0.05, -0.24], heel: [-0.31, 0.02, -0.02], drives: 'hihat' },
+  hihatPedal: { ball: [-0.37, 0.05, -0.24], heel: [-0.345, 0.02, -0.02], drives: 'hihat' },
 };
 
 /** the drummer's sticks: hickory, 5A-ish */
