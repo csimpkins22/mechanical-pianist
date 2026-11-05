@@ -175,7 +175,7 @@ export class PlaceholderKit {
     head.rotation.x = -Math.PI / 2;
     head.position.y = -0.0005;
     g.add(head);
-    const reso = new THREE.Mesh(new THREE.CircleGeometry(r - 0.004, 64), p.id === 'kick' ? m.shell : m.head);
+    const reso = new THREE.Mesh(new THREE.CircleGeometry(r - 0.004, 64), p.id === 'kick' ? m.rubber : m.head);
     reso.rotation.x = Math.PI / 2;
     reso.position.y = -p.depth;
     g.add(reso);

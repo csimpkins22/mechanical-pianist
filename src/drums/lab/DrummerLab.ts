@@ -11,7 +11,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostPipeline, type PostParams } from '../../presentation/PostPipeline';
-import { createPose, limitViolations, solveDrummer, type DrummerPose, type DrummerTargets } from '../DrummerIK';
+import { createPose, limitViolations, refreshKit, solveDrummer, type DrummerPose, type DrummerTargets } from '../DrummerIK';
+import { useLayout, type LayoutName } from './ProposedLayout';
 import { SWEEP, blendTargets, emptyTargets, namedPoses, type NamedPose } from '../DrummerPoses';
 import { clearance, describe } from '../DrummerClearance';
 import { SkeletonFigure } from './SkeletonFigure';
@@ -38,6 +39,12 @@ const VIEWS: Record<string, View> = {
   close: { pos: [0.32, 1.02, -0.72], target: [-0.18, 0.78, -0.12], focal: 70 },
   feet: { pos: [1.15, 0.5, -1.05], target: [-0.05, 0.22, -0.18], focal: 45 },
   side: { pos: [-1.85, 1.0, -0.2], target: [-0.1, 0.78, -0.2], focal: 55 },
+  backClose: { pos: [0.35, 1.25, 0.85], target: [0.0, 1.05, 0.05], focal: 60 },
+  label: { pos: [0.06, 1.12, 0.55], target: [0.0, 1.08, 0.06], focal: 70 },
+  portrait: { pos: [0.75, 1.3, -1.45], target: [-0.02, 0.98, -0.08], focal: 55 },
+  grip: { pos: [-0.62, 0.98, -0.78], target: [-0.2, 0.8, -0.16], focal: 85 },
+  // as the reference footage (clip 4): above the drummer's right, looking down across the kit
+  clip4: { pos: [1.35, 2.05, -1.25], target: [-0.08, 0.78, -0.18], focal: 32 },
 };
 
 class Lab {
@@ -46,11 +53,12 @@ class Lab {
   readonly camera = new THREE.PerspectiveCamera(35, 16 / 9, 0.05, 40);
   readonly post: PostPipeline | null;
   readonly controls: OrbitControls;
-  readonly kit = new PlaceholderKit();
+  kit = new PlaceholderKit();
   readonly skeleton = new SkeletonFigure();
   rig: DrummerRig | null = null;
   readonly pose: DrummerPose = createPose();
-  readonly poses: NamedPose[] = namedPoses();
+  poses: NamedPose[] = namedPoses();
+  layout: LayoutName = 'kit';
   private blend: DrummerTargets = emptyTargets();
   current = 'groove';
   sweeping = false;
@@ -90,9 +98,9 @@ class Lab {
     s.fog = new THREE.FogExp2(0x060607, 0.05);
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     s.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    s.environmentIntensity = 0.16;
+    s.environmentIntensity = 0.05;
     pmrem.dispose();
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshPhysicalMaterial({ color: 0x1c1a19, roughness: 0.62, clearcoat: 0.25, clearcoatRoughness: 0.4 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: 0x2c2620, roughness: 0.78 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     s.add(floor);
@@ -100,7 +108,7 @@ class Lab {
     wall.position.set(0, 3, 0.4);
     s.add(wall);
     // key: a warm, soft spot from above and in front, a little to the drummer's left
-    const key = new THREE.SpotLight(0xffd9b0, 70, 9, 0.62, 0.55, 1.6);
+    const key = new THREE.SpotLight(0xffd9b0, 24, 9, 0.62, 0.55, 1.6);
     key.position.set(-1.25, 3.1, -2.1);
     key.target.position.set(0, 0.75, -0.25);
     key.castShadow = true;
@@ -113,14 +121,14 @@ class Lab {
     s.add(key, key.target);
     this.key = key;
     // rim: cool, behind and to the right, picking out the shells' edges
-    const rim = new THREE.SpotLight(0x9fc4ff, 45, 8, 0.7, 0.6, 1.5);
+    const rim = new THREE.SpotLight(0x9fc4ff, 11, 8, 0.7, 0.6, 1.5);
     rim.position.set(1.6, 2.6, 2.2);
     rim.target.position.set(0, 0.9, -0.1);
     s.add(rim, rim.target);
     // fill: low and cool from the camera side
-    const fill = new THREE.HemisphereLight(0x8a9bb0, 0x1a1410, 0.22);
+    const fill = new THREE.HemisphereLight(0x8a9bb0, 0x1a1410, 0.12);
     s.add(fill);
-    const bounce = new THREE.PointLight(0xffc49a, 1.2, 3, 2);
+    const bounce = new THREE.PointLight(0xffc49a, 0.35, 3, 2);
     bounce.position.set(0.1, 0.25, -0.9);
     s.add(bounce);
   }
@@ -140,6 +148,18 @@ class Lab {
   setFigure(f: string) {
     this.skeleton.root.visible = f === 'skeleton' || f === 'both' || !this.rig;
     if (this.rig) this.rig.root.visible = f === 'robot' || f === 'both';
+  }
+
+  /** KitLayout as it is, or with the moves this stage proposes (ProposedLayout.ts) */
+  setLayout(name: LayoutName) {
+    this.layout = name;
+    useLayout(name);
+    refreshKit();
+    this.scene.remove(this.kit.root);
+    this.kit = new PlaceholderKit(this.kit.mats);
+    this.scene.add(this.kit.root);
+    this.poses = namedPoses();
+    this.solve();
   }
 
   setView(name: string) {
@@ -195,7 +215,7 @@ class Lab {
     const lim = limitViolations(p);
     const clr = clearance(p, targets, { margin: 0.003 });
     const st = (s: 'R' | 'L') => `${s}: ${(p.error[s] * 1000).toFixed(1)} mm, stick ${deg(p.stickAngle[s])}${targets[s].lift > 0 ? `, lifted ${(targets[s].lift * 100).toFixed(1)} cm` : ''}`;
-    this.info.innerHTML = `<b>${name}</b><br>${st('R')}<br>${st('L')}<br>torso turn ${deg(p.torso[0])}, lean ${deg(-p.torso[1])}, bend ${deg(p.torso[2])}<br>shoulders ${p.pos[3 * 7 + 1].toFixed(3)} m` +
+    this.info.innerHTML = `<b>${name}</b> <span class="h">${this.layout === 'kit' ? 'KitLayout' : 'proposed layout'}</span><br>${st('R')}<br>${st('L')}<br>torso turn ${deg(p.torso[0])}, lean ${deg(-p.torso[1])}, bend ${deg(p.torso[2])}<br>shoulders ${p.pos[3 * 7 + 1].toFixed(3)} m` +
       `<br><span class="${lim.length ? 'bad' : 'ok'}">limits: ${lim.length ? lim.map((x) => `${x.name} ${deg(x.value)}`).join(', ') : 'all within'}</span>` +
       `<br><span class="${clr.some((c) => c.distance < 0) ? 'bad' : 'ok'}">clearance: ${clr.length ? clr.slice(0, 6).map(describe).join('<br>') : 'clear'}</span>`;
   }
@@ -220,6 +240,9 @@ class Lab {
     add('Slow sweep between spots', () => this.setPose('sweep'), 'accent');
     h('View');
     for (const v of Object.keys(VIEWS)) add(v, () => this.setView(v), 'small');
+    h('Kit layout');
+    add('KitLayout', () => this.setLayout('kit'), 'small');
+    add('proposed', () => this.setLayout('proposed'), 'small');
     h('Figure');
     for (const f of ['robot', 'skeleton', 'both']) add(f, () => this.setFigure(f), 'small');
     this.info = document.createElement('div');
@@ -251,7 +274,7 @@ class Lab {
       fstop: 5.6,
       focus,
       dof: true,
-      exposure: 0.92,
+      exposure: 1.2,
       bloomStrength: 0.25,
       bloomRadius: 0.5,
       bloomThreshold: 1.6,
@@ -303,6 +326,7 @@ async function main() {
   lab.resize();
   window.addEventListener('resize', () => lab.resize());
   await lab.loadRobot();
+  if (params.get('layout') === 'proposed') lab.setLayout('proposed');
   lab.setView(params.get('view') ?? 'front');
   lab.t = parseFloat(params.get('t') ?? '0');
   lab.setPose(params.get('pose') ?? 'groove');

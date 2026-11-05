@@ -25,7 +25,7 @@ const { chromium } = require('playwright');
     }
     if (process.env.EVAL) await page.evaluate(process.env.EVAL);
     await page.evaluate(() => window.lab.renderNow());
-    await page.screenshot({ path: out });
+    await page.screenshot({ path: out, timeout: 240000 });
     console.log('wrote', out);
   }
   const errs = logs.filter((l) => /error|warn/i.test(l));

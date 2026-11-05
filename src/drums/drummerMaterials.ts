@@ -30,15 +30,15 @@ export interface DrummerPalette {
   byName: Record<string, THREE.Material>;
 }
 
-/** the maker's label: white ink in the alpha (black on transparent elsewhere) */
+/** the maker's label: dark ink on transparent, a little uneven, as printed */
 function makeLabel(): THREE.Texture {
   if (typeof document === 'undefined') return new THREE.DataTexture(new Uint8Array(4), 1, 1);
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 384;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#fff';
-  g.strokeStyle = '#fff';
+  g.fillStyle = '#2a2c2f';
+  g.strokeStyle = '#2a2c2f';
   g.lineWidth = 5;
   g.strokeRect(10, 10, 1004, 364);
   g.lineWidth = 2;
@@ -59,9 +59,20 @@ function makeLabel(): THREE.Texture {
   g.moveTo(856, 184);
   g.lineTo(944, 96);
   g.stroke();
+  // a printed stamp: ink a little patchy
+  const img = g.getImageData(0, 0, c.width, c.height);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const x = (i / 4) % c.width;
+    const y = Math.floor(i / 4 / c.width);
+    const n = Math.sin(x * 0.071 + y * 0.013) * Math.sin(y * 0.093 - x * 0.021);
+    img.data[i + 3] = Math.round(img.data[i + 3] * (0.82 + 0.18 * n));
+  }
+  g.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.anisotropy = 8;
-  t.colorSpace = THREE.NoColorSpace;
+  t.colorSpace = THREE.SRGBColorSpace;
+  // glTF's texture coordinates start at the top
+  t.flipY = false;
   return t;
 }
 
@@ -163,17 +174,14 @@ export function createDrummerPalette(): DrummerPalette {
   });
   // the printed label: a decal over the porcelain, its ink a dark graphite
   const label = new THREE.MeshPhysicalMaterial({
-    color: 0x2b2d30,
-    roughness: 0.5,
-    clearcoat: 0.6,
-    clearcoatRoughness: 0.14,
-    transparent: true,
-    alphaMap: makeLabel(),
-    depthWrite: false,
+    map: makeLabel(),
+    roughness: 0.45,
+    clearcoat: 0.75,
+    clearcoatRoughness: 0.12,
+    alphaTest: 0.35,
     polygonOffset: true,
-    polygonOffsetFactor: -2,
-    polygonOffsetUnits: -2,
-    opacity: 0.8,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
   });
   const byName: Record<string, THREE.Material> = {
     shell,

@@ -226,10 +226,10 @@ def spine_band(name, parent, y0, y1, w0, w1, d0, d1, top_band=False):
     W = lambda u: lerp(w0, w1, u)
     Dd = lambda u: lerp(d0, d1, u)
     Z = -0.058
-    pill(shell, "shell", -y0, -y1, W, Dd, n=2.6, e0=0, e1=0, th=(-0.75, math.pi + 0.75), yoff=Z, xf=xf_up(), nu=6,
+    pill(shell, "shell", -y0, -y1, W, Dd, n=2.6, e0=0, e1=0, th=(-1.02, math.pi + 1.02), yoff=Z, xf=xf_up(), nu=6,
          nv=64)
     pill(glass, "glass", -y0 - 0.004, -y1 + 0.004, lambda u: W(u) * 1.004, lambda u: Dd(u) * 1.004, n=2.6, e0=0,
-         e1=0, th=(math.pi + 0.66, TAU - 0.66), yoff=Z, xf=xf_up(), nu=4, nv=32)
+         e1=0, th=(math.pi + 0.94, TAU - 0.94), yoff=Z, xf=xf_up(), nu=4, nv=32)
     # inside: a graphite column, chrome actuator rods and lines of light
     pill(core, "graphite", -y0 + 0.004, -y1 - 0.004, lambda u: W(u) * 0.62, lambda u: Dd(u) * 0.6, n=3.0, e0=0,
          e1=0, yoff=Z + 0.008, xf=xf_up(), nu=4, nv=32)
@@ -259,7 +259,7 @@ def build_chest(parent):
         return 0.178 + 0.03 * math.sin(math.pi * u * 0.9) - 0.04 * smooth01((u - 0.72) / 0.28)
 
     y0, y1 = 0.0, 0.205
-    win = 0.36
+    win = 0.2
     pill(shell, "shell", -y0, -y1, W, Dd, n=2.5, e0=0, e1=0.2, th=(-math.pi / 2 + win, 3 * math.pi / 2 - win),
          yoff=Z, xf=xf_up(), nu=36, nv=80)
     pill(glass, "glass", -y0 - 0.006, -y1 + 0.004, lambda u: W(u) * 1.006, lambda u: Dd(u) * 1.006, n=2.5, e0=0,
@@ -386,9 +386,10 @@ def build_upper_arm(name, parent):
     L = DS.UPPER_ARM
     # the deltoid: a porcelain cap over the shoulder ball, up and out
     cap = MB()
-    prof = [(0.0, 0.07), *[(0.07 * math.sin(a), 0.07 * math.cos(a)) for a in [i * 0.115 for i in range(1, 14)]]]
-    lathe(cap, prof, "shell", 64, orient(V(-0.45, -1, 0.05).normalized()) @ tr(0, 0, 0.0))
-    shell.extend(cap, tr(0.006, 0.004, 0.0))
+    R0 = 0.06
+    prof = [(0.0, R0 * 0.82), *[(R0 * math.sin(a), R0 * 0.82 * math.cos(a)) for a in [i * 0.11 for i in range(1, 14)]]]
+    lathe(cap, prof, "shell", 64, orient(V(-0.5, -1, 0.05).normalized()))
+    shell.extend(cap, tr(0.004, -0.006, 0.0))
     W = lambda u: lerp(0.094, 0.08, u)
     Dd = lambda u: lerp(0.1, 0.084, u)
     y0, y1 = -0.03, -(L - 0.036)
@@ -734,11 +735,11 @@ def build_label(chest):
             x = -w / 2 + w * i / nu
             y = yc - h / 2 + h * j / nv
             verts.append(to_blender(V(x, y, back_z(x, y))))
-            uvs.append((1 - i / nu, j / nv))
+            uvs.append((i / nu, j / nv))
     for j in range(nv):
         for i in range(nu):
             a = j * (nu + 1) + i
-            faces.append((a, a + nu + 1, a + nu + 2, a + 1))
+            faces.append((a, a + 1, a + nu + 2, a + nu + 1))  # facing out of the back
     me.from_pydata(verts, [], faces)
     uv = me.uv_layers.new(name="UVMap")
     for poly in me.polygons:
@@ -838,6 +839,38 @@ def stick_wear(sticks):
             col.data[li].color = c
 
 
+def label_preview():
+    """(previews only) the label's printing, as the runtime draws it: dark ink in the alpha of a canvas"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return
+    im = Image.new("RGBA", (1024, 384), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    try:
+        big = ImageFont.truetype("DejaVuSans-Bold.ttf", 86)
+        mid = ImageFont.truetype("DejaVuSans.ttf", 42)
+        small = ImageFont.truetype("DejaVuSans.ttf", 32)
+    except OSError:
+        big = mid = small = ImageFont.load_default()
+    d.rectangle((10, 10, 1014, 374), outline=(255, 255, 255, 255), width=5)
+    d.text((54, 62), "VEY AUTOMATA", fill=(255, 255, 255, 255), font=big)
+    d.text((56, 190), "DR-3  PERCUSSION UNIT", fill=(255, 255, 255, 255), font=mid)
+    d.text((56, 276), "SN 0815-D     48 V     MADE BY HAND", fill=(255, 255, 255, 255), font=small)
+    d.ellipse((838, 78, 962, 202), outline=(255, 255, 255, 255), width=6)
+    path = os.path.join(os.path.dirname(OUT), ".label_preview.png")
+    im.save(path)
+    img = bpy.data.images.load(path)
+    m = bpy.data.materials.get("label")
+    nt = m.node_tree
+    bsdf = nt.nodes["Principled BSDF"]
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    nt.links.new(tex.outputs["Alpha"], bsdf.inputs["Alpha"])
+    m.blend_method = "BLEND" if hasattr(m, "blend_method") else None
+    os.remove(path)
+
+
 def preview(path, root):
     """studio renders in Cycles: the whole drummer on a stool, and the hands on the sticks"""
     sc = scene()
@@ -889,6 +922,7 @@ def preview(path, root):
     g = bpy.data.materials.get("glow")
     if g:
         g.node_tree.nodes["Principled BSDF"].inputs["Emission Strength"].default_value = 8.0
+    label_preview()
     shots = os.environ.get("PREVIEW_SHOTS", "full").split(",")
     views = {
         "full": (V(1.25, 1.35, -2.25), V(0.0, 0.82, -0.12), 42, None),
@@ -960,22 +994,33 @@ def main():
         hands = [o for o in objs if o.name[:2] in ("R_", "L_") or o.name.startswith("Stick")]
         body = [o for o in objs if o not in hands and o.name != "ChestLabel"]
         samples = int(os.environ.get("BAKE_SAMPLES", "32"))
+        # the label floats a hair off the back: it must not shade the shell under it
+        lab = bpy.data.objects.get("ChestLabel")
+        if lab:
+            lab.hide_render = True
         bake_masks(hands, distance=0.007, samples=samples)
         bake_masks(body, distance=0.02, samples=samples)
+        if lab:
+            lab.hide_render = False
         reset_rest()
     stick_wear([o for o in objs if o.name.startswith("Stick")])
+    reset_rest()
+    # export the rest pose (the rig poses everything): the drummer's hierarchy and nothing else
+    bpy.ops.object.select_all(action="DESELECT")
+    stack = [root]
+    while stack:
+        o = stack.pop()
+        o.select_set(True)
+        stack.extend(o.children)
+    bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", use_selection=True, export_apply=False,
+                              export_yup=True, export_vertex_color="ACTIVE", export_all_vertex_colors=False,
+                              export_normals=True, export_texcoords=True, export_materials="EXPORT",
+                              export_extras=False, export_cameras=False, export_lights=False)
+    print("wrote", OUT)
     if POSE:
         apply_pose(POSE)
     if PREVIEW:
         preview(PREVIEW, root)
-    reset_rest()
-    # export the rest pose with the fingers as built (the rig poses everything)
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.export_scene.gltf(filepath=OUT, export_format="GLB", use_selection=False, export_apply=False,
-                              export_yup=True, export_vertex_color="ACTIVE", export_all_vertex_colors=False,
-                              export_normals=True, export_texcoords=True, export_materials="EXPORT",
-                              export_extras=False)
-    print("wrote", OUT)
 
 
 main()
