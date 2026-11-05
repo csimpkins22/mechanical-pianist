@@ -3,7 +3,7 @@
 // For reviewing a sticking (tests, the lab, a drummer reading it), not for
 // the stage.
 import type { DrumPerformance } from './DrumScore';
-import type { DrumId } from './KitLayout';
+import { DRUMS, type DrumId } from './KitLayout';
 import type { Level, Limb, Sticking } from './Sticking';
 
 export interface TabNote {
@@ -15,13 +15,13 @@ export interface TabNote {
   grace: boolean;
   /** an open hi-hat (the pedal lifted), a rimshot, a cross-stick, the ride's bell, a cymbal's edge */
   mark: '' | 'open' | 'rim' | 'xstick' | 'bell' | 'edge';
-  /** arms crossed other than the standard right-over-left hi-hat position */
-  crossed: boolean;
 }
 
 export interface TabRow {
   key: string;
   label: string;
+  /** drums show ghost notes; cymbals and pedals do not (a soft cymbal note is just soft) */
+  kind: 'drum' | 'cymbal' | 'foot';
   /** per column, the notes that fall in it (usually none or one) */
   cells: TabNote[][];
 }
@@ -89,8 +89,10 @@ export function bestSubdivision(hits: { t: number; piece: string; zone?: string 
     }
     return n / Math.max(1, hits.length);
   };
-  const ladder = err(3) <= err(4) * 1.05 ? [3, 6, 12] : [4, 8, 16];
-  for (const sub of ladder) if (collisions(sub) <= 0.03) return sub;
+  // (a swung feel sits between the grids: triplets when they fit about as well as sixteenths and the sixteenths fit loosely)
+  const e4 = err(4);
+  const ladder = e4 > 0.01 && err(3) <= e4 * 1.1 ? [3, 6, 12] : [4, 8, 16];
+  for (const sub of ladder) if (collisions(sub) <= 0.06) return sub;
   return ladder[ladder.length - 1];
 }
 
@@ -107,17 +109,28 @@ export function stickingTab(perf: DrumPerformance, s: Sticking, opts: { firstBar
   // (a note a little ahead of the bar line belongs to it)
   const t0 = origin + firstBar * barLen;
   const t1 = t0 + bars * barLen;
-  const inWin = s.hits.filter((h) => h.t >= t0 - beat / 8 && h.t < t1 - beat / 8);
-  const sub = opts.sub ?? bestSubdivision(inWin, beat, origin);
+  // a flam's grace note is written with its main note
+  const at = s.hits.map((h) => {
+    if (!h.grace) return h.t;
+    for (let k = h.hit + 1; k < s.hits.length && s.hits[k].t - h.t < 0.06; k++) if (s.hits[k].piece === h.piece) return s.hits[k].t;
+    return h.t;
+  });
+  const inWin = s.hits.filter((h) => at[h.hit] >= t0 - beat / 8 && at[h.hit] < t1 - beat / 8);
+  const sub = opts.sub ?? bestSubdivision(inWin.filter((h) => !h.grace), beat, origin);
   const cols = bars * perBar * sub;
-  const rows: TabRow[] = ROWS.map((r) => ({ key: r.key, label: r.label, cells: Array.from({ length: cols }, () => [] as TabNote[]) }));
+  const rows: TabRow[] = ROWS.map((r) => ({
+    key: r.key,
+    label: r.label,
+    kind: r.foot ? 'foot' : DRUMS[r.piece].kind,
+    cells: Array.from({ length: cols }, () => [] as TabNote[]),
+  }));
   const hits = perf.hits;
   for (const h of inWin) {
     const src = hits[h.hit];
     const foot = h.limb === 'RF' || h.limb === 'LF';
     const ri = ROWS.findIndex((r) => r.piece === h.piece && !!r.foot === (foot || (h.piece === 'hihat' && h.zone === 'pedal')));
     if (ri < 0) continue;
-    const col = Math.round(((h.t - t0) / beat) * sub);
+    const col = Math.round(((at[h.hit] - t0) / beat) * sub);
     if (col < 0 || col >= cols) continue;
     const mark: TabNote['mark'] =
       h.zone === 'rim' ? 'rim' : h.zone === 'crossStick' ? 'xstick' : h.zone === 'bell' ? 'bell' : h.piece === 'hihat' && (src.midi === 46 || src.midi === 26) ? 'open' : h.zone === 'edge' && h.piece !== 'hihat' ? 'edge' : '';
@@ -129,14 +142,13 @@ export function stickingTab(perf: DrumPerformance, s: Sticking, opts: { firstBar
       double: h.double,
       grace: h.grace,
       mark,
-      crossed: h.over !== null && !(h.piece === 'snare' || h.piece === 'hihat' || h.piece === 'crash') ? true : false,
     });
   }
   return { sub, perBar, firstBar, bars, counts: countLabels(sub, perBar), rows: rows.filter((r) => r.cells.some((c) => c.length)) };
 }
 
 /** one note as tab text: R or L (RF, LF for feet); ">" an accent, "( )" a ghost, a lowercase grace note before its main note, "x" dropped */
-function noteText(ns: TabNote[]): string {
+function noteText(ns: TabNote[], kind: TabRow['kind']): string {
   if (!ns.length) return '';
   return ns
     .map((n) => {
@@ -144,7 +156,7 @@ function noteText(ns: TabNote[]): string {
       let s: string = n.limb;
       if (n.grace) return s.toLowerCase();
       if (n.level === 'accent') s += '>';
-      if (n.level === 'ghost' && n.limb.length === 1) s = `(${s})`;
+      if (n.level === 'ghost' && kind === 'drum') s = `(${s})`;
       return s;
     })
     .join('');
@@ -154,7 +166,7 @@ function noteText(ns: TabNote[]): string {
 export function stickingText(perf: DrumPerformance, s: Sticking, opts: { firstBar?: number; bars?: number; sub?: number; barsPerLine?: number } = {}): string {
   const tab = stickingTab(perf, s, opts);
   const per = tab.perBar * tab.sub;
-  const w = Math.max(3, ...tab.rows.flatMap((r) => r.cells.map((c) => noteText(c).length + 1)));
+  const w = Math.max(4, ...tab.rows.flatMap((r) => r.cells.map((c) => noteText(c, r.kind).length + 1)));
   const pad = (x: string) => x + ' '.repeat(Math.max(0, w - x.length));
   const lines: string[] = [];
   const barsPerLine = opts.barsPerLine ?? 2;
@@ -172,7 +184,7 @@ export function stickingText(perf: DrumPerformance, s: Sticking, opts: { firstBa
       let line = r.label.padEnd(12);
       for (let b = b0; b < b1; b++) {
         line += '|';
-        for (let c = b * per; c < (b + 1) * per; c++) line += pad(noteText(r.cells[c]) || '-');
+        for (let c = b * per; c < (b + 1) * per; c++) line += pad(noteText(r.cells[c], r.kind) || '-');
       }
       lines.push(line + '|');
     }

@@ -148,7 +148,7 @@ const CHOKE_HOLD = 0.08;
 /** a flam: a grace note on the same drum this soon before the main note, the pair clear of other notes on that drum */
 const FLAM_MIN = 0.008;
 const FLAM_MAX = 0.045;
-const FLAM_CLEAR = 0.07;
+const FLAM_CLEAR = 0.05;
 /** a single kick pedal comfortably repeats about 13 notes a second (heel-toe and slides go faster, briefly) */
 const KICK_MIN_INTERVAL = 1 / 13;
 
@@ -183,10 +183,13 @@ export const COSTS = {
   /** per double's second stroke: a rebound is weaker and harder to keep even than a fresh single, so doubles come in
    *  only where singles would be faster than a hand comfortably goes (above about 16 notes a second, shared) */
   double: 1,
+  /** per unit a rebound is louder than the stroke it bounces off: a rebound gives back at most the stroke's energy,
+   *  so a loud note straight after a soft one needs a fresh stroke (or the other hand) */
+  reboundAccent: 4,
   /** per further bounce of a buzz (a press roll's stroke bounces freely three or four times), plus buzzVelocity × its
-   *  velocity: a buzz is soft by nature, and a loud note cannot come from a free bounce */
+   *  velocity squared: a buzz is soft by nature, and a loud note cannot come from a free bounce */
   buzz: 0.3,
-  buzzVelocity: 2,
+  buzzVelocity: 4,
   /** playing a piece with the hand that does not usually play it, per unit of ROLE (below) */
   role: 1,
   /** per 30 cm the left hand's tip is right of the right hand's: arms crossed. The standard right-over-left hi-hat
@@ -309,8 +312,9 @@ export function beatGrid(perf: DrumPerformance) {
 }
 
 /**
- * Flams: two hand hits on one drum 8-45 ms apart, clear of other notes on it
- * (closer notes on both sides are a roll or a buzz, not a flam).
+ * Flams: two hand hits on one drum 8-45 ms apart, the first no louder than
+ * the second, clear of other notes on it (closer notes on both sides, or a
+ * fading pair, are a roll or a buzz, not a flam).
  * Returns the grace note's index for each main note's index.
  */
 export function findFlams(hits: DrumHit[]): Map<number, number> {
@@ -326,7 +330,7 @@ export function findFlams(hits: DrumHit[]): Map<number, number> {
       const g = list[j - 1];
       const m = list[j];
       const dt = m.t - g.t;
-      if (dt < FLAM_MIN || dt > FLAM_MAX) continue;
+      if (dt < FLAM_MIN || dt > FLAM_MAX || g.velocity > m.velocity + 0.05) continue;
       if (j >= 2 && g.t - list[j - 2].t < FLAM_CLEAR) continue;
       if (j + 1 < list.length && list[j + 1].t - m.t < FLAM_CLEAR) continue;
       if (graceOf.has(g.i)) continue;
@@ -373,9 +377,11 @@ interface HandState {
   /** strokes off the rebound since its last fresh stroke, and that fresh stroke's time */
   bounces: number;
   pressT: number;
+  /** its last stroke's velocity */
+  vel: number;
 }
 
-const NO_HAND: HandState = { e: -1, t: -1e9, at: [0, 0, 0], piece: null, gap: Infinity, bounces: 0, pressT: -1e9 };
+const NO_HAND: HandState = { e: -1, t: -1e9, at: [0, 0, 0], piece: null, gap: Infinity, bounces: 0, pressT: -1e9, vel: 0 };
 
 interface State {
   R: HandState;
@@ -464,7 +470,8 @@ function strokeCost(st: State, ev: Ev, h: Hand, info: Info | null): number {
       const single = dt >= SINGLE_MIN ? effort(dt, ev.vel) : Infinity;
       // off the rebound: a double (a fresh stroke, not itself part of a fast run, and its bounce), or a buzz's further bounces
       const kind = reboundKind(me, t);
-      const rebound = kind === 1 ? COSTS.double : kind === 2 ? COSTS.buzz + COSTS.buzzVelocity * ev.vel : Infinity;
+      const louder = COSTS.reboundAccent * Math.max(0, ev.vel - me.vel - 0.2);
+      const rebound = kind === 1 ? COSTS.double + louder : kind === 2 ? COSTS.buzz + COSTS.buzzVelocity * ev.vel * ev.vel + louder : Infinity;
       if (!isFinite(single) && !isFinite(rebound)) return Infinity;
       if (rebound < single) {
         c += rebound;
@@ -578,10 +585,10 @@ function strokeCost(st: State, ev: Ev, h: Hand, info: Info | null): number {
 function nextState(st: State, ev: Ev, e: number, h: Hand, cost: number, rebound: boolean): State {
   const me = h === 'R' ? st.R : st.L;
   const hs: HandState = ev.choke
-    ? { e, t: ev.t + CHOKE_HOLD, at: ev.at, piece: ev.piece, gap: Infinity, bounces: 0, pressT: -1e9 }
+    ? { e, t: ev.t + CHOKE_HOLD, at: ev.at, piece: ev.piece, gap: Infinity, bounces: 0, pressT: -1e9, vel: 0 }
     : rebound
-      ? { e, t: ev.t, at: ev.at, piece: ev.piece, gap: me.gap, bounces: me.bounces + 1, pressT: me.pressT }
-      : { e, t: ev.t, at: ev.at, piece: ev.piece, gap: me.piece === null ? Infinity : ev.t - me.t, bounces: 0, pressT: ev.t };
+      ? { e, t: ev.t, at: ev.at, piece: ev.piece, gap: me.gap, bounces: me.bounces + 1, pressT: me.pressT, vel: ev.vel }
+      : { e, t: ev.t, at: ev.at, piece: ev.piece, gap: me.piece === null ? Infinity : ev.t - me.t, bounces: 0, pressT: ev.t, vel: ev.vel };
   const s: State = {
     R: h === 'R' ? hs : st.R,
     L: h === 'L' ? hs : st.L,
