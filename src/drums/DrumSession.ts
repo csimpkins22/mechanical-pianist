@@ -5,6 +5,9 @@
 import type * as THREE from 'three';
 import { readDrumMidi, type DrumPerformance } from './DrumScore';
 import { KitMotion } from './KitMotion';
+import { assignLimbs, type Sticking } from './Sticking';
+import { DrummerMotion, blankTargets } from './DrummerMotion';
+import { createPose, type DrummerPose, type DrummerTargets } from './DrummerIK';
 import type { DrumAudio } from './DrumAudio';
 import { DrumCamera, type DrumView } from '../presentation/DrumCamera';
 import { KIT_ORIGIN, type DrumStage } from '../presentation/DrumStage';
@@ -18,6 +21,13 @@ export interface DrumSource {
 export class DrumSession {
   readonly perf: DrumPerformance;
   readonly motion: KitMotion;
+  /** which limb plays each hit, and the drummer's performance planned from it */
+  readonly sticking: Sticking;
+  readonly drummer: DrummerMotion;
+  private targets: DrummerTargets = blankTargets();
+  private pose: DrummerPose = createPose();
+  private prevPose: DrummerPose = createPose();
+  private idle = 0;
   readonly camera: DrumCamera;
   view: DrumView = 'cinematic';
   /** for tools and inspection: a camera (kit frame: position, target, focal length, f-stop) that replaces the shots */
@@ -34,12 +44,32 @@ export class DrumSession {
   ) {
     this.perf = readDrumMidi(bytes, title);
     this.motion = new KitMotion(this.perf);
+    this.sticking = assignLimbs(this.perf);
+    this.drummer = new DrummerMotion(this.perf, this.sticking, this.motion);
+    // plan the arms' keys ahead in idle moments (a frame plans any it needs itself, in the same order)
+    const ahead = () => {
+      if (this.disposed || this.drummer.prepare(6)) return;
+      this.idle = window.setTimeout(ahead, 16);
+    };
+    if (typeof window !== 'undefined') this.idle = window.setTimeout(ahead, 50);
     this.camera = new DrumCamera(this.perf, KIT_ORIGIN.clone());
     audio.setPerformance(this.perf);
   }
 
   get duration() {
     return this.perf.duration;
+  }
+
+  private disposed = false;
+  /** stop planning ahead (the session is being replaced) */
+  dispose() {
+    this.disposed = true;
+    if (typeof window !== 'undefined') clearTimeout(this.idle);
+  }
+
+  /** the drummer's pose at t (the planned performance through the IK) */
+  poseAt(t: number, into: DrummerPose = this.pose): DrummerPose {
+    return this.drummer.pose(t, this.targets, into);
   }
 
   /** draw the instant t (and, for motion blur, the kit and camera as the shutter opened) */
@@ -59,9 +89,15 @@ export class DrumSession {
     if (open > 0 && !lowQuality) {
       const t0 = Math.max(0, t - open);
       const cut = this.camera.cutBetween(this.view, t0, t);
-      this.stage.setPrevious(this.motion.evaluate(t0), cut || this.inspect ? cam : this.camera.evaluate(this.view, t0), aspect);
+      this.stage.setPrevious(this.motion.evaluate(t0), cut || this.inspect ? cam : this.camera.evaluate(this.view, t0), aspect, this.stage.drummer ? this.poseAt(t0, this.prevPose) : undefined);
     }
     this.stage.update(this.motion.evaluate(t), t);
+    if (this.stage.drummer) {
+      this.stage.setDrummer(this.poseAt(t));
+      // the servo lights flare a little with each arm's effort (its shoulder's rise), and fade
+      const b = this.targets.body;
+      this.stage.drummer.setGlow(2.4, b ? b.shrugR / 0.06 : 0, b ? b.shrugL / 0.06 : 0);
+    }
     this.stage.render(cam, t, look, aspect);
   }
 
@@ -74,8 +110,18 @@ export class DrumSession {
     return this.camera.nameOf(this.view, t);
   }
 
+  /** the kit's and the drummer's state at t, hashed (determinism checks) */
   stateHash(t: number) {
-    return this.motion.stateHash(t);
+    const p = this.poseAt(t);
+    let h = 2166136261 >>> 0;
+    const mix = (n: number) => {
+      const v = Math.round(n * 1e7);
+      h = Math.imul(h ^ (v & 0xffff), 16777619) >>> 0;
+      h = Math.imul(h ^ ((v >>> 16) & 0xffff), 16777619) >>> 0;
+    };
+    for (let i = 0; i < p.angles.length; i++) mix(p.angles[i]);
+    for (const s of ['R', 'L'] as const) for (let k = 0; k < 3; k++) mix(p.stick[s].tip[k]);
+    return `${this.motion.stateHash(t)}-${h.toString(16)}`;
   }
 
   /** where the camera is at t (for tools) */

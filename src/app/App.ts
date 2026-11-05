@@ -490,6 +490,7 @@ export class App {
     if (wasPlaying) this.pause();
     this.drumAudio.stop();
     this.drumAudio.resume();
+    this.drums?.dispose();
     this.drums = new DrumSession(e.bytes(), source, e.title, e.artist, e.year, this.drumAudio, this.drumStage);
     this.t = 0;
     this.loading = null;
@@ -503,6 +504,7 @@ export class App {
   private leaveDrums() {
     if (!this.drums) return;
     this.drumAudio.dispose();
+    this.drums.dispose();
     this.drums = null;
   }
 

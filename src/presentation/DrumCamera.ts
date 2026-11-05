@@ -34,11 +34,12 @@ export const DRUM_SHOTS: DrumShot[] = [
   {
     id: 'front',
     name: 'Three-quarter, from the front',
-    from: { pos: [-1.3, 1.78, -2.52], target: [0.1, 0.69, -0.62] },
-    to: { pos: [-1.18, 1.72, -2.34], target: [0.1, 0.69, -0.62] },
-    focal: [36, 38],
+    // the drummer and the kit together: his head well inside the frame, the bass drum's head at the bottom
+    from: { pos: [-1.5, 1.86, -2.8], target: [0.05, 0.9, -0.5] },
+    to: { pos: [-1.38, 1.8, -2.62], target: [0.05, 0.9, -0.5] },
+    focal: [32, 34],
     fstop: 4,
-    focus: at('snare', 0, -0.05),
+    focus: [-0.05, 0.95, -0.35],
   },
   {
     id: 'overhead',
@@ -53,6 +54,7 @@ export const DRUM_SHOTS: DrumShot[] = [
   {
     id: 'kick',
     name: 'Low, by the kick',
+    // (a detail of the kit: the drummer is behind his toms here, his hands and sticks showing over them)
     from: { pos: [0.62, 0.17, -1.85], target: [0.02, 0.5, -0.66] },
     to: { pos: [0.52, 0.18, -1.75], target: [0.03, 0.52, -0.66] },
     focal: [24, 25],
@@ -79,10 +81,11 @@ export const DRUM_SHOTS: DrumShot[] = [
   },
   {
     id: 'stool',
-    name: "From the drummer's stool",
-    from: { pos: [0.02, 1.34, 0.34], target: [0.05, 0.74, -0.67] },
-    to: { pos: [0.0, 1.35, 0.28], target: [0.05, 0.74, -0.67] },
-    focal: [28, 29],
+    name: "Over the drummer's shoulder",
+    // above and behind his right shoulder, looking down past it at his hands and the kit
+    from: { pos: [0.64, 1.8, 0.34], target: [-0.12, 0.78, -0.6] },
+    to: { pos: [0.6, 1.8, 0.3], target: [-0.12, 0.78, -0.6] },
+    focal: [30, 31],
     fstop: 4,
     focus: at('snare'),
   },
