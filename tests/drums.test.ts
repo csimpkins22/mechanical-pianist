@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CC4_CLOSED, DRUM_MAP, drumMidiBytes, inferPedal, pedalAt, readDrumMidi, scanAftertouch } from '../src/drums/DrumScore';
 import { KitMotion, SWING } from '../src/drums/KitMotion';
-import { DRUMS } from '../src/drums/KitLayout';
+import * as THREE from 'three';
+import { CYMBAL_PROFILES, DRUMS, PEDALS, PEDAL_TRAVEL, SPOTS, cymbalTop, surfaceNormal, type DrumId } from '../src/drums/KitLayout';
+import { orientation } from '../src/presentation/DrumKitModel';
 import { articulationFor } from '../src/drums/DrumAudio';
 
 const groove = (name: string) => readDrumMidi(new Uint8Array(readFileSync(`src/music/drums/${name}.mid`)), name);
@@ -209,5 +211,87 @@ describe('the kit moving', () => {
     expect(k.evaluate(1.02).heads.snare).toBeGreaterThan(0.3);
     expect(k.evaluate(1.02).buzz).toBeGreaterThan(0.3);
     expect(k.evaluate(2.5).heads.snare).toBeLessThan(0.001);
+  });
+});
+
+describe('the kit layout contract', () => {
+  it("puts the cymbals' strike spots on their metal, as the model turns it", () => {
+    for (const id of ['crash', 'ride', 'hihat'] as const) {
+      const d = DRUMS[id];
+      const n = surfaceNormal(d);
+      const p = CYMBAL_PROFILES[id];
+      const R = d.diameter / 2;
+      for (const [name, r] of [['bell', 0.12], ['head', 0.55], ['edge', 0.97]] as const) {
+        const s = SPOTS[name as 'bell' | 'head' | 'edge'](d);
+        // its height above the reference plane, along the normal
+        const h = (s[0] - d.centre[0]) * n[0] + (s[1] - d.centre[1]) * n[1] + (s[2] - d.centre[2]) * n[2];
+        expect(h, `${id} ${name}`).toBeCloseTo(cymbalTop(p, R, r * R), 6);
+      }
+      // the bell stands above the bow, the edge below it
+      expect(cymbalTop(p, R, 0.12 * R)).toBeGreaterThan(0.01);
+      expect(cymbalTop(p, R, 0.97 * R)).toBeLessThan(-0.008);
+    }
+  });
+
+  it("lines the hi-hat pedal up under its column: the ball of the foot behind it, on the footboard", () => {
+    const hp = PEDALS.hihatPedal;
+    const c = DRUMS.hihat.centre;
+    // the footboard runs from the heel to the column's foot
+    const dx = c[0] - hp.heel[0];
+    const dz = c[2] - hp.heel[2];
+    const len = Math.hypot(dx, dz);
+    const along = ((hp.ball[0] - hp.heel[0]) * dx + (hp.ball[2] - hp.heel[2]) * dz) / len;
+    const off = Math.abs((hp.ball[0] - hp.heel[0]) * dz - (hp.ball[2] - hp.heel[2]) * dx) / len;
+    expect(off).toBeLessThan(0.03);
+    expect(len - along).toBeGreaterThan(0.04);
+    expect(PEDAL_TRAVEL).toBeGreaterThan(0.05);
+    expect(PEDAL_TRAVEL).toBeLessThan(0.3);
+  });
+});
+
+/** a drum as its shell (with its hoops at the ends), a cymbal as a disc 7 cm thick around its bow: inside test and surface samples */
+function solid(d: (typeof DRUMS)[DrumId]) {
+  const q = orientation(d);
+  const inv = q.clone().invert();
+  const c = new THREE.Vector3(...d.centre);
+  const R = d.diameter / 2 + (d.kind === 'drum' ? 0.022 : 0);
+  const y0 = d.kind === 'drum' ? -d.depth - 0.015 : -0.035;
+  const y1 = d.kind === 'drum' ? 0.012 : 0.035;
+  return {
+    inside(p: THREE.Vector3) {
+      const l = p.clone().sub(c).applyQuaternion(inv);
+      if (!(l.y > y0 && l.y < y1)) return false;
+      const atHoop = d.kind !== 'drum' || l.y > -0.014 || l.y < -d.depth + 0.014;
+      return Math.hypot(l.x, l.z) < (atHoop ? R : d.diameter / 2 + 0.004);
+    },
+    samples() {
+      const out: THREE.Vector3[] = [];
+      for (let a = 0; a < 96; a++)
+        for (const y of [y0, (y0 + y1) / 2, y1])
+          for (const rr of [R, R * 0.6]) out.push(new THREE.Vector3(Math.sin((a / 96) * 2 * Math.PI) * rr, y, Math.cos((a / 96) * 2 * Math.PI) * rr).applyQuaternion(q).add(c));
+      return out;
+    },
+  };
+}
+
+describe('the kit model', () => {
+  it('has no two drums or cymbals in each other (shells, hoops, cymbals)', () => {
+    const ids = Object.keys(DRUMS) as DrumId[];
+    const hits: string[] = [];
+    for (const a of ids)
+      for (const b of ids) {
+        if (a >= b) continue;
+        const A = solid(DRUMS[a]);
+        const B = solid(DRUMS[b]);
+        if (A.samples().some((p) => B.inside(p)) || B.samples().some((p) => A.inside(p))) hits.push(`${a} and ${b}`);
+      }
+    expect(hits).toEqual([]);
+  });
+
+  it('stands every tripod and the floor tom clear of the pedals, the kick, the stool and each other', async () => {
+    const { DrumKitModel } = await import('../src/presentation/DrumKitModel');
+    const kit = new DrumKitModel();
+    expect(kit.legClearance.length).toBe(5); // floor tom, snare, hi-hat, crash, ride
+    for (const c of kit.legClearance) expect(c.clear, `legs at ${c.at.map((v) => v.toFixed(2))}`).toBeGreaterThan(0);
   });
 });

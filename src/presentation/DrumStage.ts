@@ -25,7 +25,7 @@ import type { KitState } from '../drums/KitMotion';
 import { drift } from '../core/random';
 
 /** where the kit's frame (KitLayout: the floor under the stool) stands in the room */
-export const KIT_ORIGIN = new THREE.Vector3(-0.35, FLOOR_Y, 0.3);
+export const KIT_ORIGIN = new THREE.Vector3(-0.35, FLOOR_Y, 0.47);
 /** the window, on the drummer's left behind him (in the room's frame) */
 export const DRUM_WINDOW = { x: -2.3, y: 1.52, z: 1.05, w: 1.2, h: 1.7 };
 const BARS = { vertical: [DRUM_WINDOW.z - 0.2, DRUM_WINDOW.z + 0.2], horizontal: [DRUM_WINDOW.y + 0.28, DRUM_WINDOW.y - 0.28], half: 0.035 };
@@ -157,7 +157,7 @@ export class DrumStage {
   /** the sun's shadow camera, fitted tightly around the kit as the sun sees it */
   private fitSun() {
     const sun = this.sun;
-    const centre = KIT_ORIGIN.clone().add(new THREE.Vector3(0.1, 0.6, -0.4));
+    const centre = KIT_ORIGIN.clone().add(new THREE.Vector3(0.1, 0.6, -0.57));
     sun.position.copy(centre).addScaledVector(this.sunDir, -4);
     sun.target.position.copy(centre);
     sun.updateMatrixWorld();
@@ -168,7 +168,7 @@ export class DrumStage {
     const hi = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
     for (const x of [-1.15, 1.35])
       for (const y of [0, 1.45])
-        for (const z of [-1.25, 0.45]) {
+        for (const z of [-1.5, 0.45]) {
           const p = new THREE.Vector3(x, y, z).add(KIT_ORIGIN).applyMatrix4(inv);
           lo.min(p);
           hi.max(p);
@@ -321,7 +321,7 @@ export class DrumStage {
   private captureReflections() {
     const rt = new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType });
     const cam = new THREE.CubeCamera(0.05, 20, rt);
-    cam.position.copy(KIT_ORIGIN).add(new THREE.Vector3(0.1, 0.95, -0.4));
+    cam.position.copy(KIT_ORIGIN).add(new THREE.Vector3(0.1, 0.95, -0.57));
     this.kit.root.visible = false;
     this.dust.visible = false;
     this.scene.add(cam);

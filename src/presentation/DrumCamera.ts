@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import type { CameraState } from './CinematicCamera';
 import type { DrumPerformance } from '../drums/DrumScore';
 import { drift } from '../core/random';
+import { DRUMS, type DrumId } from '../drums/KitLayout';
 
 type V3 = [number, number, number];
 
@@ -26,61 +27,64 @@ export interface DrumShot {
   turn?: number;
 }
 
+/** a drum's or cymbal's centre (KitLayout), for the views' focus */
+const at = (id: DrumId, dy = 0, dz = 0): V3 => [DRUMS[id].centre[0], DRUMS[id].centre[1] + dy, DRUMS[id].centre[2] + dz];
+
 export const DRUM_SHOTS: DrumShot[] = [
   {
     id: 'front',
     name: 'Three-quarter, from the front',
-    from: { pos: [-1.3, 1.78, -2.35], target: [0.1, 0.66, -0.45] },
-    to: { pos: [-1.18, 1.72, -2.17], target: [0.1, 0.66, -0.45] },
+    from: { pos: [-1.3, 1.78, -2.52], target: [0.1, 0.69, -0.62] },
+    to: { pos: [-1.18, 1.72, -2.34], target: [0.1, 0.69, -0.62] },
     focal: [36, 38],
     fstop: 4,
-    focus: [-0.13, 0.7, -0.38],
+    focus: at('snare', 0, -0.05),
   },
   {
     id: 'overhead',
     name: 'Overhead, turning',
-    from: { pos: [0.12, 2.55, -0.38], target: [0.12, 0.55, -0.4] },
-    to: { pos: [0.12, 2.5, -0.38], target: [0.12, 0.55, -0.4] },
+    from: { pos: [0.12, 2.6, -0.55], target: [0.12, 0.55, -0.57] },
+    to: { pos: [0.12, 2.55, -0.55], target: [0.12, 0.55, -0.57] },
     focal: [26, 27],
     fstop: 5.6,
-    focus: [0.1, 0.7, -0.4],
+    focus: [0.1, 0.72, -0.57],
     turn: 0.22,
   },
   {
     id: 'kick',
     name: 'Low, by the kick',
-    from: { pos: [0.62, 0.17, -1.62], target: [0.02, 0.5, -0.48] },
-    to: { pos: [0.52, 0.18, -1.52], target: [0.03, 0.52, -0.48] },
+    from: { pos: [0.62, 0.17, -1.85], target: [0.02, 0.5, -0.66] },
+    to: { pos: [0.52, 0.18, -1.75], target: [0.03, 0.52, -0.66] },
     focal: [24, 25],
     fstop: 4,
-    focus: [0.1, 0.29, -0.86],
+    focus: at('kick', 0, -DRUMS.kick.depth),
   },
   {
     id: 'snare',
     name: 'Close on the snare',
-    from: { pos: [-0.56, 1.2, -0.86], target: [-0.12, 0.66, -0.3] },
-    to: { pos: [-0.53, 1.17, -0.82], target: [-0.12, 0.66, -0.3] },
+    from: { pos: [-0.54, 1.24, -1.04], target: at('snare') },
+    to: { pos: [-0.51, 1.21, -1.0], target: at('snare') },
     focal: [50, 52],
     fstop: 5.6,
-    focus: [-0.12, 0.665, -0.34],
+    focus: at('snare', 0, -0.04),
   },
   {
     id: 'cymbals',
     name: 'Along the cymbals',
-    from: { pos: [1.85, 1.38, -1.0], target: [-0.3, 1.06, -0.5] },
-    to: { pos: [1.85, 1.38, -1.1], target: [-0.3, 1.06, -0.52] },
+    from: { pos: [1.89, 1.4, -1.16], target: [-0.32, 1.08, -0.66] },
+    to: { pos: [1.89, 1.4, -1.26], target: [-0.32, 1.08, -0.68] },
     focal: [50, 50],
     fstop: 4.5,
-    focus: [0.66, 1.02, -0.5],
+    focus: at('ride'),
   },
   {
     id: 'stool',
     name: "From the drummer's stool",
-    from: { pos: [0.02, 1.32, 0.42], target: [0.05, 0.72, -0.5] },
-    to: { pos: [0.0, 1.33, 0.36], target: [0.05, 0.72, -0.5] },
+    from: { pos: [0.02, 1.34, 0.34], target: [0.05, 0.74, -0.67] },
+    to: { pos: [0.0, 1.35, 0.28], target: [0.05, 0.74, -0.67] },
     focal: [28, 29],
     fstop: 4,
-    focus: [-0.13, 0.66, -0.3],
+    focus: at('snare'),
   },
 ];
 

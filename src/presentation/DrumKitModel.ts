@@ -22,13 +22,16 @@
 // from the start of the shutter for motion blur.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { DRUMS, PEDALS, SEAT, surfaceNormal, type DrumId, type DrumSpec } from '../drums/KitLayout';
+import { CYMBAL_HOLE, CYMBAL_PROFILES, DRUMS, PEDALS, PEDAL_TRAVEL, SEAT, cymbalTop, surfaceNormal, type CymbalProfile, type DrumId, type DrumSpec } from '../drums/KitLayout';
 import type { CymbalId, KitState, ShellId, Tilt } from '../drums/KitMotion';
 import { hash01 } from '../core/random';
 import { Parts, along, arc, instanced, revolve, ring, tag, tube, type P2, type V3 } from './drumGeometry';
 import { createDrumPalette, type DrumPalette } from './DrumMaterials';
 
 const HEAD_INDEX: Record<ShellId, number> = { kick: 0, snare: 1, tom1: 2, tom2: 3, floorTom: 4 };
+/** the stool's legs: one straight back, two forward either side (angles from +z, toward +x) */
+const STOOL_LEGS = [0, (2 * Math.PI) / 3, (4 * Math.PI) / 3];
+const STOOL_REACH = 0.28;
 const RESO = 5;
 /** how far up the rug lifts the kit (m) */
 export const RUG_TOP = 0.008;
@@ -49,7 +52,7 @@ function tiltQ(t: Tilt, out = new THREE.Quaternion()): THREE.Quaternion {
 }
 
 // ---------------------------------------------------------------- profiles
-/** a cymbal's cross-section: bell, bow and edge; y = 0 at the top of the bow where it meets the bell */
+/** a cymbal's cross-section (KitLayout's profile): bell, bow and edge; y = 0 at the top of the bow where it meets the bell */
 interface CymbalShape {
   R: number;
   bellR: number;
@@ -57,32 +60,27 @@ interface CymbalShape {
   drop: number;
   /** thickness at the bell, the bow, the edge */
   t: [number, number, number];
+  profile: CymbalProfile;
 }
-const CYMBAL_SHAPES: Record<'crash' | 'ride' | 'hats', CymbalShape> = {
-  crash: { R: DRUMS.crash.diameter / 2, bellR: 0.078, bellH: 0.026, drop: 0.026, t: [0.0024, 0.0011, 0.0006] },
-  ride: { R: DRUMS.ride.diameter / 2, bellR: 0.092, bellH: 0.032, drop: 0.03, t: [0.003, 0.0016, 0.001] },
-  hats: { R: DRUMS.hihat.diameter / 2, bellR: 0.062, bellH: 0.02, drop: 0.012, t: [0.0024, 0.0013, 0.0009] },
+const shapeOf = (id: 'crash' | 'ride' | 'hihat'): CymbalShape => {
+  const p = CYMBAL_PROFILES[id];
+  return { R: DRUMS[id].diameter / 2, bellR: p.bellRadius, bellH: p.bellHeight, drop: p.drop, t: p.thickness, profile: p };
 };
-const HOLE_R = 0.0068;
+const CYMBAL_SHAPES = { crash: shapeOf('crash'), ride: shapeOf('ride'), hats: shapeOf('hihat') };
+const HOLE_R = CYMBAL_HOLE;
 
 function cymbalProfile(s: CymbalShape): P2[] {
-  // the top surface from the edge inward over the bow and up over the bell, then back out underneath
+  // the top surface (KitLayout's, where the strike spots lie) from the edge inward over the bow and up over the bell, then back out underneath
   const top: P2[] = [];
   const N = 40;
   for (let i = 0; i <= N; i++) {
     const r = s.R - (i / N) * (s.R - s.bellR);
-    const u = (r - s.bellR) / (s.R - s.bellR); // 0 at the bell, 1 at the edge
-    // the bow: a gentle convex slope, flattening a little toward the edge
-    const y = -s.drop * (u * (1.35 - 0.35 * u));
-    top.push([r, y]);
+    top.push([r, cymbalTop(s.profile, s.R, r)]);
   }
   const B = 16;
   for (let i = 1; i <= B; i++) {
-    const a = i / B;
-    const r = s.bellR - a * (s.bellR - HOLE_R - 0.004);
-    // the bell: rising steeply from the bow, rounding over its top
-    const y = s.bellH * Math.sin((a * Math.PI) / 2) ** 0.8;
-    top.push([r, y]);
+    const r = s.bellR - (i / B) * (s.bellR - HOLE_R - 0.004);
+    top.push([r, cymbalTop(s.profile, s.R, r)]);
   }
   top.push([HOLE_R, s.bellH]);
   // the underside: the same, offset by the thickness (thicker at the bell), back out to the edge
@@ -198,6 +196,8 @@ export class DrumKitModel {
   private hhPedal = { footOpen: 0, footClosed: 0 };
   /** the obstacles on the floor so far (for placing tripods' legs): circles and capsules in xz */
   private floor: { a: [number, number]; b: [number, number]; r: number }[] = [];
+  /** how far each set of legs stays clear of everything already on the floor (m; for checks) */
+  readonly legClearance: { at: [number, number]; clear: number }[] = [];
 
   constructor() {
     this.root.name = 'DrumKit';
@@ -206,10 +206,15 @@ export class DrumKitModel {
     // the floor's obstacles before any tripod is placed: the kick, the pedals, the stool's legs
     const kp = PEDALS.kickPedal;
     const hp = PEDALS.hihatPedal;
-    this.floor.push({ a: [DRUMS.kick.centre[0], DRUMS.kick.centre[2] - 0.02], b: [DRUMS.kick.centre[0], DRUMS.kick.centre[2] - DRUMS.kick.depth + 0.02], r: 0.17 });
+    // the kick rests on its hoops: 15 cm to either side of its middle its shell is already 3 cm off the floor, room for a foot
+    // (a capsule whose rounded ends stop at the hoops)
+    const kr = 0.15;
+    this.floor.push({ a: [DRUMS.kick.centre[0], DRUMS.kick.centre[2] + 0.02 - kr], b: [DRUMS.kick.centre[0], DRUMS.kick.centre[2] - DRUMS.kick.depth - 0.02 + kr], r: kr });
     this.floor.push({ a: [kp.heel[0], kp.heel[2] + 0.04], b: [kp.ball[0], DRUMS.kick.centre[2]], r: 0.075 });
     this.floor.push({ a: [hp.heel[0], hp.heel[2] + 0.04], b: [DRUMS.hihat.centre[0], DRUMS.hihat.centre[2]], r: 0.07 });
-    this.floor.push({ a: [SEAT.centre[0], SEAT.centre[2]], b: [SEAT.centre[0], SEAT.centre[2]], r: 0.34 });
+    // the stool: its column and three legs (one straight back, the front two either side of the pedals' heels)
+    this.floor.push({ a: [SEAT.centre[0], SEAT.centre[2]], b: [SEAT.centre[0], SEAT.centre[2]], r: 0.05 });
+    for (const a of STOOL_LEGS) this.floor.push({ a: [SEAT.centre[0], SEAT.centre[2]], b: [SEAT.centre[0] + Math.sin(a) * STOOL_REACH, SEAT.centre[2] + Math.cos(a) * STOOL_REACH], r: 0.035 });
 
     for (const id of ['kick', 'snare', 'tom1', 'tom2', 'floorTom'] as ShellId[]) this.buildDrum(id);
     this.buildKickExtras();
@@ -218,8 +223,9 @@ export class DrumKitModel {
     this.buildSnareStand();
     this.buildKickPedal();
     this.buildHiHat();
-    this.buildCymbalStand('crash', [-0.8, -0.9]);
-    this.buildCymbalStand('ride', [1.0, -0.8]);
+    // the boom stands' bases: behind and outside their cymbals
+    this.buildCymbalStand('crash', [DRUMS.crash.centre[0] - 0.3, DRUMS.crash.centre[2] - 0.28]);
+    this.buildCymbalStand('ride', [DRUMS.ride.centre[0] + 0.34, DRUMS.ride.centre[2] - 0.3]);
     this.buildStool();
     this.buildRug();
     this.root.traverse((o) => {
@@ -468,6 +474,13 @@ export class DrumKitModel {
    * (pedals, the kick, other stands' feet). Returns their angles.
    */
   private placeLegs(centre: [number, number], reach: number, n: number, footR: number, prefer = 0): number[] {
+    const best = this.bestLegs(centre, reach, n, footR, prefer);
+    this.legClearance.push({ at: centre, clear: best.score });
+    return Array.from({ length: n }, (_, i) => best.a0 + (i * 2 * Math.PI) / n);
+  }
+
+  /** the clearest turn for a set of legs about a centre, and how clear it is (m) */
+  private bestLegs(centre: [number, number], reach: number, n: number, footR: number, prefer = 0) {
     let best = { a0: prefer, score: -Infinity };
     for (let k = 0; k < 72; k++) {
       const a0 = prefer + (k / 72) * ((2 * Math.PI) / n);
@@ -481,7 +494,7 @@ export class DrumKitModel {
       }
       if (score > best.score) best = { a0, score };
     }
-    return Array.from({ length: n }, (_, i) => best.a0 + (i * 2 * Math.PI) / n);
+    return best;
   }
 
   /** a tripod base: legs from a hub on the tube to rubber feet, braced to a collar */
@@ -511,11 +524,31 @@ export class DrumKitModel {
     const d = this.drums.snare;
     const c = d.spec.centre;
     const parts = new Parts();
-    this.tripod(parts, [c[0], c[2]], 0.2, 0.24, 0.0068);
+    // the snare sits over the gap between the feet: the stand's offset basket arm lets its tripod
+    // stand a little back toward the stool and to the left, wherever its legs keep clearest
+    const reach = 0.2;
+    let base: [number, number] = [c[0], c[2]];
+    let clear = -Infinity;
+    for (const dz of [0, 0.03, 0.06, 0.08])
+      for (const dx of [0, -0.03, -0.06]) {
+        const at: [number, number] = [c[0] + dx, c[2] + dz];
+        const b = this.bestLegs(at, reach, 3, 0.035);
+        if (b.score > clear + 0.005) {
+          clear = b.score;
+          base = at;
+        }
+      }
+    this.tripod(parts, base, 0.19, reach, 0.0068);
     const bottom = new THREE.Vector3(0, -d.spec.depth - 0.035, 0).applyQuaternion(d.base).add(d.group.position);
     const top = new THREE.Vector3(c[0], bottom.y - 0.05, c[2]);
-    parts.add(P.chrome, tube([c[0], 0.2, c[2]], arr(top), 0.0105, 16));
-    parts.add(P.chrome, memoryLock().translate(c[0], 0.36, c[2]));
+    const tubeTop = new THREE.Vector3(base[0], top.y - 0.06, base[1]);
+    parts.add(P.chrome, tube([base[0], 0.19, base[1]], arr(tubeTop), 0.0105, 16));
+    parts.add(P.chrome, memoryLock().translate(base[0], 0.34, base[1]));
+    if (tubeTop.distanceTo(top) > 0.01) {
+      // the offset arm, from the tube's top to the tilter under the basket
+      parts.add(P.chrome, new THREE.CylinderGeometry(0.013, 0.013, 0.03, 16).translate(tubeTop.x, tubeTop.y, tubeTop.z));
+      parts.add(P.chrome, tube(arr(tubeTop), arr(top), 0.009, 14));
+    }
     // the tilt joint and the basket's three arms with rubber-sleeved hooks over the hoop
     parts.add(P.darkMetal, new THREE.CylinderGeometry(0.022, 0.022, 0.03, 18).rotateZ(Math.PI / 2).translate(top.x, top.y + 0.012, top.z));
     parts.add(P.chrome, wingBolt().applyMatrix4(along([top.x + 0.024, top.y + 0.012, top.z], [1, 0, 0])));
@@ -605,8 +638,10 @@ export class DrumKitModel {
     // the footboard rests with its toe raised; pressed, it drops as the beater meets the head
     const toeRest = 0.072;
     const toePressed = 0.024;
+    // (KitLayout's PEDAL_TRAVEL: the robot's foot turns the same footboard by the same angle)
     this.kickPedal.footRest = Math.atan2(toeRest, len);
-    this.kickPedal.footHit = Math.atan2(toePressed, len);
+    this.kickPedal.footHit = this.kickPedal.footRest - PEDAL_TRAVEL;
+    void toePressed;
     this.chainGeo.toe.set(-0.04, 0.026, -len + 0.01);
     // the chain: links between the cam and the toe, posed every frame
     const link = new RoundedBoxGeometry(0.006, 0.011, 0.004, 1, 0.0015);
@@ -640,7 +675,7 @@ export class DrumKitModel {
     const colTop = bottomY - shape.bellH - 0.017;
     const parts = new Parts();
     // the stand: a tripod around the column, the column, its height lock
-    this.tripod(parts, [c[0], c[2]], 0.24, 0.26, 0.0075);
+    this.tripod(parts, [c[0], c[2]], 0.24, 0.245, 0.0075);
     parts.add(P.chrome, tube([c[0], 0.08, c[2]], [c[0], 0.56, c[2]], 0.0135, 18));
     parts.add(P.chrome, memoryLock(0.0175).translate(c[0], 0.56, c[2]));
     parts.add(P.chrome, tube([c[0], 0.56, c[2]], [c[0], colTop, c[2]], 0.0105, 16));
@@ -669,7 +704,7 @@ export class DrumKitModel {
     fp.add(P.darkMetal, new RoundedBoxGeometry(0.088, 0.016, 0.014, 2, 0.003).translate(0, 0.014, -flen + 0.006));
     this.moving.push(...fp.build(hf, 'hihat-footboard'));
     this.hhPedal.footClosed = Math.atan2(0.02, flen);
-    this.hhPedal.footOpen = Math.atan2(0.065, flen);
+    this.hhPedal.footOpen = this.hhPedal.footClosed + PEDAL_TRAVEL;
 
     // the cymbals' head of the stand: tilted as the layout asks, on the column
     const head = new THREE.Group();
@@ -800,10 +835,9 @@ export class DrumKitModel {
     parts.add(P.chrome, memoryLock(0.025).translate(s[0], 0.34, s[2]));
     parts.add(P.chrome, wingBolt(1.3).applyMatrix4(along([s[0] + 0.03, 0.32, s[2]], [1, 0, 0])));
     // three double-braced legs
-    const angles = [0.4, 0.4 + (2 * Math.PI) / 3, 0.4 + (4 * Math.PI) / 3];
-    for (const a of angles) {
+    for (const a of STOOL_LEGS) {
       const dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
-      const foot = new THREE.Vector3(s[0], RUG_TOP + 0.016, s[2]).add(dir.clone().multiplyScalar(0.28));
+      const foot = new THREE.Vector3(s[0], RUG_TOP + 0.016, s[2]).add(dir.clone().multiplyScalar(STOOL_REACH));
       const hub = new THREE.Vector3(s[0], 0.24, s[2]).add(dir.clone().multiplyScalar(0.022));
       for (const o of [-0.012, 0.012]) {
         const off = new THREE.Vector3(dir.z, 0, -dir.x).multiplyScalar(o);
@@ -818,7 +852,8 @@ export class DrumKitModel {
   private buildRug() {
     const g = new THREE.BoxGeometry(2.3, RUG_TOP, 1.9, 1, 1, 1);
     const m = new THREE.Mesh(g, this.palette.rug);
-    m.position.set(0.1, RUG_TOP / 2, -0.38);
+    // under the kit, from behind the stool to beyond the kick
+    m.position.set(0.1, RUG_TOP / 2, (SEAT.centre[2] + 0.4 + DRUMS.kick.centre[2] - DRUMS.kick.depth - 0.45) / 2);
     m.castShadow = false;
     m.receiveShadow = true;
     m.name = 'rug';
