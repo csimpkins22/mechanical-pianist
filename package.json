@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:determinism": "node tools/determinism-test.cjs",
     "shot": "node tools/shot.cjs",
-    "assets": "python tools/blender/build_hand.py public/assets/robot_hand.glb && python tools/blender/build_piano.py public/assets/piano_case.glb",
+    "assets": "python tools/blender/build_hand.py public/assets/robot_hand.glb && python tools/blender/build_piano.py public/assets/piano_case.glb && python tools/blender/build_drummer.py public/assets/robot_drummer.glb",
     "plans": "node tools/plan-library.cjs"
   },
   "dependencies": {
