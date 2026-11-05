@@ -104,6 +104,35 @@ export interface StickTarget {
   palmRoll: number;
   /** the stick's line across the surface, turned this much from its natural line (radians, + toward the drummer's left) */
   sweep?: number;
+  /**
+   * how a lifted stroke is made: the forearm's own turn up about the elbow (radians); the wrist and fingers take
+   * the rest of the lift. Unset: a fixed split, mostly wrist. A Moeller stroke leads with the forearm (it rises
+   * first and comes down first, the wrist lagging, then snapping); a fast soft stroke barely moves it.
+   */
+  arm?: number;
+  /** the fingers' share of the wrist and fingers' turn (the stick rocking in the grip as the back fingers open), 0..1 */
+  fingers?: number;
+}
+
+/**
+ * The body, as a performance plans it: the torso's turn, lean and side bend
+ * (smoothed, leading the hands; reach is added on top only where an arm
+ * would overstretch), the shoulders' rise with effort, the head's nod with
+ * the pulse and the breath.
+ */
+export interface BodyTarget {
+  /** the torso's total turn (+ left), lean (- forward) and side bend (+ left), radians */
+  yaw: number;
+  pitch: number;
+  roll: number;
+  /** each shoulder's rise (clavicle elevation added, radians) */
+  shrugR: number;
+  shrugL: number;
+  /** the head's nod (pitch added, + down) and turn (yaw added, + left), radians */
+  nod: number;
+  headYaw: number;
+  /** the breath: the chest lifting and opening a little (radians of chest pitch, + up) */
+  breath: number;
 }
 
 export interface FootTarget {
@@ -125,6 +154,20 @@ export interface DrummerTargets {
   leadL?: number;
   /** where the head looks (default: the leading stick's contact) */
   look?: V3;
+  /** the body as planned (default: turned toward the targets, BASE_LEAN) */
+  body?: BodyTarget;
+}
+
+/**
+ * A warm start for the arms: their free choices (the hand's turn about the stick, the elbow's swivel, the
+ * stick's line across the surface), as a performance planned them for this instant. The solve refines them
+ * with `steps` Newton steps instead of searching its grid: much cheaper, and still a function of the targets
+ * and these choices only (so of t only), never of what was solved before.
+ */
+export interface WarmStart {
+  R: Float64Array;
+  L: Float64Array;
+  steps: number;
 }
 
 /** fingers of one hand: node local rotations, 9 each, in this order (the hand's own node names) */
@@ -163,6 +206,8 @@ export interface DrummerPose {
   torso: Vec3;
   /** the stick's angle to the surface, as solved (radians; positive coming down onto it toward the tip) */
   stickAngle: Record<Side, number>;
+  /** each arm's free choices as solved: the hand's turn about the stick, the elbow's swivel, the stick's line (for WarmStart) */
+  free: Record<Side, Float64Array>;
 }
 
 export function createPose(): DrummerPose {
@@ -180,6 +225,7 @@ export function createPose(): DrummerPose {
     pedal: { kickPedal: 0, hihatPedal: 0 },
     torso: vec3(),
     stickAngle: { R: 0, L: 0 },
+    free: { R: new Float64Array(3), L: new Float64Array(3) },
   };
   for (let j = 0; j < NJ; j++) identity3(pose.local.subarray(j * 9, j * 9 + 9));
   return pose;
@@ -220,6 +266,7 @@ export const HEEL_UP = 0.4;
 const lim = (joint: number, dof: number) => JOINTS[joint].dofs[dof].limits;
 const ROCK = lim(J.arm.R.stick, 0);
 const NECK_PITCH = lim(J.neck, 1);
+const HEAD_PITCH = lim(J.head, 1);
 
 /** a stroke's share of the turn: wrist, elbow, fingers (as in real technique: mostly wrist) */
 const SHARE_WRIST = 0.73;
@@ -233,11 +280,11 @@ const ROLL_SHARE = [0.1, 0.3, 0.35, 0.25];
 const TORSO = [J.pelvis, J.spine1, J.spine2, J.chest];
 /**
  * A drummer's posture (clips 4 and 8): leaning in from the hips, the upper
- * back a little rounded. The torso's lean when nothing pulls it further: the
- * back, from the pelvis to the chest's pivot, about 12 degrees off upright,
- * the chest about 17.
+ * back rounded, the shoulders forward. The torso's lean when nothing pulls
+ * it further: the back, from the pelvis to the chest's pivot, about 16.5
+ * degrees off upright at the snare (17-19 reaching), the chest about 30.
  */
-const BASE_LEAN = -0.3;
+export const BASE_LEAN = -0.5;
 /** the neck's forward carriage of the head, on top of where it looks (radians of the neck's pitch) */
 const NECK_FORWARD = -0.12;
 /** and the shoulders a little rounded: each clavicle's protraction when the hands are close (radians) */
@@ -410,6 +457,9 @@ interface ArmIn {
   lift: number;
   palmRoll: number;
   sweep: number;
+  /** the forearm's turn in a lifted stroke (NaN: the fixed split), and the fingers' share of the rest */
+  arm: number;
+  fingers: number;
   /** the kit as this side sees it, and which of its solids the stick is striking (it may touch those near the contact) */
   kit: Proxy[];
   kitBounds: Float64Array;
@@ -453,6 +503,8 @@ const mkArmIn = (): ArmIn => ({
   lift: 0,
   palmRoll: 0,
   sweep: 0,
+  arm: NaN,
+  fingers: SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS),
   kit: [],
   kitBounds: new Float64Array(0),
   struck: new Uint8Array(64),
@@ -765,17 +817,25 @@ const lsTip = vec3();
 let lsInp: ArmIn;
 let lsOut: ArmOut;
 let lsRock = 0;
-/** the stroke turned up by theta (shared by forearm, wrist and fingers): writes the stick, returns the tip's height */
-function liftTip(theta: number) {
+/** the forearm's turn for this lift, or NaN for the fixed split (a share of the wrist's) */
+let lsArm = NaN;
+/** the fingers' share of the wrist and fingers' turn */
+let lsFingers = SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS);
+const ARM_PER_BETA = SHARE_ARM / (SHARE_WRIST + SHARE_FINGERS);
+/**
+ * The stroke turned up by beta at the wrist and fingers (the forearm by its own turn, or its share): writes the
+ * stick, returns the tip's height
+ */
+function liftTip(beta: number) {
   const out = lsOut;
-  axisAngle3(lsRot, lsHinge, SHARE_ARM * theta);
+  axisAngle3(lsRot, lsHinge, Number.isNaN(lsArm) ? ARM_PER_BETA * beta : lsArm);
   sub3(lsW, lsW0, lsE0);
   apply3(lsW, lsRot, lsW);
   addScaled3(lsW, lsE0, lsW, 1);
   mulM3(lsR, lsRot, lsR0);
-  const want = SHARE_FINGERS * theta;
-  lsRock = Math.min(ROCK[1] - LIMIT_MARGIN, want);
-  axisAngle3(lsRot, lsAx, SHARE_WRIST * theta + (want - lsRock));
+  // the fingers rock the stick in the grip as far as it goes; past that the wrist takes the rest
+  lsRock = clamp(lsFingers * beta, ROCK[0] + LIMIT_MARGIN, ROCK[1] - LIMIT_MARGIN);
+  axisAngle3(lsRot, lsAx, beta - lsRock);
   mulM3(lsR, lsRot, lsR);
   stickDirInPalm(lsT, lsRock);
   apply3(out.dir, lsR, lsT);
@@ -790,11 +850,12 @@ function liftTip(theta: number) {
  * made: the forearm turns up about the elbow, the hand about the wrist (about
  * a level axis across the stick, so the tip rises straight) and the back
  * fingers open (the stick rocks about the fulcrum; past the rock's range the
- * wrist takes the rest). Rp holds the impact palm in, the lifted palm out;
- * out.fulcrum likewise. Returns the rock.
+ * wrist takes the rest). By default the forearm takes a fixed share; with
+ * `inp.arm` it turns that much and the wrist and fingers make up the lift
+ * (flexing down if the forearm alone would lift it too far). Rp holds the
+ * impact palm in, the lifted palm out; out.fulcrum likewise. Returns the rock.
  */
 function liftStroke(inp: ArmIn, out: ArmOut, Rp: Mat3, swivel: number): number {
-  const N = inp.normal;
   armFromHand(inp, Rp, 0, swivel, out);
   copy3(lsE0, out.elbow);
   copy3(lsW0, out.wrist);
@@ -810,10 +871,14 @@ function liftStroke(inp: ArmIn, out: ArmOut, Rp: Mat3, swivel: number): number {
   perpNorm3(lsAx, lsAx, lsT, lsAx);
   lsInp = inp;
   lsOut = out;
+  lsFingers = inp.fingers;
+  lsArm = 0;
   const h0 = liftTip(0);
-  let lo = 0;
+  // (the forearm's own turn fades in over the first centimetre, so a stroke leaves and meets the surface smoothly)
+  lsArm = Number.isNaN(inp.arm) ? NaN : inp.arm * clamp(inp.lift / 0.01, 0, 1);
+  let lo = Number.isNaN(lsArm) ? 0 : -1.0;
   let hi = 1.9;
-  for (let i = 0; i < 17; i++) {
+  for (let i = 0; i < 18; i++) {
     const mid = 0.5 * (lo + hi);
     if (liftTip(mid) - h0 < inp.lift) lo = mid;
     else hi = mid;
@@ -868,26 +933,33 @@ const searchStep = new Float64Array(3);
  * too: the same targets give the same pose, and nearby targets nearby poses (no jumps as a stroke moves), while
  * the grid keeps it out of the poor basins a single descent can fall into.
  */
-function solveArm(inp: ArmIn, out: ArmOut) {
-  let cmin = Infinity;
-  for (let i = 0; i < ARM_GRID.length; i++) {
-    const g = ARM_GRID[i];
-    gridCost[i] = armTry(inp, inp.palmRoll + g[0], g[1], inp.sweep + g[2], armTrial);
-    if (gridCost[i] < cmin) cmin = gridCost[i];
+function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: number) {
+  if (warm) {
+    // a planned start: refine it, no grid
+    searchP[0] = warm[0];
+    searchP[1] = warm[1];
+    searchP[2] = warm[2];
+  } else {
+    let cmin = Infinity;
+    for (let i = 0; i < ARM_GRID.length; i++) {
+      const g = ARM_GRID[i];
+      gridCost[i] = armTry(inp, inp.palmRoll + g[0], g[1], inp.sweep + g[2], armTrial);
+      if (gridCost[i] < cmin) cmin = gridCost[i];
+    }
+    let W = 0;
+    searchP[0] = searchP[1] = searchP[2] = 0;
+    for (let i = 0; i < ARM_GRID.length; i++) {
+      const w = Math.exp(-(gridCost[i] - cmin) / SOFT_T);
+      W += w;
+      searchP[0] += w * (inp.palmRoll + ARM_GRID[i][0]);
+      searchP[1] += w * ARM_GRID[i][1];
+      searchP[2] += w * (inp.sweep + ARM_GRID[i][2]);
+    }
+    for (let k = 0; k < 3; k++) searchP[k] /= W;
   }
-  let W = 0;
-  searchP[0] = searchP[1] = searchP[2] = 0;
-  for (let i = 0; i < ARM_GRID.length; i++) {
-    const w = Math.exp(-(gridCost[i] - cmin) / SOFT_T);
-    W += w;
-    searchP[0] += w * (inp.palmRoll + ARM_GRID[i][0]);
-    searchP[1] += w * ARM_GRID[i][1];
-    searchP[2] += w * (inp.sweep + ARM_GRID[i][2]);
-  }
-  for (let k = 0; k < 3; k++) searchP[k] /= W;
   const h = 0.02;
   let c0 = armTry(inp, searchP[0], searchP[1], searchP[2], armTrial);
-  for (let it = 0; it < NEWTON_STEPS; it++) {
+  for (let it = 0; it < steps; it++) {
     for (let k = 0; k < 3; k++) {
       const was = searchP[k];
       searchP[k] = was + h;
@@ -1095,9 +1167,12 @@ function solveLeg(inp: LegIn, out: LegOut) {
 // ---------------------------------------------------------------- torso and shoulder girdle
 const toM = mat3();
 /** the torso's locals from its total turn, lean and side bend, then forward kinematics down to the chest */
+/** the breath's lift of the chest (radians of its pitch), and each shoulder's rise with effort, for this solve */
+let torsoBreath = 0;
+const shrug = { R: 0, L: 0 };
 function setTorso(pose: DrummerPose, yaw: number, pitch: number, roll: number) {
   for (let k = 0; k < 4; k++) {
-    composeYXZ(toM, YAW_SHARE[k] * yaw, PITCH_SHARE[k] * pitch, ROLL_SHARE[k] * roll);
+    composeYXZ(toM, YAW_SHARE[k] * yaw, PITCH_SHARE[k] * pitch + (k === 3 ? torsoBreath : k === 2 ? -0.4 * torsoBreath : 0), ROLL_SHARE[k] * roll);
     pose.local.set(toM, TORSO[k] * 9);
   }
   forwardKinematics(pose.local, pose.root, pose.world, pose.pos, 0, J.chest + 1);
@@ -1122,7 +1197,7 @@ function setClavicle(pose: DrummerPose, side: Side, wrist: Vec3) {
   // the wrist from there, in the chest frame (canonical: x outward)
   applyT3(clW, pose.world, sub3(clW, wrist, clS0), J.chest * 9);
   clW[0] *= sg;
-  const elev = clamp(0.38 * (clW[1] + 0.24), -0.06, 0.32);
+  const elev = clamp(0.38 * (clW[1] + 0.24) + shrug[side], -0.06, 0.36);
   const prot = clamp(ROUND_SHOULDERS + 0.55 * (-clW[2] - 0.3) + 0.45 * Math.max(0, -clW[0] - 0.08), -0.08, 0.42);
   rotY3(clM, prot);
   mulM3(clM, clM, rotZ3(clN, elev));
@@ -1154,6 +1229,8 @@ function armInput(pose: DrummerPose, side: Side, t: StickTarget, inp: ArmIn) {
   inp.lift = Math.max(0, t.lift);
   inp.palmRoll = t.palmRoll;
   inp.sweep = (t.sweep ?? 0) * (side === 'L' ? -1 : 1);
+  inp.arm = t.arm ?? NaN;
+  inp.fingers = clamp(t.fingers ?? SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS), 0, 1);
   inp.kit = side === 'L' ? KIT_M : KIT;
   inp.kitBounds = side === 'L' ? KIT_MB : KIT_B;
   // the back of the lower thorax (the shell the elbows hang beside): its pivot, out along its back by the shell's half-depth
@@ -1223,28 +1300,59 @@ function putLocal(pose: DrummerPose, j: number, R: Mat3, mirror: boolean) {
   pose.local.set(fM, j * 9);
 }
 
+/** the pelvis joint's place when the drummer sits upright (the torso turns about it) */
+const PELVIS_AT = vec3();
+{
+  const p = createPose();
+  set3(p.root, SEAT.centre[0], SEAT.centre[1], SEAT.centre[2]);
+  forwardKinematics(p.local, p.root, p.world, p.pos);
+  copy3(PELVIS_AT, p.pos, J.pelvis * 3);
+}
+
+/**
+ * The torso's turn, lean and side bend toward where the hands are playing
+ * (a blend of the two contacts, the leading hand's more): turned toward it,
+ * leaning in from BASE_LEAN for far and low targets, bending toward low
+ * ones out to the side. Written into `o` (yaw, pitch, roll).
+ */
+export function naturalTorso(R: ArrayLike<number>, L: ArrayLike<number>, leadL: number, o: Float64Array | number[]) {
+  const wl = 0.38 + 0.24 * leadL;
+  const cx = wl * L[0] + (1 - wl) * R[0];
+  const cy = wl * L[1] + (1 - wl) * R[1];
+  const cz = wl * L[2] + (1 - wl) * R[2];
+  const dx = cx - PELVIS_AT[0];
+  const dz = cz - PELVIS_AT[2];
+  const horiz = Math.hypot(dx, dz);
+  o[0] = 0.42 * Math.atan2(-dx, -dz);
+  o[1] = BASE_LEAN - 0.35 * Math.max(0, horiz - 0.42) - 0.3 * Math.max(0, 0.72 - cy);
+  o[2] = -0.4 * dx * clamp((1.0 - cy) / 0.4, 0, 1);
+  return o;
+}
+
 /**
  * Solve the drummer for the targets, into `pose`. Deterministic, and it
  * allocates nothing. The model's origin goes on KitLayout's seat.
  */
-export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose {
+export function solveDrummer(t: DrummerTargets, pose: DrummerPose, warm: WarmStart | null = null): DrummerPose {
   set3(pose.root, SEAT.centre[0], SEAT.centre[1], SEAT.centre[2]);
   identity3(fM);
   for (let j = 0; j < NJ; j++) pose.local.set(fM, j * 9);
   pose.angles.fill(0);
   forwardKinematics(pose.local, pose.root, pose.world, pose.pos);
-  // --- torso: turn toward the playing, lean in, bend toward low far targets
-  const wl = 0.38 + 0.24 * (t.leadL ?? (t.lead === 'L' ? 1 : 0));
-  const cx = wl * t.L.point[0] + (1 - wl) * t.R.point[0];
-  const cy = wl * t.L.point[1] + (1 - wl) * t.R.point[1];
-  const cz = wl * t.L.point[2] + (1 - wl) * t.R.point[2];
-  const pi = J.pelvis * 3;
-  const dx = cx - pose.pos[pi];
-  const dz = cz - pose.pos[pi + 2];
-  const horiz = Math.hypot(dx, dz);
-  torsoAng[0] = 0.42 * Math.atan2(-dx, -dz);
-  torsoAng[1] = BASE_LEAN - 0.35 * Math.max(0, horiz - 0.42) - 0.3 * Math.max(0, 0.72 - cy);
-  torsoAng[2] = -0.4 * dx * clamp((1.0 - cy) / 0.4, 0, 1);
+  // --- torso: turn toward the playing, lean in, bend toward low far targets (or as the performance planned it)
+  const body = t.body;
+  if (body) {
+    torsoAng[0] = body.yaw;
+    torsoAng[1] = body.pitch;
+    torsoAng[2] = body.roll;
+    torsoBreath = body.breath;
+    shrug.R = body.shrugR;
+    shrug.L = body.shrugL;
+  } else {
+    naturalTorso(t.R.point, t.L.point, t.leadL ?? (t.lead === 'L' ? 1 : 0), torsoAng);
+    torsoBreath = 0;
+    shrug.R = shrug.L = 0;
+  }
   // --- reach: while a wrist would be past a comfortable reach, turn and lean toward it (damped Gauss-Newton)
   for (let iter = 0; iter < 6; iter++) {
     setTorso(pose, torsoAng[0], torsoAng[1], torsoAng[2]);
@@ -1296,7 +1404,10 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
       putOther(armIn.other, 2, firstArm.wrist, firstArm.knuckle, CAPS.hand * 0.8);
       armIn.nOther = 3;
     }
-    solveArm(armIn, armBest);
+    solveArm(armIn, armBest, warm ? warm[s] : null, warm ? warm.steps : NEWTON_STEPS);
+    pose.free[s][0] = searchP[0];
+    pose.free[s][1] = searchP[1];
+    pose.free[s][2] = searchP[2];
     if (first) {
       // remember it in the canonical world of its own side (the next side's frame is its mirror)
       stickDirInPalm(fV, armBest.rock);
@@ -1342,9 +1453,12 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   const lookYaw = clamp(Math.atan2(-fD[0], -fD[2]), -1.2, 1.2) * 0.6;
   const lookPitch = clamp(Math.atan2(fD[1], Math.hypot(fD[0], fD[2])) + 0.12, -1.0, 0.4) * 0.62;
   // the neck carries the head a little forward of the shoulders (as the lean rounds the upper back), the head looking down
-  composeYXZ(fM, 0.5 * lookYaw, clamp(0.55 * lookPitch + NECK_FORWARD, NECK_PITCH[0] + LIMIT_MARGIN, NECK_PITCH[1] - LIMIT_MARGIN), 0);
+  // (a nod is mostly the head on the neck, a little the neck)
+  const nod = body ? body.nod : 0;
+  const hy = body ? body.headYaw : 0;
+  composeYXZ(fM, 0.5 * lookYaw + 0.4 * hy, clamp(0.55 * lookPitch + NECK_FORWARD - 0.3 * nod, NECK_PITCH[0] + LIMIT_MARGIN, NECK_PITCH[1] - LIMIT_MARGIN), 0);
   pose.local.set(fM, J.neck * 9);
-  composeYXZ(fM, 0.5 * lookYaw, 0.45 * lookPitch, -0.03 * lookYaw);
+  composeYXZ(fM, 0.5 * lookYaw + 0.6 * hy, clamp(0.45 * lookPitch - 0.7 * nod, HEAD_PITCH[0] + LIMIT_MARGIN, HEAD_PITCH[1] - LIMIT_MARGIN), -0.03 * lookYaw);
   pose.local.set(fM, J.head * 9);
   eulerYXZ(pose.local, pose.angles, DOF_BASE[J.neck], J.neck * 9);
   eulerYXZ(pose.local, pose.angles, DOF_BASE[J.head], J.head * 9);
