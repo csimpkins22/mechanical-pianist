@@ -7,8 +7,8 @@
       "parent": null,
       "offset": [
         0.0,
-        0.085,
-        0.075
+        0.077,
+        0.0
       ],
       "kind": "euler_yxz",
       "dofs": [
@@ -775,8 +775,8 @@
     "soleLength": 0.27
   },
   "seat": {
-    "hipUp": 0.085,
-    "sitZ": 0.075,
+    "hipUp": 0.077,
+    "sitZ": 0.0,
     "hipHalf": 0.09
   },
   "grip": {

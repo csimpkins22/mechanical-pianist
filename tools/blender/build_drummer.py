@@ -1115,11 +1115,25 @@ def check_torso(path):
     worst_cover = {}
     worst_in = {}
     hits = []
+    # the pelvis sits on the seat (the model's origin is the seat's top): its lowest point, and its highest along
+    # the seat's back half (how far it lifts off the cushion as it tips forward)
+    seat_low = (1e9, "")
+    seat_back = (-1e9, "")
+    pv = data["Pelvis"][0]
     for P in poses:
         for name, R9 in P["local"].items():
             if name in obs:
                 set_rot(obs[name], R9)
         bpy.context.view_layer.update()
+        Mp = obs["Pelvis"].matrix_world
+        zs = [(Mp @ v) for v in pv]
+        low = min(c.z for c in zs)
+        if low < seat_low[0]:
+            seat_low = (low, P["pose"])
+        # Blender's +y is three.js's -z: the back half of the seat is y < 0
+        back = min((c.z for c in zs if c.y < -0.04), default=1e9)
+        if back > seat_back[0]:
+            seat_back = (back, P["pose"])
         trees = {}
         for n, (vs, polys) in data.items():
             M = obs[n].matrix_world
@@ -1173,9 +1187,12 @@ def check_torso(path):
         i, ip = worst_in[key]
         print(f"  {key}: rim covered by at least {c * 1000:.1f} mm ({cp}); inner shell at least {i * 1000:.1f} mm "
               f"inside the outer ({ip})")
+    print(f"  Pelvis on the seat: lowest point {seat_low[0] * 1000:.1f} mm above the seat's top ({seat_low[1]}); "
+          f"its back half at most {seat_back[0] * 1000:.1f} mm off it ({seat_back[1]})")
     for h in hits[:20]:
         print("  INTERSECT", h)
-    ok = not hits and all(v[0] > 0.004 for v in worst_cover.values()) and all(v[0] > 0.0 for v in worst_in.values())
+    ok = not hits and all(v[0] > 0.004 for v in worst_cover.values()) and all(v[0] > 0.0 for v in worst_in.values()) \
+        and seat_low[0] > -0.004
     print("torso overlaps:", "OK" if ok else "FAIL")
     return ok
 

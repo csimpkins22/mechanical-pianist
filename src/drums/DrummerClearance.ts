@@ -3,9 +3,9 @@
 // touch the surface it is striking near its contact point, and nothing else;
 // the two sticks, the forearms and the other hand's stick must stay apart.
 // A diagnostic for tests and the lab, not for every frame.
-import { DRUMMER, J, apply3, vec3, type Side } from './DrummerSpec';
+import { DRUMMER, J, apply3, vec3, type Side, type V3 } from './DrummerSpec';
 import type { DrummerPose, DrummerTargets } from './DrummerIK';
-import { kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
+import { cymbalSide, kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
 
 export interface Contact {
   /** e.g. "stick R" */
@@ -28,6 +28,22 @@ interface Capsule {
 const CAP = DRUMMER.capsules;
 const STICK_R = (DRUMMER.stick.diameter + DRUMMER.stick.tipDiameter) / 4;
 
+// the foot's capsules, in the foot's and the toes' frames (from the spec's sole: heel, ball, toe cap)
+const FT = DRUMMER.foot;
+const FOOT_R = 0.036;
+const TOE_R = 0.026;
+const FOOT_HEEL: V3 = [0, FT.heel[1] + FOOT_R, FT.heel[2] - FOOT_R];
+const FOOT_BALL: V3 = [0, FT.heel[1] + FOOT_R, FT.ball[2]];
+const TOE_BASE: V3 = [0, FT.heel[1] - FT.ball[1] + TOE_R, 0];
+const TOE_TIP: V3 = [0, FT.heel[1] - FT.ball[1] + TOE_R, -(FT.toe - TOE_R)];
+/** a point given in a joint's frame, in the kit's */
+function at(pose: DrummerPose, j: number, v: V3): Float64Array {
+  const o = vec3();
+  apply3(o, pose.world, v, j * 9);
+  for (let i = 0; i < 3; i++) o[i] += pose.pos[j * 3 + i];
+  return o;
+}
+
 const label = (p: Proxy) => (p.kind === 'rod' ? p.label : p.id === 'hihat' ? 'hi-hat' : p.id);
 
 /** the drummer's capsules in a solved pose */
@@ -48,6 +64,9 @@ export function bodyCapsules(pose: DrummerPose): Capsule[] {
     const l = J.leg[s];
     caps.push({ name: `thigh ${s}`, a: P(l.thigh), b: P(l.shin), r: CAP.thigh, side: s });
     caps.push({ name: `shin ${s}`, a: P(l.shin), b: P(l.foot), r: CAP.shin, side: s });
+    // the foot: heel to ball along the sole's middle, then the toes to their tip
+    caps.push({ name: `foot ${s}`, a: at(pose, l.foot, FOOT_HEEL), b: at(pose, l.foot, FOOT_BALL), r: FOOT_R, side: s });
+    caps.push({ name: `toes ${s}`, a: at(pose, l.toes, TOE_BASE), b: at(pose, l.toes, TOE_TIP), r: TOE_R, side: s });
   }
   caps.push({ name: 'torso', a: P(J.pelvis), b: P(J.neck), r: CAP.torso });
   return caps;
@@ -63,6 +82,7 @@ export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { ma
   const caps = bodyCapsules(pose);
   const out: Contact[] = [];
   const pt = new Float64Array(3);
+  const side = { h: 0, rho: 0 };
   const SAMPLES = 40;
   // the surface each stick is striking (its contact point lies on it), and where on the stick it may touch
   const struck: Record<Side, Proxy | null> = { R: null, L: null };
@@ -97,16 +117,17 @@ export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { ma
         const d = proxyDistance(pt, x) - c.r;
         if (d < min) min = d;
       }
-      // a stick crossing a cymbal's plane inside its rim goes through it, whatever the samples say
-      if (c.stick && x.kind === 'disc' && !(c.side && struck[c.side] === x)) {
-        const ha = (c.a[0] - x.centre[0]) * x.normal[0] + (c.a[1] - x.centre[1]) * x.normal[1] + (c.a[2] - x.centre[2]) * x.normal[2];
-        const hb = (c.b[0] - x.centre[0]) * x.normal[0] + (c.b[1] - x.centre[1]) * x.normal[1] + (c.b[2] - x.centre[2]) * x.normal[2];
-        if (ha * hb < 0) {
-          const u = ha / (ha - hb);
+      // a stick crossing a cymbal's metal inside its rim goes through it, whatever the samples say
+      // (as deep as the crossing is inside the rim)
+      if (c.stick && x.kind === 'cymbal' && !(c.side && struck[c.side] === x)) {
+        let prev = 0;
+        for (let i = 0; i <= SAMPLES; i++) {
+          const u = i / SAMPLES;
           for (let k = 0; k < 3; k++) pt[k] = c.a[k] + (c.b[k] - c.a[k]) * u;
-          const dx = pt[0] - x.centre[0], dy = pt[1] - x.centre[1], dz = pt[2] - x.centre[2];
-          const rho = Math.hypot(dx, dy, dz);
-          if (rho < x.radius) min = Math.min(min, -(x.radius - rho));
+          cymbalSide(pt, x, side);
+          const h = side.rho < x.radius ? side.h : 0;
+          if (i > 0 && h * prev < 0) min = Math.min(min, -(x.radius - side.rho));
+          if (h !== 0) prev = h;
         }
       }
       if (min < margin) out.push({ a: c.name, b: label(x), distance: min });

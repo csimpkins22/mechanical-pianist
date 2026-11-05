@@ -1,21 +1,22 @@
 // The kit as simple solids, from KitLayout: drums as cylinders (shell below
-// the batter head), cymbals as thin discs in the plane of their playing
-// surface, stands as rods. The clearance checks test the drummer against
-// these, and the drummer lab draws them as a placeholder kit (the real kit is
-// modelled elsewhere). Stands are not in KitLayout, so they are placed the
-// way a drummer would set them: a snare stand under the snare, rack toms on
-// arms from the kick, three legs round the floor tom, a straight stand and
-// pull rod under the hi-hat (the rod standing a few centimetres above the
-// top cymbal), and boom stands behind the crash and ride.
-import { DRUMS, HIHAT_OPEN_GAP, surfaceNormal, type DrumId, type V3 } from './KitLayout';
+// the batter head), cymbals as their real cross-sections (KitLayout's
+// CYMBAL_PROFILES: the bell above the reference plane, the bow falling away
+// to the edge, the metal's thickness), the hi-hat as its two cymbals (the
+// bottom one upside down, edge to edge with the top when closed), and the
+// hardware as rods: every stand, leg, brace, boom, basket and clutch where the
+// kit's model puts it (KitStands). The clearance checks and the IK test the
+// drummer against these, and the drummer lab can draw them.
+import { CYMBAL_PROFILES, DRUMS, HIHAT_OPEN_GAP, cymbalTop, surfaceNormal, type CymbalProfile, type DrumId, type V3 } from './KitLayout';
+import { hihatTop, kitStands } from './KitStands';
 
-export interface DiscProxy {
-  kind: 'disc';
+export interface CymbalProxy {
+  kind: 'cymbal';
   id: DrumId;
+  /** the centre of its reference plane (the top of the bow at the bell), and the normal its top faces */
   centre: V3;
   normal: V3;
   radius: number;
-  thickness: number;
+  profile: CymbalProfile;
 }
 export interface CylinderProxy {
   kind: 'cylinder';
@@ -29,21 +30,16 @@ export interface CylinderProxy {
 export interface RodProxy {
   kind: 'rod';
   id: DrumId;
-  /** what it holds up, for the report */
+  /** what it is, for the report */
   label: string;
   a: V3;
   b: V3;
   radius: number;
 }
-export type Proxy = DiscProxy | CylinderProxy | RodProxy;
+export type Proxy = CymbalProxy | CylinderProxy | RodProxy;
 
 const add = (a: V3, b: V3, s = 1): V3 => [a[0] + b[0] * s, a[1] + b[1] * s, a[2] + b[2] * s];
-
-/** a horizontal unit vector away from the stool (from the seat's axis through a point) */
-function away(p: V3): V3 {
-  const l = Math.hypot(p[0], p[2]) || 1;
-  return [p[0] / l, 0, p[2] / l];
-}
+const neg = (a: V3): V3 => [-a[0], -a[1], -a[2]];
 
 /** the kit as solids. `hihatOpen` lifts the hi-hat's top cymbal (pedal up). */
 export function kitProxies(opts: { hihatOpen?: boolean } = {}): Proxy[] {
@@ -52,25 +48,15 @@ export function kitProxies(opts: { hihatOpen?: boolean } = {}): Proxy[] {
     const n = surfaceNormal(d);
     const r = d.diameter / 2;
     if (d.kind === 'cymbal') {
-      let c = d.centre;
+      const profile = CYMBAL_PROFILES[d.id as keyof typeof CYMBAL_PROFILES];
       if (d.id === 'hihat') {
-        // top and bottom cymbals; the top rises when the pedal is up
+        // the top cymbal, lifted when the pedal is up; the bottom one upside down under it, edges meeting
         const gap = opts.hihatOpen ? HIHAT_OPEN_GAP : 0;
-        c = add(d.centre, n, gap);
-        out.push({ kind: 'disc', id: d.id, centre: c, normal: n, radius: r, thickness: 0.004 });
-        out.push({ kind: 'disc', id: d.id, centre: add(d.centre, n, -0.006), normal: n, radius: r, thickness: 0.004 });
-        // the stand under it, and the pull rod and clutch standing above the top cymbal
-        out.push({ kind: 'rod', id: d.id, label: 'hi-hat stand', a: [d.centre[0], 0, d.centre[2]], b: add(d.centre, n, -0.03), radius: 0.013 });
-        out.push({ kind: 'rod', id: d.id, label: 'hi-hat rod', a: c, b: add(c, n, 0.045), radius: 0.006 });
-      } else {
-        out.push({ kind: 'disc', id: d.id, centre: c, normal: n, radius: r, thickness: 0.004 });
-        // a boom stand: its upright behind the cymbal (away from the drummer), the boom up to the tilter under the bell
-        const back = away(c);
-        const base: V3 = [c[0] + back[0] * 0.3, 0, c[2] + back[2] * 0.3];
-        const top: V3 = [base[0], c[1] - 0.32, base[2]];
-        out.push({ kind: 'rod', id: d.id, label: `${d.id} stand`, a: base, b: top, radius: 0.014 });
-        out.push({ kind: 'rod', id: d.id, label: `${d.id} boom`, a: top, b: add(c, n, -0.035), radius: 0.011 });
-      }
+        out.push({ kind: 'cymbal', id: d.id, centre: add(d.centre, n, gap), normal: n, radius: r, profile });
+        const below = 2 * profile.drop + 2 * profile.thickness[2] + 0.0005;
+        out.push({ kind: 'cymbal', id: d.id, centre: add(d.centre, n, -below), normal: neg(n), radius: r, profile });
+        for (const x of hihatTop(gap)) out.push({ kind: 'rod', ...x });
+      } else out.push({ kind: 'cymbal', id: d.id, centre: d.centre, normal: n, radius: r, profile });
       continue;
     }
     if (d.id === 'kick') {
@@ -78,25 +64,16 @@ export function kitProxies(opts: { hihatOpen?: boolean } = {}): Proxy[] {
       continue;
     }
     out.push({ kind: 'cylinder', id: d.id, centre: d.centre, normal: n, radius: r, depth: d.depth });
-    const bottom = add(d.centre, n, -d.depth);
-    if (d.id === 'snare') {
-      out.push({ kind: 'rod', id: d.id, label: 'snare stand', a: [bottom[0], 0, bottom[2]], b: add(bottom, n, -0.04), radius: 0.012 });
-    } else if (d.id === 'floorTom') {
-      // three legs round the shell, the first toward the back
-      for (let k = 0; k < 3; k++) {
-        const a = Math.atan2(d.centre[0], d.centre[2]) + (k * 2 * Math.PI) / 3;
-        const lx = d.centre[0] + Math.sin(a) * (r + 0.025);
-        const lz = d.centre[2] + Math.cos(a) * (r + 0.025);
-        out.push({ kind: 'rod', id: d.id, label: 'floor tom leg', a: [lx, 0, lz], b: [lx, d.centre[1] - 0.04, lz], radius: 0.007 });
-      }
-    } else {
-      // rack toms: an arm from the top of the kick's shell
-      const kick = DRUMS.kick;
-      const mount: V3 = [kick.centre[0], kick.centre[1] + kick.diameter / 2, Math.min(bottom[2], kick.centre[2] - 0.12)];
-      out.push({ kind: 'rod', id: d.id, label: `${d.id} arm`, a: mount, b: add(bottom, n, -0.01), radius: 0.01 });
-    }
   }
+  for (const x of kitStands().rods) out.push({ kind: 'rod', ...x });
   return out;
+}
+
+/** a cymbal's metal thickness r metres from its centre (as the kit's model makes it) */
+export function cymbalThickness(p: CymbalProfile, R: number, r: number): number {
+  if (r < p.bellRadius) return p.thickness[0];
+  const u = Math.min(1, Math.max(0, (r - p.bellRadius) / (R - p.bellRadius)));
+  return p.thickness[1] + (p.thickness[2] - p.thickness[1]) * u * u;
 }
 
 // ---------------------------------------------------------------- distances (signed: negative inside)
@@ -104,19 +81,42 @@ type P = ArrayLike<number>;
 
 /** signed distance from a point to a proxy's surface */
 export function proxyDistance(p: P, x: Proxy): number {
-  if (x.kind === 'disc') return discDistance(p, x.centre, x.normal, x.radius, x.thickness);
+  if (x.kind === 'cymbal') return cymbalDistance(p, x);
   if (x.kind === 'cylinder') return cylinderDistance(p, x.centre, x.normal, x.radius, x.depth);
   return segPointDistance(p, x.a, x.b) - x.radius;
 }
 
-export function discDistance(p: P, c: P, n: P, R: number, t: number) {
+/**
+ * Where a point is against a cymbal: its height above the middle of the metal
+ * (along the cymbal's normal) and its distance from the axis. (Allocation-free:
+ * the result goes in `out`.)
+ */
+export function cymbalSide(p: P, x: CymbalProxy, out: { h: number; rho: number }) {
+  const c = x.centre, n = x.normal;
   const dx = p[0] - c[0], dy = p[1] - c[1], dz = p[2] - c[2];
   const h = dx * n[0] + dy * n[1] + dz * n[2];
-  const qx = dx - n[0] * h, qy = dy - n[1] * h, qz = dz - n[2] * h;
-  const rho = Math.hypot(qx, qy, qz);
-  const ah = Math.abs(h) - t / 2;
-  if (rho <= R) return ah;
-  return Math.hypot(rho - R, Math.max(0, ah)) * (ah > 0 || rho > R ? 1 : -1);
+  const rho = Math.hypot(dx - n[0] * h, dy - n[1] * h, dz - n[2] * h);
+  const r = rho < x.radius ? rho : x.radius;
+  out.h = h - (cymbalTop(x.profile, x.radius, r) - cymbalThickness(x.profile, x.radius, r) / 2);
+  out.rho = rho;
+  return out;
+}
+const cs = { h: 0, rho: 0 };
+
+/** signed distance from a point to a cymbal's metal: across it, corrected for the slope of its bow and bell */
+export function cymbalDistance(p: P, x: CymbalProxy): number {
+  cymbalSide(p, x, cs);
+  const R = x.radius;
+  if (cs.rho >= R) {
+    // past the edge: from the rounded edge
+    const t = x.profile.thickness[2];
+    return Math.hypot(cs.rho - R, Math.max(0, Math.abs(cs.h) - t / 2));
+  }
+  const t = cymbalThickness(x.profile, R, cs.rho);
+  const e = 0.002;
+  const r0 = Math.max(0, cs.rho - e), r1 = Math.min(R, cs.rho + e);
+  const slope = (cymbalTop(x.profile, R, r1) - cymbalTop(x.profile, R, r0)) / (r1 - r0);
+  return (Math.abs(cs.h) - t / 2) / Math.sqrt(1 + slope * slope);
 }
 
 export function cylinderDistance(p: P, c: P, n: P, R: number, depth: number) {
