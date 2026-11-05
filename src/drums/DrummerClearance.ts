@@ -4,8 +4,8 @@
 // the two sticks, the forearms and the other hand's stick must stay apart.
 // A diagnostic for tests and the lab, not for every frame.
 import { DRUMMER, J, apply3, vec3, type Side } from './DrummerSpec';
-import { STICK_SHOULDER, type DrummerPose, type DrummerTargets } from './DrummerIK';
-import { kitProxies, proxyDistance, segPointDistance, segSegDistance, type Proxy } from './KitProxy';
+import type { DrummerPose, DrummerTargets } from './DrummerIK';
+import { kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
 
 export interface Contact {
   /** e.g. "stick R" */
@@ -145,10 +145,8 @@ export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { ma
   return out;
 }
 
-/** the closest approach of the stick's contact to the thing it strikes is the strike itself; for reports */
+/** a contact as a line of text */
 export function describe(c: Contact) {
   return `${c.a} / ${c.b}: ${(c.distance * 1000).toFixed(1)} mm`;
 }
 
-void segPointDistance;
-void STICK_SHOULDER;

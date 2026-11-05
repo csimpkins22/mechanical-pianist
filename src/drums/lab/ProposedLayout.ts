@@ -9,8 +9,9 @@
 // held a third of the way up needs about 0.40 m from the wrist to its tip, so
 // the hands end up at the hips with the elbows drawn back behind the body, the
 // snare sits on the left thigh and the right knee meets the kick. Moving the
-// hand instruments about 0.18-0.22 m away and the pedals about 0.3 m forward
-// lets the elbows hang at the sides and the shins stand near vertical.
+// hand instruments 0.12-0.18 m away (the snare also 4 cm up, over the thighs),
+// the kick 0.22 m and the pedals 0.22-0.25 m forward lets the elbows hang at
+// the sides, the thighs clear the snare and the shins stand near vertical.
 import { DRUMS, PEDALS, type DrumId, type PedalId, type V3 } from '../KitLayout';
 
 /** how far each instrument moves (metres, kit frame) */

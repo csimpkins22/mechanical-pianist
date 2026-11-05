@@ -44,7 +44,7 @@ const VIEWS: Record<string, View> = {
   portrait: { pos: [0.75, 1.3, -1.45], target: [-0.02, 0.98, -0.08], focal: 55 },
   grip: { pos: [-0.62, 0.98, -0.78], target: [-0.2, 0.8, -0.16], focal: 85 },
   // as the reference footage (clip 4): above the drummer's right, looking down across the kit
-  clip4: { pos: [1.35, 2.05, -1.25], target: [-0.08, 0.78, -0.18], focal: 32 },
+  clip4: { pos: [1.05, 1.7, -0.32], target: [-0.3, 0.78, -0.42], focal: 20 },
 };
 
 class Lab {

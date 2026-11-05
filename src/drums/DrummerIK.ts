@@ -372,7 +372,11 @@ function writeFingers(out: Float64Array, rock: number, mirror: boolean) {
   out.set(gfR, 12 * 9);
   out.set(rotX3(gfR, -gripRow[19]), 13 * 9);
   out.set(rotX3(gfR, -gripRow[20]), 14 * 9);
-  if (mirror) for (let n = 0; n < 15; n++) mirrorM3(out.subarray(n * 9, n * 9 + 9), out, n * 9);
+  if (mirror)
+    for (let n = 0; n < 15; n++) {
+      mirrorM3(gfR, out, n * 9);
+      out.set(gfR, n * 9);
+    }
 }
 
 // ---------------------------------------------------------------- the arm (canonical: the right, or the left mirrored)
@@ -1198,8 +1202,8 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   // --- reach: while a wrist would be past a comfortable reach, turn and lean toward it (damped Gauss-Newton)
   for (let iter = 0; iter < 6; iter++) {
     setTorso(pose, torsoAng[0], torsoAng[1], torsoAng[2]);
-    for (const s of SIDES) {
-      reachExcess(pose, t, s);
+    for (let si = 0; si < 2; si++) {
+      const s = SIDES[si];reachExcess(pose, t, s);
       setClavicle(pose, s, wristNeed[s]);
     }
     const exR = reachExcess(pose, t, 'R');
@@ -1208,7 +1212,7 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
     for (let k = 0; k < 3; k++) {
       torsoAng[k] += h;
       setTorso(pose, torsoAng[0], torsoAng[1], torsoAng[2]);
-      for (const s of SIDES) setClavicle(pose, s, wristNeed[s]);
+      for (let si = 0; si < 2; si++) setClavicle(pose, SIDES[si], wristNeed[SIDES[si]]);
       torsoJac[k] = (reachExcess(pose, t, 'R') - exR) / h;
       torsoJac[3 + k] = (reachExcess(pose, t, 'L') - exL) / h;
       torsoAng[k] -= h;
@@ -1231,14 +1235,14 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   copy3(pose.torso, torsoAng);
   for (let k = 0; k < 4; k++) eulerYXZ(pose.local, pose.angles, DOF_BASE[TORSO[k]], TORSO[k] * 9);
   // --- arms
-  for (const s of SIDES) {
-    reachExcess(pose, t, s);
+  for (let si = 0; si < 2; si++) {
+    const s = SIDES[si];reachExcess(pose, t, s);
     setClavicle(pose, s, wristNeed[s]);
   }
   // the right arm first; the left keeps clear of it (a fixed order, so blends between poses never switch it)
   let first = true;
-  for (const s of SIDES) {
-    armInput(pose, s, t[s], armIn);
+  for (let si = 0; si < 2; si++) {
+    const s = SIDES[si];armInput(pose, s, t[s], armIn);
     if (!first) {
       // the first arm's stick, forearm and hand, in this side's (mirrored) frame
       putOther(armIn.other, 0, firstArm.butt, firstArm.tip, STICK_R);
@@ -1298,8 +1302,8 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   eulerYXZ(pose.local, pose.angles, DOF_BASE[J.neck], J.neck * 9);
   eulerYXZ(pose.local, pose.angles, DOF_BASE[J.head], J.head * 9);
   // --- legs
-  for (const s of SIDES) {
-    const ft = t.feet[s];
+  for (let si = 0; si < 2; si++) {
+    const s = SIDES[si];const ft = t.feet[s];
     const pd = PEDALS[ft.pedal];
     const lg = J.leg[s];
     copyM3(legIn.pelvis, pose.world, J.pelvis * 9);
@@ -1336,8 +1340,8 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   }
   // --- everything in the world; the sticks and how close they came
   forwardKinematics(pose.local, pose.root, pose.world, pose.pos);
-  for (const s of SIDES) {
-    const st = pose.stick[s];
+  for (let si = 0; si < 2; si++) {
+    const s = SIDES[si];const st = pose.stick[s];
     const j = J.arm[s].stick;
     set3(fV, s === 'R' ? G_D[0] : -G_D[0], G_D[1], G_D[2]);
     apply3(st.dir, pose.world, fV, j * 9);
