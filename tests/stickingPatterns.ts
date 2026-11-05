@@ -112,6 +112,39 @@ export function tomFill(): DrumPerformance {
   return perfOf('tom fill', out, { bpm });
 }
 
+/**
+ * A fill with thirty-seconds in it, as rock bar 8 of the library groove has
+ * (87 bpm): snare on 3, the "e" and a thirty-second after, high tom on the
+ * "and", "a" and 4, mid tom a thirty-second after 4, then snare and mid tom
+ * hand to hand into the floor tom and a crash on the 1. Hand to hand all the
+ * way, as a drummer plays it.
+ */
+export function fill32(): DrumPerformance {
+  const bpm = 87;
+  const s = at(bpm);
+  const groove: Note[] = [];
+  rockBar(0, bpm, groove);
+  rockBar(4, bpm, groove);
+  rockBar(8, bpm, groove);
+  // the groove stops for the fill on 3 of bar 2, and comes back after the 1 of bar 3
+  const out = groove.filter(([t]) => t < s(6) - 1e-6 || t > s(8) + 1e-6);
+  const fill: [number, DrumId][] = [
+    [6, 'snare'],
+    [6.25, 'snare'],
+    [6.375, 'snare'],
+    [6.5, 'tom1'],
+    [6.75, 'tom1'],
+    [7, 'tom1'],
+    [7.125, 'tom2'],
+    [7.25, 'snare'],
+    [7.5, 'tom2'],
+    [7.75, 'snare'],
+  ];
+  for (const [b, piece] of fill) out.push([s(b), piece, 'head', 0.95]);
+  out.push([s(8), 'floorTom', 'head', 1], [s(8), 'kick', 'head', 0.9]);
+  return perfOf('fill with thirty-seconds', out, { bpm });
+}
+
 /** three hand notes at once: hi-hat, snare and crash with the kick (the soft hi-hat has to go) */
 export function threeAtOnce(): DrumPerformance {
   const out: Note[] = [];
@@ -168,6 +201,7 @@ export const PATTERNS: Record<string, () => DrumPerformance> = {
   roll24: () => snareRoll(24),
   flams,
   fill: tomFill,
+  fill32,
   three: threeAtOnce,
   choke,
   hats100: () => sixteenthHats(100),

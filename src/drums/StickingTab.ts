@@ -15,6 +15,8 @@ export interface TabNote {
   grace: boolean;
   /** an open hi-hat (the pedal lifted), a rimshot, a cross-stick, the ride's bell, a cymbal's edge */
   mark: '' | 'open' | 'rim' | 'xstick' | 'bell' | 'edge';
+  /** how far off its column it was played, in columns (-0.5..0.5): a thirty-second on a sixteenth grid is about ±0.5 */
+  off: number;
 }
 
 export interface TabRow {
@@ -130,7 +132,8 @@ export function stickingTab(perf: DrumPerformance, s: Sticking, opts: { firstBar
     const foot = h.limb === 'RF' || h.limb === 'LF';
     const ri = ROWS.findIndex((r) => r.piece === h.piece && !!r.foot === (foot || (h.piece === 'hihat' && h.zone === 'pedal')));
     if (ri < 0) continue;
-    const col = Math.round(((at[h.hit] - t0) / beat) * sub);
+    const x = ((at[h.hit] - t0) / beat) * sub;
+    const col = Math.round(x);
     if (col < 0 || col >= cols) continue;
     const mark: TabNote['mark'] =
       h.zone === 'rim' ? 'rim' : h.zone === 'crossStick' ? 'xstick' : h.zone === 'bell' ? 'bell' : h.piece === 'hihat' && (src.midi === 46 || src.midi === 26) ? 'open' : h.zone === 'edge' && h.piece !== 'hihat' ? 'edge' : '';
@@ -142,6 +145,7 @@ export function stickingTab(perf: DrumPerformance, s: Sticking, opts: { firstBar
       double: h.double,
       grace: h.grace,
       mark,
+      off: x - col,
     });
   }
   return { sub, perBar, firstBar, bars, counts: countLabels(sub, perBar), rows: rows.filter((r) => r.cells.some((c) => c.length)) };

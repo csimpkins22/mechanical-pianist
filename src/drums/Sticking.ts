@@ -132,10 +132,12 @@ const PREP = 0.06;
 const PREP_MIN = 0.03;
 /**
  * Moving the stick's tip between instruments: the arm accelerates and stops
- * (time grows with the square root of the distance) up to a top speed. A
- * comfortable move, and the fastest possible one.
+ * (time grows with the square root of the distance) up to a top speed, then
+ * prepares the stroke. A comfortable move, and the fastest possible one:
+ * between neighbouring drums (30 cm) about 0.18 s and 0.12 s; from the floor
+ * tom to the crash (1.2 m) about 0.36 s and 0.23 s.
  */
-const ACC_COMF = 60;
+const ACC_COMF = 90;
 const V_COMF = 4;
 const ACC_MAX = 150;
 const V_MAX = 6;
@@ -205,7 +207,7 @@ export const COSTS = {
    *  the accents it can reach */
   lead: 0.5,
   /** in a fill, the same hand twice running: fills are single strokes, hand to hand */
-  alternate: 0.5,
+  alternate: 0.8,
   /** a flam's main note by the left hand (the grace note by the right): the right-handed flam is the default */
   flamLead: 0.3,
   /** dropping a hit: more than any playable stroke costs, more for a louder note (ghosts go before accents) */
@@ -519,7 +521,8 @@ function strokeCost(st: State, ev: Ev, h: Hand, info: Info | null): number {
   }
 
   // ---- the arms: the left hand's tip to the right of the right hand's
-  if (ot.piece !== null) {
+  // (both sticks on one drum is two hands sharing it, not crossed arms)
+  if (ot.piece !== null && ot.piece !== ev.piece) {
     // a hand idle a while has lifted out of the way
     const w = clamp01(1 - (t - ot.t - 0.05) / 0.3);
     if (w > 0) {
@@ -535,7 +538,8 @@ function strokeCost(st: State, ev: Ev, h: Hand, info: Info | null): number {
         const yL = h === 'L' ? ev.at[1] : ot.at[1];
         // one arm well above the other passes over it; level arms collide
         const level = 1 - 0.8 * clamp01((Math.abs(yR - yL) - 0.05) / 0.15);
-        if (info) {
+        // (the standard cross holds while the left rests on the snare; others count while the other hand is still mostly there)
+        if (info && (standard || w >= 0.5)) {
           info.over = yR >= yL ? 'R' : 'L';
           info.crossing = standard ? 'standard' : level < 0.5 ? 'over' : 'crossed';
         }
@@ -569,8 +573,11 @@ function strokeCost(st: State, ev: Ev, h: Hand, info: Info | null): number {
     c += l;
     add(info, 'lead', l);
   }
-  // ---- fills go hand to hand (a rebound is the same hand by design, and a flam's main note follows its grace)
-  if (!ev.inGroove && st.lastHand === h && t - st.lastT < 0.4 && !strokeRebound) {
+  // ---- fills go hand to hand (a rebound is the same hand by design; hands playing together, in unison, take turns with
+  // neither: a floor tom and snare figure in both hands at once is not a repeated hand; and the time-keeping hand
+  // leaving the hi-hat or ride to lead a fill is the fill's start, not a repeat)
+  const fromTime = me.piece === 'hihat' || me.piece === 'ride';
+  if (!ev.inGroove && st.lastHand === h && t - st.lastT < 0.4 && !strokeRebound && !ev.together && !fromTime && Math.abs(ot.t - st.lastT) >= 0.03) {
     c += COSTS.alternate;
     add(info, 'alternate', COSTS.alternate);
   }

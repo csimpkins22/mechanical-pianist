@@ -4,7 +4,7 @@ import { assignLimbs, footFor, scoreHands, type Hand, type LimbHit, type Stickin
 import { stickingText } from '../src/drums/StickingTab';
 import { readDrumMidi, type DrumPerformance } from '../src/drums/DrumScore';
 import { DRUMS, PEDALS, type V3 } from '../src/drums/KitLayout';
-import { PATTERNS, choke, flams, ghostNotes, jazzRide, perfOf, rockBeat, sixteenthHats, snareRoll, threeAtOnce, tomFill, type Note } from './stickingPatterns';
+import { PATTERNS, choke, fill32, flams, ghostNotes, jazzRide, perfOf, rockBeat, sixteenthHats, snareRoll, threeAtOnce, tomFill, type Note } from './stickingPatterns';
 
 const groove = (name: string) => readDrumMidi(new Uint8Array(readFileSync(`src/music/drums/${name}.mid`)), name);
 const GROOVES = ['groove-rock-87', 'groove-funk-102', 'groove-jazz-93'];
@@ -198,6 +198,20 @@ describe('sticking: two hands, never in two places at once', () => {
     const after = s.hits.filter((h) => beatOf(p, h) > 8.01);
     expect(after.filter((h) => h.piece === 'hihat').every((h) => h.limb === 'R')).toBe(true);
     expect(after.filter((h) => h.piece === 'snare').every((h) => h.limb === 'L')).toBe(true);
+  });
+
+  it('goes hand to hand through a fill with thirty-seconds in it, no hand repeated', () => {
+    const p = fill32();
+    const s = assignLimbs(p);
+    expectPlayable(p, s);
+    const fill = s.hits.filter((h) => beatOf(p, h) >= 6 - 0.01 && beatOf(p, h) < 8 + 0.01 && h.piece !== 'kick');
+    expect(fill).toHaveLength(11);
+    // right, left, right... (a repeated hand would be a rebound, a diddle, at most)
+    for (let k = 1; k < fill.length; k++) if (fill[k].limb === fill[k - 1].limb) expect(fill[k].double, `at beat ${beatOf(p, fill[k])}`).toBe(true);
+    expect(fill.filter((h, k) => k && h.limb === fill[k - 1].limb && !h.double)).toHaveLength(0);
+    expect(fill[fill.length - 1].limb).toBe('R');
+    expect(s.stats.costs.alternate.n).toBe(0);
+    expect(s.stats.crossings).toBe(0);
   });
 
   it('drops one of three hand notes at once, the least important, and says why', () => {
