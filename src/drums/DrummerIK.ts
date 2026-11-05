@@ -33,7 +33,7 @@
 // The left side is solved as the right in the mirrored world and mirrored back
 // (M R M), so its angles mean the same. Everything is closed form or a fixed
 // number of iterations, and nothing is allocated per solve.
-import { PEDALS, PEDAL_TRAVEL, SEAT, STICK, type PedalId } from './KitLayout';
+import { PEDAL_BOARDS, PEDAL_TRAVEL, PRESS_MIN, SEAT, STICK, footboardAt, type PedalId } from './KitLayout';
 import { kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
 import {
   DOF_BASE,
@@ -931,9 +931,11 @@ interface LegIn {
   kit: Proxy[];
   pelvis: Mat3;
   hip: Vec3;
-  /** the pedal's heel hinge and ball point */
-  heel: Vec3;
+  /** the footboard at its press (KitLayout's footboardAt): where the ball of the foot stands on its top, the board's
+   *  direction toward the toe and its upward normal */
   ball: Vec3;
+  along: Vec3;
+  normal: Vec3;
   /** 0 heel down .. 1 heel up */
   heelLift: number;
   press: number;
@@ -952,7 +954,8 @@ interface LegOut {
   /** the shin's turn about its axis */
   twist: number;
 }
-const legIn: LegIn = { kit: [], pelvis: mat3(), hip: vec3(), heel: vec3(), ball: vec3(), heelLift: 0, press: 0 };
+const legIn: LegIn = { kit: [], pelvis: mat3(), hip: vec3(), ball: vec3(), along: vec3(), normal: vec3(), heelLift: 0, press: 0 };
+const boardOut = { point: legIn.ball, along: legIn.along, normal: legIn.normal };
 const legOut: LegOut = { thigh: mat3(), shin: mat3(), foot: mat3(), toes: mat3(), ang: new Float64Array(8), short: 0, board: 0, splay: 0, twist: 0 };
 const lgB = vec3();
 const lgBH = vec3();
@@ -989,17 +992,12 @@ const KNEE_SPLAY = [0, 0.1, 0.2, 0.3, 0.4, 0.5];
 const splayCost = new Float64Array(KNEE_SPLAY.length);
 
 function solveLeg(inp: LegIn, out: LegOut) {
-  // the footboard, turned down about its heel hinge as it is pressed
-  sub3(lgB, inp.ball, inp.heel);
-  const bl = len3(lgB);
-  scale3(lgBH, lgB, 1 / bl);
-  norm3(lgXB, cross3(lgXB, lgBH, UP));
-  const turn = -PEDAL_TRAVEL * clamp(inp.press, 0, 1);
-  out.board = turn;
-  axisAngle3(lgM, lgXB, turn);
-  apply3(lgBH, lgM, lgBH);
-  cross3(lgNB, lgXB, lgBH);
-  addScaled3(lgBall, inp.heel, lgBH, bl);
+  // the footboard, turned down about its heel hinge as it is pressed (KitLayout's, as the kit's model turns it)
+  copy3(lgBH, inp.along);
+  copy3(lgNB, inp.normal);
+  norm3(lgXB, cross3(lgXB, lgBH, lgNB));
+  copy3(lgBall, inp.ball);
+  out.board = -PEDAL_TRAVEL * clamp(inp.press, PRESS_MIN, 1);
   fromCols3(lgRb, lgXB, lgNB, scale3(lgZ, lgBH, -1));
   // the foot on it: the ball of the foot on the board's ball point and the toes flat on the board, the heel
   // lifted by turning the foot about the ball (none: the whole sole on the board)
@@ -1353,17 +1351,19 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   // --- legs
   for (let si = 0; si < 2; si++) {
     const s = SIDES[si];const ft = t.feet[s];
-    const pd = PEDALS[ft.pedal];
     const lg = J.leg[s];
     copyM3(legIn.pelvis, pose.world, J.pelvis * 9);
     copy3(legIn.hip, pose.pos, lg.thigh * 3);
-    copy3(legIn.heel, pd.heel);
-    copy3(legIn.ball, pd.ball);
+    boardOut.point = legIn.ball;
+    boardOut.along = legIn.along;
+    boardOut.normal = legIn.normal;
+    footboardAt(ft.pedal, ft.press, PEDAL_BOARDS[ft.pedal].ballAlong, boardOut);
     if (s === 'L') {
       mirrorM3(legIn.pelvis, legIn.pelvis);
       mirrorV(legIn.hip, legIn.hip);
-      mirrorV(legIn.heel, legIn.heel);
       mirrorV(legIn.ball, legIn.ball);
+      mirrorV(legIn.along, legIn.along);
+      mirrorV(legIn.normal, legIn.normal);
     }
     legIn.kit = s === 'L' ? KIT_M : KIT;
     legIn.heelLift = ft.heelLift ?? (ft.heel === 'up' ? 1 : 0);

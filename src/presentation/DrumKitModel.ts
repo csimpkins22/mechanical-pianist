@@ -22,7 +22,7 @@
 // from the start of the shutter for motion blur.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { CYMBAL_HOLE, CYMBAL_PROFILES, DRUMS, PEDALS, PEDAL_TRAVEL, SEAT, cymbalTop, surfaceNormal, type CymbalProfile, type DrumId, type DrumSpec } from '../drums/KitLayout';
+import { CYMBAL_HOLE, CYMBAL_PROFILES, DRUMS, PEDALS, PEDAL_BOARDS, SEAT, cymbalTop, footboardAngle, hihatMount, surfaceNormal, type CymbalProfile, type DrumId, type DrumSpec } from '../drums/KitLayout';
 import type { CymbalId, KitState, ShellId, Tilt } from '../drums/KitMotion';
 import { hash01 } from '../core/random';
 import { Parts, along, arc, instanced, revolve, ring, tag, tube, type P2, type V3 } from './drumGeometry';
@@ -41,6 +41,7 @@ export function orientation(d: DrumSpec): THREE.Quaternion {
   return new THREE.Quaternion().setFromEuler(new THREE.Euler(d.tilt, d.yaw, 0, 'YXZ'));
 }
 
+const X_AXIS = new THREE.Vector3(1, 0, 0);
 const v3 = (a: V3) => new THREE.Vector3(a[0], a[1], a[2]);
 const arr = (v: THREE.Vector3): V3 => [v.x, v.y, v.z];
 
@@ -192,8 +193,7 @@ export class DrumKitModel {
   private spring!: THREE.Mesh;
   private chain!: THREE.InstancedMesh;
   private chainGeo = { axle: new THREE.Vector3(), toe: new THREE.Vector3() };
-  private kickPedal = { axle: new THREE.Vector3(), heel: new THREE.Vector3(), restAngle: 0, hitAngle: 0, footRest: 0, footHit: 0, springBase: new THREE.Vector3(), crank: 0 };
-  private hhPedal = { footOpen: 0, footClosed: 0 };
+  private kickPedal = { axle: new THREE.Vector3(), heel: new THREE.Vector3(), restAngle: 0, hitAngle: 0, springBase: new THREE.Vector3(), crank: 0 };
   /** the obstacles on the floor so far (for placing tripods' legs): circles and capsules in xz */
   private floor: { a: [number, number]; b: [number, number]; r: number }[] = [];
   /** how far each set of legs stays clear of everything already on the floor (m; for checks) */
@@ -570,7 +570,8 @@ export class DrumKitModel {
     const kick = this.drums.kick;
     const x = kp.ball[0];
     const headZ = kick.spec.centre[2];
-    const heel = new THREE.Vector3(x, RUG_TOP + 0.012, kp.heel[2] + 0.03);
+    // the footboard's hinge (KitLayout's PEDAL_BOARDS: the drummer's foot stands on the same board)
+    const heel = new THREE.Vector3(...PEDAL_BOARDS.kickPedal.hinge);
     const axle = new THREE.Vector3(x, 0.128, headZ + 0.05);
     const felt = new THREE.Vector3(x, kick.spec.centre[1] - 0.01, headZ + 0.022);
     const L = felt.distanceTo(axle);
@@ -626,7 +627,7 @@ export class DrumKitModel {
     this.root.add(foot);
     this.kickFoot = foot;
     // the toe reaches under the axle, between the posts: the chain pulls the cam's front down
-    const len = heel.z - (axle.z - 0.022);
+    const len = PEDAL_BOARDS.kickPedal.length;
     const fp = new Parts();
     const board = new RoundedBoxGeometry(0.088, 0.008, len, 2, 0.003).translate(0, 0.006, -len / 2);
     fp.add(P.alu, board);
@@ -635,13 +636,8 @@ export class DrumKitModel {
     fp.add(P.darkMetal, new RoundedBoxGeometry(0.03, 0.02, 0.02, 2, 0.004).translate(-0.04, 0.016, -len + 0.012));
     const fm = fp.build(foot, 'kick-footboard');
     this.moving.push(...fm);
-    // the footboard rests with its toe raised; pressed, it drops as the beater meets the head
-    const toeRest = 0.072;
-    const toePressed = 0.024;
-    // (KitLayout's PEDAL_TRAVEL: the robot's foot turns the same footboard by the same angle)
-    this.kickPedal.footRest = Math.atan2(toeRest, len);
-    this.kickPedal.footHit = this.kickPedal.footRest - PEDAL_TRAVEL;
-    void toePressed;
+    // the footboard rests with its toe raised (7.2 cm); pressed, it drops PEDAL_TRAVEL as the beater meets the head
+    // (KitLayout's footboardAngle: the robot's foot turns the same footboard by the same angle)
     this.chainGeo.toe.set(-0.04, 0.026, -len + 0.01);
     // the chain: links between the cam and the toe, posed every frame
     const link = new RoundedBoxGeometry(0.006, 0.011, 0.004, 1, 0.0015);
@@ -664,51 +660,45 @@ export class DrumKitModel {
   private buildHiHat() {
     const P = this.palette;
     const hh = DRUMS.hihat;
-    const hp = PEDALS.hihatPedal;
     const shape = CYMBAL_SHAPES.hats;
     const c = hh.centre;
     const q = orientation(hh);
-    // the bottom cymbal: upside down, its edge meeting the top's when closed
-    const te = shape.t[2];
-    const bottomY = c[1] - 2 * shape.drop - 2 * te - 0.0005;
-    // the bottom cymbal's bell rests on the seat's felt (its top at 0.017 above the column's top)
-    const colTop = bottomY - shape.bellH - 0.017;
+    // the column's head, so that the top cymbal's centre is KitLayout's (the tilt puts it a few mm off the column's line)
+    const mount = hihatMount();
+    const [cx, cz] = mount.column;
+    const colTop = mount.head[1];
     const parts = new Parts();
     // the stand: a tripod around the column, the column, its height lock
-    this.tripod(parts, [c[0], c[2]], 0.24, 0.245, 0.0075);
-    parts.add(P.chrome, tube([c[0], 0.08, c[2]], [c[0], 0.56, c[2]], 0.0135, 18));
-    parts.add(P.chrome, memoryLock(0.0175).translate(c[0], 0.56, c[2]));
-    parts.add(P.chrome, tube([c[0], 0.56, c[2]], [c[0], colTop, c[2]], 0.0105, 16));
+    this.tripod(parts, [cx, cz], 0.24, 0.245, 0.0075);
+    parts.add(P.chrome, tube([cx, 0.08, cz], [cx, 0.56, cz], 0.0135, 18));
+    parts.add(P.chrome, memoryLock(0.0175).translate(cx, 0.56, cz));
+    parts.add(P.chrome, tube([cx, 0.56, cz], [cx, colTop, cz], 0.0105, 16));
     // the pedal: a frame from the heel to the column's foot, the footboard on it (separate: it moves)
-    const heel = new THREE.Vector3(hp.heel[0], RUG_TOP + 0.012, hp.heel[2] + 0.03);
-    const front = new THREE.Vector3(c[0], 0, c[2]);
-    const dz = front.clone().sub(heel).setY(0);
-    const len = dz.length();
-    const yaw = Math.atan2(dz.x, dz.z);
-    const fq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw + Math.PI);
+    const board = PEDAL_BOARDS.hihatPedal;
+    const heel = new THREE.Vector3(...board.hinge);
+    const len = board.length + 0.03;
+    const fq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), board.yaw + Math.PI);
     parts.add(P.darkMetal, new THREE.BoxGeometry(0.095, 0.006, len + 0.05).translate(0, RUG_TOP + 0.003, -(len + 0.05) / 2 + 0.03).applyMatrix4(new THREE.Matrix4().compose(heel.clone().setY(0), fq, new THREE.Vector3(1, 1, 1))));
     parts.add(P.darkMetal, new RoundedBoxGeometry(0.085, 0.01, 0.07, 2, 0.003).translate(0, RUG_TOP + 0.009, 0.03).applyMatrix4(new THREE.Matrix4().compose(heel.clone().setY(0), fq, new THREE.Vector3(1, 1, 1))));
     // the spring housing at the column's foot, and the link up into the column
-    parts.add(P.darkMetal, new RoundedBoxGeometry(0.05, 0.07, 0.04, 2, 0.006).translate(c[0], RUG_TOP + 0.045, c[2]));
+    parts.add(P.darkMetal, new RoundedBoxGeometry(0.05, 0.07, 0.04, 2, 0.006).translate(cx, RUG_TOP + 0.045, cz));
     parts.build(this.root, 'hihat-stand');
-    this.floor.push({ a: [heel.x, heel.z], b: [c[0], c[2]], r: 0.06 });
+    this.floor.push({ a: [heel.x, heel.z], b: [cx, cz], r: 0.06 });
 
     const hf = new THREE.Group();
     hf.position.copy(heel);
     hf.quaternion.copy(fq);
     this.root.add(hf);
     this.hhFoot = hf;
-    const flen = len - 0.03;
+    const flen = board.length;
     const fp = new Parts();
     fp.add(P.alu, new RoundedBoxGeometry(0.085, 0.008, flen, 2, 0.003).translate(0, 0.006, -flen / 2));
     fp.add(P.darkMetal, new RoundedBoxGeometry(0.088, 0.016, 0.014, 2, 0.003).translate(0, 0.014, -flen + 0.006));
     this.moving.push(...fp.build(hf, 'hihat-footboard'));
-    this.hhPedal.footClosed = Math.atan2(0.02, flen);
-    this.hhPedal.footOpen = this.hhPedal.footClosed + PEDAL_TRAVEL;
 
     // the cymbals' head of the stand: tilted as the layout asks, on the column
     const head = new THREE.Group();
-    head.position.set(c[0], colTop, c[2]);
+    head.position.set(...mount.head);
     head.quaternion.copy(q);
     this.root.add(head);
     const hp2 = new Parts();
@@ -722,14 +712,15 @@ export class DrumKitModel {
     // the bottom cymbal, bell down, resting on the seat's felt
     const bottom = cymbalMesh(shape, 3, P);
     bottom.rotation.x = Math.PI;
-    bottom.position.y = bottomY - colTop;
+    bottom.position.y = mount.bottomY;
     head.add(bottom);
     // the top cymbal and its clutch on the pull rod: lifted by the pedal
     const top = new THREE.Group();
     head.add(top);
     this.hhTop = top;
     const tp = new Parts();
-    const topY = c[1] - colTop;
+    const topY = mount.topY;
+    void c;
     tp.add(P.chrome, tube([0, topY - 0.045, 0], [0, topY + 0.09, 0], 0.0036, 10));
     // the clutch: lower felt, the cymbal, upper felt, the body with its thumb screw
     tp.add(P.chrome, new THREE.CylinderGeometry(0.008, 0.008, 0.006, 16).translate(0, topY + shape.bellH - shape.t[0] - 0.012, 0));
@@ -899,15 +890,13 @@ export class DrumKitModel {
     }
     // the hi-hat: the top cymbal and clutch lifted by the pedal, the footboard following
     this.hhTop.position.y = s.hihatGap;
-    const hf = this.hhPedal;
     this.hhFoot.quaternion.copy(this.hhFoot.userData.q0 ??= this.hhFoot.quaternion.clone());
-    this.hhFoot.quaternion.copy(this.hhFoot.userData.q0 as THREE.Quaternion).multiply(this.qb.setFromAxisAngle(new THREE.Vector3(1, 0, 0), hf.footClosed + (hf.footOpen - hf.footClosed) * (1 - s.hihatClosed)));
+    this.hhFoot.quaternion.copy(this.hhFoot.userData.q0 as THREE.Quaternion).multiply(this.qb.setFromAxisAngle(X_AXIS, footboardAngle('hihatPedal', s.hihatClosed)));
     // the kick pedal: beater, axle, cam and crank turn together; the footboard and chain follow; the spring stretches
     const k = this.kickPedal;
     const ang = k.restAngle + (k.hitAngle - k.restAngle) * s.beater;
     this.beater.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -ang);
-    const footAng = k.footRest + (k.footHit - k.footRest) * Math.max(-0.2, s.beater);
-    this.kickFoot.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), footAng);
+    this.kickFoot.quaternion.setFromAxisAngle(X_AXIS, footboardAngle('kickPedal', s.beater));
     this.poseChain();
     this.poseSpring();
   }

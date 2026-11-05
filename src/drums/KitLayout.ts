@@ -86,7 +86,7 @@ export const DRUMS: Record<DrumId, DrumSpec> = {
   // the kick lies on its side: its batter head faces the drummer (+z), centred at the beater's height
   kick: { ...drum('kick', 'drum', 22, 18, [0.1, 0.29, -0.62], 90, 'RF'), yaw: 0 },
   snare: drum('snare', 'drum', 14, 5.5, [-0.11, 0.73, -0.47], 8, 'L'),
-  hihat: drum('hihat', 'cymbal', 14, 0, [-0.43, 0.95, -0.51], 4, 'R'),
+  hihat: drum('hihat', 'cymbal', 14, 0, [-0.47, 0.95, -0.51], 4, 'R'),
   tom1: drum('tom1', 'drum', 10, 8, [-0.13, 0.86, -0.78], 14, 'either'),
   tom2: drum('tom2', 'drum', 12, 9, [0.18, 0.89, -0.75], 14, 'either'),
   floorTom: drum('floorTom', 'drum', 16, 16, [0.54, 0.64, -0.43], 3, 'R'),
@@ -94,14 +94,116 @@ export const DRUMS: Record<DrumId, DrumSpec> = {
   ride: drum('ride', 'cymbal', 21, 0, [0.7, 1.04, -0.66], 11, 'R'),
 };
 
-/** pedals: where the foot rests (the middle of the footboard) and where its heel sits */
+/**
+ * pedals: where the heel sits (the heel plate) and where the ball of the foot rests on the footboard at rest
+ * (`ball` is the footboard's top surface there: see footboardAt, which the kit's model and the drummer's foot
+ * both use, so the board is under the foot at every press)
+ */
 export const PEDALS: Record<PedalId, { ball: V3; heel: V3; drives: DrumId }> = {
-  kickPedal: { ball: [0.12, 0.05, -0.54], heel: [0.12, 0.02, -0.31], drives: 'kick' },
-  hihatPedal: { ball: [-0.39, 0.05, -0.45], heel: [-0.35, 0.02, -0.23], drives: 'hihat' },
+  kickPedal: { ball: [0, 0, 0], heel: [0.12, 0.02, -0.31], drives: 'kick' },
+  // the hi-hat's footboard runs from its heel plate to the foot of the column (moved 4 cm left with the hi-hat,
+  // so the left hand passes it on its way to tom 1): the heel 2 cm further left than before, the foot turned
+  // a little more out toward the column
+  hihatPedal: { ball: [0, 0, 0], heel: [-0.37, 0.02, -0.23], drives: 'hihat' },
 };
 
 /** how far a pedal's footboard turns about its heel hinge from rest to fully down (the beater on the head, the hi-hat closed), radians */
 export const PEDAL_TRAVEL = 0.11;
+
+/**
+ * A pedal's footboard: hinged at its heel, turned toward what it drives
+ * (the kick's beater axle, the hi-hat's column), its toe raised at rest by
+ * the spring and pressed down by PEDAL_TRAVEL. The kit's model builds the
+ * board from this and the drummer's foot stands on it, so both read one
+ * function (footboardAt) of one press: for the kick the beater's travel
+ * (KitMotion.beater, which springs a little past rest: -0.2..1), for the
+ * hi-hat how closed it is (0..1).
+ */
+export interface PedalBoard {
+  /** the hinge's axis, at the board's centre line (the board's top is FOOTBOARD_TOP above it) */
+  hinge: V3;
+  /** the board's heading on the floor, from the heel toward the toe (radians about y; 0 = toward +z, as three.js turns it) */
+  yaw: number;
+  /** from the hinge to the toe */
+  length: number;
+  /** how far the toe is raised at rest (radians) */
+  rest: number;
+  /** where the ball of the foot sits, from the hinge along the board */
+  ballAlong: number;
+}
+/** the board's top surface above its hinge's axis */
+export const FOOTBOARD_TOP = 0.01;
+/** the lowest a press goes: the kick's footboard rides its beater past rest by at most this much */
+export const PRESS_MIN = -0.2;
+
+function boards(): Record<PedalId, PedalBoard> {
+  const k = PEDALS.kickPedal;
+  const h = PEDALS.hihatPedal;
+  // the kick: the board reaches under the beater's axle (5 cm in front of the batter head), its toe 7.2 cm up at rest
+  const kHinge: V3 = [k.heel[0], 0.02, k.heel[2] + 0.03];
+  const kLen = kHinge[2] - (DRUMS.kick.centre[2] + 0.05 - 0.022);
+  // the hi-hat: toward the column's foot, ending 3 cm short of it; closed, its toe is 2 cm up
+  const col = hihatMount().column;
+  const hHinge: V3 = [h.heel[0], 0.02, h.heel[2] + 0.03];
+  const dx = col[0] - hHinge[0];
+  const dz = col[1] - hHinge[2];
+  const hLen = Math.hypot(dx, dz) - 0.03;
+  return {
+    kickPedal: { hinge: kHinge, yaw: Math.PI, length: kLen, rest: Math.atan2(0.072, kLen), ballAlong: 0.25 },
+    hihatPedal: { hinge: hHinge, yaw: Math.atan2(dx, dz), length: hLen, rest: Math.atan2(0.02, hLen) + PEDAL_TRAVEL, ballAlong: 0.215 },
+  };
+}
+
+/** the board's toe-up angle at a press (radians above the floor's level) */
+export function footboardAngle(id: PedalId, press: number): number {
+  const p = press < PRESS_MIN ? PRESS_MIN : press > 1 ? 1 : press;
+  return PEDAL_BOARDS[id].rest - PEDAL_TRAVEL * p;
+}
+
+/**
+ * The footboard at a press: the point on its top surface `along` metres from
+ * the hinge, the unit vector along it toward the toe and its upward normal
+ * (written into `out`, nothing allocated).
+ */
+export function footboardAt(
+  id: PedalId,
+  press: number,
+  along: number,
+  out: { point: number[] | Float64Array; along: number[] | Float64Array; normal: number[] | Float64Array },
+) {
+  const b = PEDAL_BOARDS[id];
+  const a = footboardAngle(id, press);
+  const sy = Math.sin(b.yaw);
+  const cy = Math.cos(b.yaw);
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  // along: the heading (sin yaw, 0, cos yaw) raised by a; the normal: up, tipped back by a
+  out.along[0] = sy * ca;
+  out.along[1] = sa;
+  out.along[2] = cy * ca;
+  out.normal[0] = -sy * sa;
+  out.normal[1] = ca;
+  out.normal[2] = -cy * sa;
+  for (let k = 0; k < 3; k++) out.point[k] = b.hinge[k] + out.along[k] * along + out.normal[k] * FOOTBOARD_TOP;
+  return out;
+}
+
+/**
+ * The hi-hat's column and its head: the cymbals sit on the head tilted as
+ * KitLayout asks, the top cymbal's centre exactly on DRUMS.hihat.centre, so
+ * the column's top stands that far back along the cymbals' axis (a few mm
+ * from under the centre, as the tilt sets it).
+ */
+export function hihatMount(): { head: V3; column: [number, number]; topY: number; bottomY: number } {
+  const d = DRUMS.hihat;
+  const p = CYMBAL_PROFILES.hihat;
+  const n = surfaceNormal(d);
+  // heights along the axis, from the head: the bottom cymbal's bell on the seat's felt, the top cymbal edge to edge on it
+  const below = 2 * p.drop + 2 * p.thickness[2] + 0.0005;
+  const topY = below + p.bellHeight + 0.017;
+  const head: V3 = [d.centre[0] - n[0] * topY, d.centre[1] - n[1] * topY, d.centre[2] - n[2] * topY];
+  return { head, column: [head[0], head[2]], topY, bottomY: topY - below };
+}
 
 /**
  * A cymbal's cross-section, shared by its model and its strike spots. Heights
@@ -182,3 +284,12 @@ export const SPOTS = {
   /** the ride's bell */
   bell: (d: DrumSpec) => strikePoint(d, 0.12),
 };
+
+/** the pedals' footboards (read once: they follow DRUMS and PEDALS) */
+export const PEDAL_BOARDS: Record<PedalId, PedalBoard> = boards();
+// the ball of the foot on each board at rest
+for (const id of ['kickPedal', 'hihatPedal'] as PedalId[]) {
+  const o = { point: [0, 0, 0], along: [0, 0, 0], normal: [0, 0, 0] };
+  footboardAt(id, 0, PEDAL_BOARDS[id].ballAlong, o);
+  PEDALS[id].ball = o.point as V3;
+}

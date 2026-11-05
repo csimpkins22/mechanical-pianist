@@ -197,16 +197,10 @@ describe('determinism', () => {
 });
 
 describe('clearance against the kit (KitProxy: drums, cymbal profiles, stands)', () => {
-  /**
-   * The hi-hat's top cymbal stands where the left hand passes on its way to tom 1 (the hand about 1.7 cm into
-   * its rim, the arm otherwise at a joint's stop), so that pose is reported (see the drums-robot notes) rather
-   * than asserted. A hi-hat 4 cm lower, or 4 cm further left, clears it.
-   */
-  const LAYOUT_CONFLICTS = new Set(['tom1L']);
   const pose = createPose();
   const cases: { name: string; targets: DrummerTargets; open?: boolean }[] = [
-    ...namedPoses().filter((p) => !LAYOUT_CONFLICTS.has(p.name)).map((p) => ({ name: p.name, targets: p.targets, open: p.name === 'hihatOpen' })),
-    ...REACH.filter((r) => !(r.id === 'tom1' && r.side === 'L')).map((r) => ({ name: r.name, targets: strike(r.side, r.id, r.spot, { open: r.open }), open: r.open })),
+    ...namedPoses().map((p) => ({ name: p.name, targets: p.targets, open: p.name === 'hihatOpen' })),
+    ...REACH.map((r) => ({ name: r.name, targets: strike(r.side, r.id, r.spot, { open: r.open }), open: r.open })),
   ];
   for (const c of cases) {
     test(c.name, () => {

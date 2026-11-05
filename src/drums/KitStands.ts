@@ -5,7 +5,7 @@
 // (src/presentation/DrumKitModel.ts) places them, by the same rules in the
 // same order (tests/drummer.test.ts checks that both agree), so the drummer's
 // clearance checks see the stands that are drawn, without loading the model.
-import { CYMBAL_PROFILES, DRUMS, PEDALS, SEAT, type DrumId, type DrumSpec, type V3 } from './KitLayout';
+import { CYMBAL_PROFILES, DRUMS, PEDALS, SEAT, hihatMount, type DrumId, type DrumSpec, type V3 } from './KitLayout';
 
 export interface StandRod {
   id: DrumId;
@@ -195,18 +195,15 @@ export function kitStands(): KitStands {
   // the kick pedal's frame on the floor
   floor.push({ a: [kp.ball[0], kick.centre[2] + 0.05], b: [kp.ball[0], kp.heel[2] + 0.03], r: 0.07 });
 
-  // the hi-hat: tripod and column; the cymbals' seat on top, the pull rod and the clutch above the top cymbal
+  // the hi-hat: tripod and column (under the head that puts the top cymbal's centre on KitLayout's); the cymbals'
+  // seat on top, the pull rod and the clutch above the top cymbal
   {
-    const d = DRUMS.hihat;
-    const c = d.centre;
-    const p = CYMBAL_PROFILES.hihat;
-    const te = p.thickness[2];
-    const bottomY = c[1] - 2 * p.drop - 2 * te - 0.0005;
-    const colTop = bottomY - p.bellHeight - 0.017;
-    tripod('hihat', 'hi-hat stand', [c[0], c[2]], 0.24, 0.245, 0.0075);
-    rod('hihat', 'hi-hat stand', [c[0], 0.08, c[2]], [c[0], 0.56, c[2]], 0.0135);
-    rod('hihat', 'hi-hat stand', [c[0], 0.56, c[2]], [c[0], colTop, c[2]], 0.0105);
-    floor.push({ a: [hp.heel[0], hp.heel[2] + 0.03], b: [c[0], c[2]], r: 0.06 });
+    const m = hihatMount();
+    const [cx, cz] = m.column;
+    tripod('hihat', 'hi-hat stand', [cx, cz], 0.24, 0.245, 0.0075);
+    rod('hihat', 'hi-hat stand', [cx, 0.08, cz], [cx, 0.56, cz], 0.0135);
+    rod('hihat', 'hi-hat stand', [cx, 0.56, cz], m.head, 0.0105);
+    floor.push({ a: [hp.heel[0], hp.heel[2] + 0.03], b: [cx, cz], r: 0.06 });
   }
 
   // the boom stands for the crash and the ride, behind and outside their cymbals
@@ -240,14 +237,10 @@ export function kitStands(): KitStands {
  */
 export function hihatTop(gap: number): StandRod[] {
   const d = DRUMS.hihat;
-  const c = d.centre;
   const p = CYMBAL_PROFILES.hihat;
-  const te = p.thickness[2];
-  const bottomY = c[1] - 2 * p.drop - 2 * te - 0.0005;
-  const colTop = bottomY - p.bellHeight - 0.017;
-  const head: V3 = [c[0], colTop, c[2]];
-  const at = (x: number, y: number): V3 => add(head, rot(d, [x, y + gap, 0]));
-  const topY = c[1] - colTop;
+  const m = hihatMount();
+  const at = (x: number, y: number): V3 => add(m.head, rot(d, [x, y + gap, 0]));
+  const topY = m.topY;
   const b = topY + p.bellHeight;
   return [
     { id: 'hihat', label: 'hi-hat rod', a: at(0, topY - 0.045), b: at(0, topY + 0.09), radius: 0.0036 },
