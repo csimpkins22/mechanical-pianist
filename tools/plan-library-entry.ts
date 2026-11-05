@@ -1,6 +1,6 @@
 // Bundled and run by plan-library.cjs (in Node): the library's pieces, and
 // the plan for one of them, made exactly as the app's planner worker makes it.
-import { LIBRARY } from '../src/app/library';
+import { PIANO_LIBRARY as LIBRARY } from '../src/app/library';
 import { planChecked } from '../src/app/plan';
 import { encodePlan, fingerprint } from '../src/app/planCodec';
 import { buildScore, defaultTrackSelection, readMidi } from '../src/interpretation/MidiEngine';

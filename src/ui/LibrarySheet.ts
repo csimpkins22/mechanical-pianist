@@ -14,6 +14,7 @@ const GROUPS: { id: LibraryGroup; label: string }[] = [
   { id: 'Songs', label: 'Songs' },
   { id: 'Classical', label: 'Classical' },
   { id: 'Original', label: 'Original works' },
+  { id: 'Drums', label: 'Drums' },
 ];
 
 export class LibrarySheet {
@@ -129,7 +130,8 @@ export class LibrarySheet {
     const credits = el('section', 'lib-sec lib-credits');
     credits.innerHTML = `<h3 class="sec">Credits</h3>
       <p>Piano: <a href="https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html" target="_blank" rel="noopener">Upright Piano KW</a> from the FreePats project, CC0. Key-release noises: <a href="https://archive.org/details/SalamanderGrandPianoV3" target="_blank" rel="noopener">Salamander Grand Piano V3</a> by Alexander Holm, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a>.</p>
-      <p>The classical pieces are public-domain compositions, played from MIDI performances. Built with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>, <a href="https://github.com/Tonejs/Midi" target="_blank" rel="noopener">@tonejs/midi</a> and <a href="https://github.com/Vanilagy/mp4-muxer" target="_blank" rel="noopener">mp4-muxer</a>. "Halloran &amp; Vey" and "Vey Automata" are invented makers.</p>`;
+      <p>Drums: <a href="https://github.com/sfzinstruments/karoryfer.big-rusty-drums" target="_blank" rel="noopener">Big Rusty Drums</a> by Karoryfer Samples, CC0. The drum performances are from the <a href="https://magenta.tensorflow.org/datasets/groove" target="_blank" rel="noopener">Groove MIDI Dataset</a> (Gillick, Roberts, Engel, Eck and Bamman, 2019), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.</p>
+      <p>The classical pieces are public-domain compositions, played from MIDI performances. Built with <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>, <a href="https://github.com/Tonejs/Midi" target="_blank" rel="noopener">@tonejs/midi</a> and <a href="https://github.com/Vanilagy/mp4-muxer" target="_blank" rel="noopener">mp4-muxer</a>. "Halloran &amp; Vey", "Vey Automata", "Corbel &amp; Wren", "Aldane" and "Marrowby" are invented makers.</p>`;
     this.body.appendChild(credits);
     await this.updateStatus();
   }
@@ -177,7 +179,7 @@ export class LibrarySheet {
   }
 
   private isCurrent(key: string) {
-    const s = this.app.piece?.source;
+    const s = this.app.currentSource();
     return !!s && sourceKey(s) === key;
   }
 

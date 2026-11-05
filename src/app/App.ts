@@ -16,6 +16,10 @@ import { DEFAULT_LOOK, SceneRenderer, shutterTime } from '../presentation/SceneR
 import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 import { DEFAULT_LIVE, LiveSession, type LiveSettings } from '../live/LiveSession';
+import { DrumAudio } from '../drums/DrumAudio';
+import { DrumSession } from '../drums/DrumSession';
+import { readDrumMidi } from '../drums/DrumScore';
+import { DrumStage } from '../presentation/DrumStage';
 
 export type PieceSource = { kind: 'library'; id: string } | { kind: 'file'; id: string; name: string };
 
@@ -65,6 +69,10 @@ export class App {
   piece: Piece | null = null;
   loading: Loading | null = null;
   readonly planner = new Planner();
+  /** the drum stage, while a drum piece is open (the piano's piece stays loaded behind it) */
+  drums: DrumSession | null = null;
+  private drumStage: DrumStage | null = null;
+  readonly drumAudio: DrumAudio;
   private buildSeq = 0;
   private entryReqs = new Map<string, { req: PlanRequest; duration: number }>();
   /** plans prepared at build time for the library (plans/manifest.json), when they match this build */
@@ -97,6 +105,8 @@ export class App {
     };
     this.audio = new AudioEngine(import.meta.env.BASE_URL);
     this.audio.onStatus = () => this.emit('audio');
+    this.drumAudio = new DrumAudio(import.meta.env.BASE_URL);
+    this.drumAudio.onStatus = () => this.emit('audio');
     // the viewer's own settings from last time (ignored with ?settings=default, for tools)
     if (this.params.get('settings') !== 'default') {
       const s = loadSettings();
@@ -124,6 +134,7 @@ export class App {
     Object.assign(this.view.look, look, { style: style.id });
     this.lights = lights;
     this.view.setLights(lights);
+    this.drumStage?.setLights(lights);
     this.settingsChanged();
     this.emit('style');
     return style;
@@ -197,7 +208,8 @@ export class App {
     this.loopFrame(performance.now());
     // keep audio scheduled even when the tab is in the background
     setInterval(() => {
-      if (this.playing && this.piece) this.audio.pump(this.piece.timeline);
+      if (this.playing && this.drums) this.drumAudio.pump();
+      else if (this.playing && this.piece) this.audio.pump(this.piece.timeline);
     }, 40);
     this.emit('piece');
   }
@@ -264,6 +276,7 @@ export class App {
   // ------------------------------------------------------------- pieces
   /** open a piece from the library */
   openEntry(e: LibraryEntry, progress?: (f: number, label: string) => void) {
+    if (e.stage === 'drums') return this.openDrums(e, progress);
     const { bytes } = this.entryInfo(e).req;
     return this.build(bytes, readMidi(bytes, `${e.id}.mid`), { kind: 'library', id: e.id }, new Map(), undefined, { title: e.title, artist: e.artist }, progress);
   }
@@ -300,7 +313,7 @@ export class App {
     const entry = source.kind === 'library' ? entryById(source.id) : undefined;
     const def = entry && this.entryInfo(entry).req;
     const prebuilt = def && !overrides.size && def.tracks.join() === sel.join() ? def.prebuilt : undefined;
-    const sameSource = !!this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
+    const sameSource = !this.drums && !!this.piece && JSON.stringify(this.piece.source) === JSON.stringify(source);
     this.loading = { source, title: meta.title, fraction: 0, label: 'Reading the score' };
     this.emit('loading');
     try {
@@ -315,6 +328,7 @@ export class App {
       const camera = new CinematicCamera(timeline.plan, score.duration, score.tempos, this.view.look.openPiano);
       const wasPlaying = this.playing;
       if (wasPlaying) this.pause();
+      this.leaveDrums();
       this.piece = { bytes, parsed, perf, timeline, camera, overrides, tracks: sel, source, title: meta.title, artist: meta.artist };
       this.t = sameSource ? Math.min(this.t, score.duration) : 0;
       this.loading = null;
@@ -361,6 +375,11 @@ export class App {
   /** the planning request for a library piece as it opens (default parts, no overrides), and its length */
   entryInfo(e: LibraryEntry) {
     let info = this.entryReqs.get(e.id);
+    if (!info && e.stage === 'drums') {
+      const bytes = e.bytes();
+      info = { req: { bytes, name: e.id, tracks: [], overrides: new Map() }, duration: readDrumMidi(bytes, e.id).duration };
+      this.entryReqs.set(e.id, info);
+    }
     if (!info) {
       const bytes = e.bytes();
       const parsed = readMidi(bytes, `${e.id}.mid`);
@@ -375,11 +394,12 @@ export class App {
 
   /** library pieces without a prepared plan, not yet planned in this browser: plan them quietly, one at a time */
   prepareLibrary() {
-    this.planner.prepare(LIBRARY.map((e) => this.entryInfo(e).req).filter((r) => !r.prebuilt));
+    this.planner.prepare(LIBRARY.filter((e) => e.stage !== 'drums').map((e) => this.entryInfo(e).req).filter((r) => !r.prebuilt));
   }
 
   /** 1 when a library piece opens at once (planned already), else how far its preparation is (null: not started) */
   async entryStatus(e: LibraryEntry): Promise<number | null> {
+    if (e.stage === 'drums') return 1;
     const { req } = this.entryInfo(e);
     if (await this.planner.cached(req)) return 1;
     return this.planner.status.get(await this.planner.key(req)) ?? null;
@@ -438,29 +458,99 @@ export class App {
   }
 
   get duration() {
-    return this.piece?.timeline.duration ?? 0;
+    return this.drums ? this.drums.duration : (this.piece?.timeline.duration ?? 0);
+  }
+
+  /** what is on stage: the drum piece, or the piano's */
+  currentSource(): PieceSource | null {
+    return this.drums ? this.drums.source : (this.piece?.source ?? null);
+  }
+
+  // ------------------------------------------------------------- the drum stage
+  /** open a drum piece on the drum stage (built the first time, then kept) */
+  async openDrums(e: LibraryEntry, progress?: (f: number, label: string) => void) {
+    const seq = ++this.buildSeq;
+    const source = { kind: 'library' as const, id: e.id };
+    this.loading = { source, title: e.title, fraction: 0.2, label: 'Setting up the kit' };
+    progress?.(0.2, 'Setting up the kit');
+    this.emit('loading');
+    if (!this.drumStage) {
+      const stage = new DrumStage(this.view.renderer, this.view.post);
+      stage.onRelit = () => {
+        if (!this.playing) this.renderNow();
+      };
+      stage.setLights(this.lights);
+      await stage.prepare();
+      this.drumStage = stage;
+    }
+    if (seq !== this.buildSeq) return;
+    // playing live is the piano's; the drums leave it
+    if (this.live) this.exitLive();
+    const wasPlaying = this.playing;
+    if (wasPlaying) this.pause();
+    this.drumAudio.stop();
+    this.drumAudio.resume();
+    this.drums = new DrumSession(e.bytes(), source, e.title, e.artist, e.year, this.drumAudio, this.drumStage);
+    this.t = 0;
+    this.loading = null;
+    progress?.(1, '');
+    this.renderNow();
+    this.emit('piece');
+    if (wasPlaying) void this.play();
+  }
+
+  /** back to the piano (its piece is still loaded) */
+  private leaveDrums() {
+    if (!this.drums) return;
+    this.drumAudio.dispose();
+    this.drums = null;
+  }
+
+  private get soundRunning() {
+    return this.drums ? this.drumAudio.isRunning : this.audio.isRunning;
+  }
+
+  /** start the sound at t (the drums' or the piano's) */
+  private startSound() {
+    if (this.drums) {
+      if (this.drumAudio.ready) {
+        this.drumAudio.setLevel(this.audio.volume, this.audio.muted);
+        this.drumAudio.start(this.t, this.speed);
+      }
+    } else if (this.audio.ready && this.piece) this.audio.start(this.piece.timeline, this.t, this.speed);
+  }
+
+  private stopSound() {
+    if (this.drums) this.drumAudio.stop();
+    else this.audio.stop();
+  }
+
+  /** the performance's sound from t0 to t1, rendered offline (video export) */
+  renderSoundOffline(t0: number, t1: number): Promise<AudioBuffer> {
+    if (this.drums) return this.drumAudio.renderOffline(t0, t1);
+    return this.audio.renderOffline(this.piece!.timeline, t0, t1);
   }
 
   // ------------------------------------------------------------- transport
   async play() {
-    if (!this.piece || this.live) return;
+    if ((!this.piece && !this.drums) || this.live) return;
     if (this.t >= this.duration - 0.02) this.t = 0;
     this.playing = true;
     this.lastWall = performance.now();
     this.emit('transport');
     try {
-      await this.audio.init();
+      await (this.drums ? this.drumAudio.init() : this.audio.init());
     } catch (e) {
       console.warn('audio unavailable', e);
     }
-    if (this.playing && this.audio.ready) this.audio.start(this.piece.timeline, this.t, this.speed);
+    if (this.playing) this.startSound();
   }
 
   pause() {
     if (!this.playing) return;
-    if (this.audio.isRunning) this.t = Math.max(0, this.audioTime());
+    if (this.soundRunning) this.t = Math.max(0, this.audioTime());
     this.playing = false;
-    this.audio.stop();
+    this.stopSound();
     this.renderNow();
     this.emit('transport');
   }
@@ -477,7 +567,7 @@ export class App {
 
   seek(t: number) {
     this.t = Math.max(0, Math.min(this.duration, t));
-    if (this.playing && this.audio.ready && !this.scrubbing) this.audio.start(this.piece!.timeline, this.t, this.speed);
+    if (this.playing && !this.scrubbing) this.startSound();
     this.lastWall = performance.now();
     this.renderNow();
     this.emit('time');
@@ -490,7 +580,7 @@ export class App {
     this.resumeAfterScrub = this.playing;
     if (this.playing) {
       this.playing = false;
-      this.audio.stop();
+      this.stopSound();
     }
   }
 
@@ -506,19 +596,27 @@ export class App {
   }
 
   setSpeed(s: number) {
-    if (this.playing && this.audio.isRunning) this.t = this.audioTime();
+    if (this.playing && this.soundRunning) this.t = this.audioTime();
     this.speed = s;
-    if (this.playing && this.audio.ready) this.audio.start(this.piece!.timeline, this.t, s);
+    if (this.playing) this.startSound();
     this.emit('transport');
   }
 
   private audioTime() {
-    return this.audio.clockTime();
+    return this.drums ? this.drumAudio.clockTime() : this.audio.clockTime();
   }
 
   // ------------------------------------------------------------- view
   /** show a camera view: a clean cut, as the director's own cuts are (a glide between distant framings could pass through the case) */
   setCamera(v: CameraView) {
+    if (this.drums) {
+      // the drum stage's camera: the edit, or one of its views held
+      const held: Record<string, string> = { follow: 'front', overhead: 'overhead', macro: 'snare' };
+      this.drums.view = v === 'cinematic' ? 'cinematic' : typeof v === 'string' ? { shot: held[v] } : this.drums.view;
+      this.invalidate();
+      this.emit('view');
+      return;
+    }
     if (sameView(v, this.camView) || !this.piece) return;
     this.camView = v;
     this.invalidate();
@@ -527,12 +625,19 @@ export class App {
 
   /** hold the next (or previous) shot along the cycle, from whatever is on screen now */
   stepShot(dir: 1 | -1) {
+    if (this.drums) {
+      this.drums.stepShot(this.viewTime(), dir);
+      this.invalidate();
+      this.emit('view');
+      return;
+    }
     if (!this.piece) return;
     this.setCamera(this.piece.camera.step(this.camView, this.viewTime(), dir));
   }
 
   /** the name of the shot on screen, for the bar */
   shotName(): string {
+    if (this.drums) return this.drums.shotName(this.viewTime());
     return this.piece ? this.piece.camera.nameOf(this.camView, this.viewTime()) : '';
   }
 
@@ -558,6 +663,7 @@ export class App {
   setLights(l: Partial<LightSettings>) {
     this.lights = { ...this.lights, ...l };
     this.view.setLights(this.lights);
+    this.drumStage?.setLights(this.lights);
     this.settingsChanged();
   }
 
@@ -567,6 +673,11 @@ export class App {
   }
 
   renderNow() {
+    if (this.drums) {
+      this.drums.render(this.viewTime(), this.view.look, this.view.camera.aspect, this.speed, this.view.post.quality === 'low');
+      this.dirty = false;
+      return;
+    }
     if (!this.piece) return;
     if (this.live) return this.renderLive(this.live);
     const t = this.viewTime();
@@ -599,7 +710,7 @@ export class App {
 
   /** start playing live (from a click or a key: the sound starts here) */
   enterLive() {
-    if (this.live || !this.ready) return;
+    if (this.live || !this.ready || this.drums) return;
     // the audio context must be made in the gesture itself
     void this.audio.init().catch((e) => console.warn('audio unavailable', e));
     if (this.playing) this.pause();
@@ -650,6 +761,7 @@ export class App {
   }
 
   stateHash(t: number) {
+    if (this.drums) return this.drums.stateHash(t);
     return this.piece!.timeline.stateHash(t);
   }
 
@@ -678,14 +790,17 @@ export class App {
       this.renderNow();
       return;
     }
-    if (this.playing && this.piece) {
+    if (this.playing && (this.piece || this.drums)) {
       // the audio clock is the master while sound is running
-      this.t = this.audio.isRunning ? this.audioTime() : this.t + dt * this.speed;
-      this.audio.pump(this.piece.timeline);
+      this.t = this.soundRunning ? this.audioTime() : this.t + dt * this.speed;
+      if (this.drums) {
+        this.drumAudio.setLevel(this.audio.volume, this.audio.muted);
+        this.drumAudio.pump();
+      } else this.audio.pump(this.piece!.timeline);
       if (this.t >= this.duration) {
         this.t = this.duration;
         this.playing = false;
-        this.audio.stop();
+        this.stopSound();
         this.emit('transport');
       }
       this.renderNow();

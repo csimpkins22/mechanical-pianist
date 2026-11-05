@@ -237,7 +237,12 @@ export class AppUI {
     if (what === 'view' && this.drawer.classList.contains('open') && this.tab === 'camera') this.renderDrawer();
     this.library.refresh(what);
     if (what === 'quality') this.toast(`Quality lowered to ${this.app.view.post.quality} to keep playback smooth (change it under ⚙ → Camera)`, 6000);
-    if (what === 'audio') {
+    if (what === 'audio' && this.app.drums) {
+      const s = this.app.drumAudio.status;
+      if (s === 'loading') this.toast('Tuning the drums…');
+      if (s === 'synth') this.toast('Drum samples unavailable: using the built-in synthesized kit');
+      if (s === 'samples') this.toast('');
+    } else if (what === 'audio') {
       const s = this.app.audio.status;
       if (s === 'loading') this.toast('Tuning the piano…');
       if (s === 'synth') this.toast('Piano samples unavailable: using the built-in synthesized piano');
@@ -269,6 +274,8 @@ export class AppUI {
     }
     this.shotLabel.classList.toggle('held', !auto);
     const open = a.view.look.openPiano;
+    // the drum stage has no piano to open
+    this.openBtn.style.display = a.drums ? 'none' : '';
     if (this.openBtn.dataset.open !== String(open)) {
       this.openBtn.dataset.open = String(open);
       this.openBtn.innerHTML = `${svg(open ? ICON.pianoOpen : ICON.pianoClosed, 17)}<span>${open ? 'Close piano' : 'Open piano'}</span>`;
@@ -296,6 +303,16 @@ export class AppUI {
   }
 
   private renderTitle() {
+    const d = this.app.drums;
+    if (d) {
+      const key = `drums:${d.source.id}`;
+      if (this.title.dataset.key === key) return;
+      this.title.dataset.key = key;
+      this.title.classList.remove('busy');
+      this.title.innerHTML = `<div class="eyebrow">${escapeHtml(d.artist)}${d.year ? ` · ${d.year}` : ''}</div><button class="name" title="Choose another piece (O)">${escapeHtml(d.title)}<span class="chev" aria-hidden="true">${svg('<path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>', 18)}</span></button>`;
+      (this.title.querySelector('.name') as HTMLButtonElement).onclick = () => this.library.toggle(true);
+      return;
+    }
     const p = this.app.piece;
     if (!p) return;
     const approx = p.perf.stats.approximated;
@@ -578,7 +595,8 @@ export class AppUI {
     for (const b of this.drawer.querySelectorAll<HTMLButtonElement>('.tab')) b.classList.toggle('on', b.dataset.tab === this.tab);
     const body = this.drawerBody;
     body.innerHTML = '';
-    if (this.tab === 'fingering') this.renderFingering(body);
+    if (this.tab === 'fingering' && this.app.drums) body.appendChild(el('p', 'note', 'The drums play themselves for now: there is no fingering (or sticking) to show until the robot drummer arrives.'));
+    else if (this.tab === 'fingering') this.renderFingering(body);
     else if (this.tab === 'light') this.renderLight(body);
     else if (this.tab === 'camera') this.renderCamera(body);
     else if (this.tab === 'sound') this.renderSound(body);
@@ -807,7 +825,7 @@ export class AppUI {
   /** a finished film of the performance: shape, size, frame rate, range; rendered offline, offered as an MP4 */
   private renderExport(body: HTMLElement) {
     const a = this.app;
-    const p = a.piece;
+    const p = a.drums ?? a.piece;
     if (!p) return;
     const film = this.film;
     body.appendChild(

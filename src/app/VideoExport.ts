@@ -112,8 +112,7 @@ class FileSink {
 }
 
 export async function exportVideo(app: App, o: ExportOptions, onProgress: (p: ExportProgress) => void, signal: AbortSignal): Promise<{ blob: Blob; audio: boolean; width: number; height: number }> {
-  const piece = app.piece;
-  if (!piece) throw new Error('nothing to export');
+  if (!app.piece && !app.drums) throw new Error('nothing to export');
   const { width, height } = exportSize(o.aspect, o.longSide);
   const vcfg = await videoConfig(width, height, o.fps);
   if (!vcfg) throw new Error(`this browser cannot encode ${width}×${height} H.264 video; try a smaller size or another browser (Chrome, Edge or Safari)`);
@@ -122,8 +121,8 @@ export async function exportVideo(app: App, o: ExportOptions, onProgress: (p: Ex
 
   // the sound first (fast): the whole stretch, offline
   onProgress({ stage: 'sound', frame: 0, frames, eta: null });
-  await app.audio.init();
-  const sound = acfg ? await app.audio.renderOffline(piece.timeline, o.t0, o.t0 + frames / o.fps) : null;
+  await (app.drums ? app.drumAudio.init() : app.audio.init());
+  const sound = acfg ? await app.renderSoundOffline(o.t0, o.t0 + frames / o.fps) : null;
 
   const sink = new FileSink();
   const muxer = new Muxer({

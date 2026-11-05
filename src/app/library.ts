@@ -7,8 +7,9 @@ import raindrop from '../music/chopin-raindrop-prelude.mid?inline';
 import gnossienne from '../music/satie-gnossienne-1.mid?inline';
 import mapleLeaf from '../music/joplin-maple-leaf-rag.mid?inline';
 import extra from 'virtual:extra-music';
+import { DRUM_PIECES } from '../drums/drumLibrary';
 
-export type LibraryGroup = 'Original' | 'Classical' | 'Songs';
+export type LibraryGroup = 'Original' | 'Classical' | 'Songs' | 'Drums';
 
 export interface LibraryEntry {
   id: string;
@@ -18,6 +19,8 @@ export interface LibraryEntry {
   group: LibraryGroup;
   blurb: string;
   bytes(): Uint8Array;
+  /** played on the drum stage (a drum kit) rather than the piano */
+  stage?: 'drums';
 }
 
 function fromDataUrl(url: string): () => Uint8Array {
@@ -102,9 +105,11 @@ const BUILT_IN: LibraryEntry[] = [
  * order), with any extra pieces built in from outside the repository
  * (tools/extra-music.cjs) in their groups.
  */
-const GROUPS: LibraryGroup[] = ['Songs', 'Classical', 'Original'];
+const GROUPS: LibraryGroup[] = ['Songs', 'Classical', 'Original', 'Drums'];
 const EXTRA: LibraryEntry[] = extra.pieces.map(({ data, ...p }) => ({ ...p, bytes: fromDataUrl(data) }));
-export const LIBRARY: LibraryEntry[] = [...EXTRA, ...BUILT_IN.filter((e) => !EXTRA.some((x) => x.id === e.id))]
+/** the drum performances, for the drum stage */
+const DRUMS: LibraryEntry[] = DRUM_PIECES.map(({ data, source: _source, ...p }) => ({ ...p, group: 'Drums', stage: 'drums', bytes: fromDataUrl(data) }));
+export const LIBRARY: LibraryEntry[] = [...EXTRA, ...BUILT_IN.filter((e) => !EXTRA.some((x) => x.id === e.id)), ...DRUMS]
   .map((e, i) => ({ e, i }))
   .sort((a, b) => GROUPS.indexOf(a.e.group) - GROUPS.indexOf(b.e.group) || a.i - b.i)
   .map(({ e }) => e);
@@ -112,3 +117,6 @@ export const LIBRARY: LibraryEntry[] = [...EXTRA, ...BUILT_IN.filter((e) => !EXT
 export const DEFAULT_PIECE: string = extra.defaultPiece ?? 'gnossienne';
 
 export const entryById = (id: string) => LIBRARY.find((e) => e.id === id);
+
+/** the piano's pieces (the ones the planner prepares) */
+export const PIANO_LIBRARY: LibraryEntry[] = LIBRARY.filter((e) => e.stage !== 'drums');
