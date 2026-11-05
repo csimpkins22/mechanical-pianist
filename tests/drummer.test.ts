@@ -1,9 +1,12 @@
 // The robot drummer's IK against KitLayout: every strike spot reached with
 // the stick's contact within 2 mm at a drummer's stick angle, every joint
 // within its limits, no NaNs across a sweep between spots, the same targets
-// always giving the same pose, and no stick or forearm through the kit.
+// always giving the same pose, a drummer's lean, and no stick, arm, leg or
+// foot through the kit (its drums, its cymbals' real profiles and every
+// stand, leg and brace where the kit's model puts them).
 import { describe, expect, test } from 'vitest';
 import { DRUMS, SPOTS, type DrumId } from '../src/drums/KitLayout';
+import { kitStands } from '../src/drums/KitStands';
 import { GRIP_FIT, STICK_BEAD, STICK_SHOULDER, createPose, limitViolations, solveDrummer, type DrummerPose, type DrummerTargets, type StickTarget } from '../src/drums/DrummerIK';
 import { SWEEP, blendTargets, emptyTargets, namedPoses, stroke, type Spot } from '../src/drums/DrummerPoses';
 import { clearance } from '../src/drums/DrummerClearance';
@@ -171,10 +174,9 @@ describe('a sweep between spots', () => {
     }
     moves.sort((x, y) => x - y);
     // most of the way the tips glide (a transition takes 60 steps). The fast turns stay bounded: the largest
-    // (about 0.21 m in one step) is the left stick dropping from an accent under the crossed right arm, where
-    // on KitLayout's close hi-hat it switches the side it passes the right arm on
+    // (about 0.12 m in one step) is the left stick coming down from an accent under the crossed right arm
     expect(moves[Math.floor(moves.length * 0.95)]).toBeLessThan(0.02);
-    expect(moves[moves.length - 1]).toBeLessThan(0.25);
+    expect(moves[moves.length - 1]).toBeLessThan(0.15);
   }, 60000);
 });
 
@@ -194,10 +196,11 @@ describe('determinism', () => {
   });
 });
 
-describe('clearance against the kit (discs and cylinders from KitLayout)', () => {
+describe('clearance against the kit (KitProxy: drums, cymbal profiles, stands)', () => {
   /**
-   * In KitLayout the hi-hat stands where a seated adult's left elbow and hand are when the left hand reaches
-   * for tom 1, so that pose is reported (see the drums-robot notes) rather than asserted.
+   * The hi-hat's top cymbal stands where the left hand passes on its way to tom 1 (the hand about 1.7 cm into
+   * its rim, the arm otherwise at a joint's stop), so that pose is reported (see the drums-robot notes) rather
+   * than asserted. A hi-hat 4 cm lower, or 4 cm further left, clears it.
    */
   const LAYOUT_CONFLICTS = new Set(['tom1L']);
   const pose = createPose();
@@ -215,8 +218,64 @@ describe('clearance against the kit (discs and cylinders from KitLayout)', () =>
       // forearms and hands: never through a cymbal or a stand, nor each other
       const arms = contacts.filter((x) => /^(forearm|hand)/.test(x.a) && !/thigh/.test(x.b));
       expect(arms.filter((x) => x.distance < -0.001)).toEqual([]);
+      // thighs, shins, feet and toes: never through a drum or a stand's legs
+      const legs = contacts.filter((x) => /^(thigh|shin|foot|toes)/.test(x.a));
+      expect(legs.filter((x) => x.distance < -0.001)).toEqual([]);
     });
   }
+
+  test("the stands are where the kit's model puts them", async () => {
+    // the same tripods, placed by the same rule in the same order: the same centres and the same clearances
+    const { DrumKitModel } = await import('../src/presentation/DrumKitModel');
+    const model = new DrumKitModel();
+    const ours = kitStands().legClearance;
+    expect(ours.length).toBe(model.legClearance.length);
+    ours.forEach((c, i) => {
+      expect(c.at[0]).toBeCloseTo(model.legClearance[i].at[0], 9);
+      expect(c.at[1]).toBeCloseTo(model.legClearance[i].at[1], 9);
+      expect(c.clear).toBeCloseTo(model.legClearance[i].clear, 9);
+    });
+  });
+});
+
+describe("a drummer's posture", () => {
+  const pose = createPose();
+  const poses = namedPoses();
+  /** the lean of a line from vertical, toward the kit (-z), degrees */
+  const lean = (a: ArrayLike<number>, b: ArrayLike<number>) => Math.atan2(-(b[2] - a[2]), b[1] - a[1]) / D;
+  const P = (j: number) => pose.pos.subarray(j * 3, j * 3 + 3);
+
+  test('leaning in from the hips, the upper back a little rounded, in every pose', () => {
+    for (const np of poses) {
+      solveDrummer(np.targets, pose);
+      // the back, from the pelvis to the chest's pivot (as in clips 4 and 8: 10-15 degrees, more when reaching)
+      const back = lean(P(J.pelvis), P(J.chest));
+      expect(back, np.name).toBeGreaterThan(9);
+      expect(back, np.name).toBeLessThan(20);
+      // the chest leans further than the back below it: the upper back rounds
+      const cw = pose.world.subarray(J.chest * 9, J.chest * 9 + 9);
+      expect(Math.atan2(-cw[7], cw[4]) / D, np.name).toBeGreaterThan(back + 4);
+    }
+    // at the snare, nothing reaching: 10-13 degrees
+    solveDrummer(poses.find((p) => p.name === 'snare')!.targets, pose);
+    expect(lean(P(J.pelvis), P(J.chest))).toBeGreaterThan(9.5);
+    expect(lean(P(J.pelvis), P(J.chest))).toBeLessThan(13);
+  });
+
+  test('the elbows hang beside the body, not out behind the back (bar the floor tom, which draws the right one back)', () => {
+    for (const np of poses) {
+      solveDrummer(np.targets, pose);
+      const sw = pose.world.subarray(J.spine2 * 9, J.spine2 * 9 + 9);
+      const s2 = P(J.spine2);
+      for (const s of ['R', 'L'] as Side[]) {
+        if (s === 'R' && (np.name === 'floorTom' || np.name === 'fill')) continue;
+        const e = P(J.arm[s].forearm);
+        // the elbow's back (its barrel, 4.5 cm) at most 2 cm past the lower thorax's back (its half-depth, 9.2 cm)
+        const behind = (e[0] - s2[0]) * sw[2] + (e[1] - s2[1]) * sw[5] + (e[2] - s2[2]) * sw[8] - 0.092 + 0.045;
+        expect(behind, `${np.name} ${s}`).toBeLessThan(0.02);
+      }
+    }
+  });
 });
 
 void ({} as StickTarget);

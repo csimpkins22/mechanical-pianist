@@ -18,10 +18,13 @@
 // surface) searched, in a fixed order, so the same targets always give the
 // same pose.
 //
-// Torso. Far targets (floor tom, ride, crash) are reached by turning and
-// leaning, shared over the pelvis and three spine joints, not by
-// overstretching the arm; the shoulder girdle rises and comes forward with
-// the reach. The head turns a little toward where the sticks are going.
+// Torso. A drummer sits leaning in from the hips, the upper back a little
+// rounded and the shoulders a little forward (clips 4 and 8); far targets
+// (floor tom, ride, crash) add their turn and lean on top of that, shared
+// over the pelvis and three spine joints, rather than overstretching the arm;
+// the shoulder girdle rises and comes forward with the reach. The elbows hang
+// beside the body, never out behind the back. The head turns a little toward
+// where the sticks are going.
 //
 // Legs. A foot on its pedal, heel down (the sole on the footboard) or heel up
 // (the ball of the foot on the board, the toes bent): the ankle follows, and
@@ -30,7 +33,7 @@
 // The left side is solved as the right in the mirrored world and mirrored back
 // (M R M), so its angles mean the same. Everything is closed form or a fixed
 // number of iterations, and nothing is allocated per solve.
-import { PEDALS, SEAT, STICK, type PedalId } from './KitLayout';
+import { PEDALS, PEDAL_TRAVEL, SEAT, STICK, type PedalId } from './KitLayout';
 import { kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
 import {
   DOF_BASE,
@@ -209,13 +212,14 @@ export function stickRadiusAt(c: number) {
 }
 /** the stick's turn inward from the line of the forearm (radians) */
 const STICK_INWARD = 0.18;
-/** how far a pedal's footboard turns down about its heel hinge when pressed all the way (radians: about 2.5 cm at the ball) */
-export const PEDAL_TRAVEL = 0.11;
+/** how far a pedal's footboard turns down about its heel hinge when pressed all the way (KitLayout's; re-exported for older callers) */
+export { PEDAL_TRAVEL };
 /** heel-up technique: the foot turned up about the ball (radians; the heel about 7 cm off the board) */
 export const HEEL_UP = 0.4;
 
 const lim = (joint: number, dof: number) => JOINTS[joint].dofs[dof].limits;
 const ROCK = lim(J.arm.R.stick, 0);
+const NECK_PITCH = lim(J.neck, 1);
 
 /** a stroke's share of the turn: wrist, elbow, fingers (as in real technique: mostly wrist) */
 const SHARE_WRIST = 0.73;
@@ -224,13 +228,25 @@ const SHARE_FINGERS = 0.15;
 
 // the torso's turn (yaw), lean (pitch) and side bend (roll), shared over the pelvis, lumbar, lower thorax and chest
 const YAW_SHARE = [0.12, 0.13, 0.33, 0.42];
-const PITCH_SHARE = [0.36, 0.3, 0.2, 0.14];
+const PITCH_SHARE = [0.3, 0.27, 0.2, 0.23];
 const ROLL_SHARE = [0.1, 0.3, 0.35, 0.25];
 const TORSO = [J.pelvis, J.spine1, J.spine2, J.chest];
-/** a drummer's posture: leaning in about 11 degrees from the hips */
-const BASE_LEAN = -0.19;
+/**
+ * A drummer's posture (clips 4 and 8): leaning in from the hips, the upper
+ * back a little rounded. The torso's lean when nothing pulls it further: the
+ * back, from the pelvis to the chest's pivot, about 12 degrees off upright,
+ * the chest about 17.
+ */
+const BASE_LEAN = -0.3;
+/** the neck's forward carriage of the head, on top of where it looks (radians of the neck's pitch) */
+const NECK_FORWARD = -0.12;
+/** and the shoulders a little rounded: each clavicle's protraction when the hands are close (radians) */
+const ROUND_SHOULDERS = 0.1;
 /** the share of full reach an arm may use before the body turns and leans to help */
 const COMFORT = 0.9;
+/** the torso's half-depth beside the elbows (the lower thorax's shell), and how far inside the back an elbow's middle keeps (its barrel's radius) */
+const BACK_DEPTH = 0.092;
+const ELBOW_BEHIND = 0.045;
 /** joint limits are kept this far inside (radians), so a solved pose never sits on a stop */
 const LIMIT_MARGIN = 0.03;
 
@@ -260,9 +276,9 @@ function bounds(kit: Proxy[]) {
     if (x.kind === 'rod') {
       c = [(x.a[0] + x.b[0]) / 2, (x.a[1] + x.b[1]) / 2, (x.a[2] + x.b[2]) / 2];
       r = Math.hypot(x.b[0] - x.a[0], x.b[1] - x.a[1], x.b[2] - x.a[2]) / 2 + x.radius;
-    } else if (x.kind === 'disc') {
+    } else if (x.kind === 'cymbal') {
       c = x.centre;
-      r = x.radius + x.thickness;
+      r = Math.hypot(x.radius, x.profile.bellHeight + x.profile.drop);
     } else {
       c = [x.centre[0] - (x.normal[0] * x.depth) / 2, x.centre[1] - (x.normal[1] * x.depth) / 2, x.centre[2] - (x.normal[2] * x.depth) / 2];
       r = Math.hypot(x.radius, x.depth / 2);
@@ -398,6 +414,9 @@ interface ArmIn {
   kit: Proxy[];
   kitBounds: Float64Array;
   struck: Uint8Array;
+  /** the back of the torso beside the elbows: a point on it and its outward normal (an elbow keeps in front of it) */
+  backP: Vec3;
+  backN: Vec3;
   /** the other arm's stick, forearm and hand (capsules: a, b, radius), already solved, to keep clear of */
   other: Float64Array;
   nOther: number;
@@ -437,6 +456,8 @@ const mkArmIn = (): ArmIn => ({
   kit: [],
   kitBounds: new Float64Array(0),
   struck: new Uint8Array(64),
+  backP: vec3(),
+  backN: vec3(),
   other: new Float64Array(3 * 7),
   nOther: 0,
 });
@@ -682,15 +703,19 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
     const ex = x < lo ? lo - x : x > hi ? x - hi : 0;
     // inside the margin it is a preference; past the joint's real stop it is not allowed
     const hard = Math.max(0, ex - LIMIT_MARGIN);
-    over += ex * ex + 30 * hard * hard;
+    over += ex * ex + 3000 * hard * hard;
   }
   const back = Math.max(0, -A[0] - 0.05);
   const wing = Math.max(0, A[1] - 0.55);
+  // the elbow kept in front of the back: it may hang beside the torso, not poke out behind it
+  const BP = inp.backP, BN = inp.backN;
+  const behind = Math.max(0, (E[0] - BP[0]) * BN[0] + (E[1] - BP[1]) * BN[1] + (E[2] - BP[2]) * BN[2] + ELBOW_BEHIND);
   const comfort =
     0.5 * (flex - 0.05) ** 2 +
     0.6 * (dev + 0.15) ** 2 +
     0.8 * back * back +
     0.6 * wing * wing +
+    150 * behind * behind +
     0.12 * A[2] * A[2] +
     0.15 * Math.max(0, sup - 1.4) ** 2;
   out.cost = 100 * over + 40 * out.short * out.short + comfort + OBSTACLE_WEIGHT * obstaclePenalty(inp, out, Rp, rock);
@@ -861,8 +886,8 @@ function solveArm(inp: ArmIn, out: ArmOut) {
   }
   for (let k = 0; k < 3; k++) searchP[k] /= W;
   const h = 0.02;
+  let c0 = armTry(inp, searchP[0], searchP[1], searchP[2], armTrial);
   for (let it = 0; it < NEWTON_STEPS; it++) {
-    const c0 = armTry(inp, searchP[0], searchP[1], searchP[2], armTrial);
     for (let k = 0; k < 3; k++) {
       const was = searchP[k];
       searchP[k] = was + h;
@@ -873,7 +898,17 @@ function solveArm(inp: ArmIn, out: ArmOut) {
       // a Newton step where the cost curves upward, a gradient step otherwise; never more than STEP_MAX
       searchStep[k] = -((cp - cm) / (2 * h)) / Math.max((cp - 2 * c0 + cm) / (h * h), NEWTON_MIN_CURV);
     }
-    for (let k = 0; k < 3; k++) searchP[k] += clamp(searchStep[k], -STEP_MAX, STEP_MAX) * NEWTON_DAMP;
+    // take the step, halved until the cost comes down (a joint's stop or the kit can make the valley steep)
+    for (let k = 0; k < 3; k++) searchStep[k] = clamp(searchStep[k], -STEP_MAX, STEP_MAX) * NEWTON_DAMP;
+    let f = 1;
+    for (let tries = 0; tries < 5; tries++, f *= 0.5) {
+      const c1 = armTry(inp, searchP[0] + f * searchStep[0], searchP[1] + f * searchStep[1], searchP[2] + f * searchStep[2], armTrial);
+      if (c1 < c0) {
+        for (let k = 0; k < 3; k++) searchP[k] += f * searchStep[k];
+        c0 = c1;
+        break;
+      }
+    }
   }
   const best = armTry(inp, searchP[0], searchP[1], searchP[2], armBest);
   copyArm(out, armBest);
@@ -1090,7 +1125,7 @@ function setClavicle(pose: DrummerPose, side: Side, wrist: Vec3) {
   applyT3(clW, pose.world, sub3(clW, wrist, clS0), J.chest * 9);
   clW[0] *= sg;
   const elev = clamp(0.38 * (clW[1] + 0.24), -0.06, 0.32);
-  const prot = clamp(0.55 * (-clW[2] - 0.3) + 0.45 * Math.max(0, -clW[0] - 0.08), -0.08, 0.4);
+  const prot = clamp(ROUND_SHOULDERS + 0.55 * (-clW[2] - 0.3) + 0.45 * Math.max(0, -clW[0] - 0.08), -0.08, 0.42);
   rotY3(clM, prot);
   mulM3(clM, clM, rotZ3(clN, elev));
   if (sg < 0) mirrorM3(clM, clM);
@@ -1123,6 +1158,14 @@ function armInput(pose: DrummerPose, side: Side, t: StickTarget, inp: ArmIn) {
   inp.sweep = (t.sweep ?? 0) * (side === 'L' ? -1 : 1);
   inp.kit = side === 'L' ? KIT_M : KIT;
   inp.kitBounds = side === 'L' ? KIT_MB : KIT_B;
+  // the back of the lower thorax (the shell the elbows hang beside): its pivot, out along its back by the shell's half-depth
+  const sb = J.spine2 * 9;
+  set3(inp.backN, pose.world[sb + 2], pose.world[sb + 5], pose.world[sb + 8]);
+  addScaled3(inp.backP, set3(inp.backP, pose.pos[J.spine2 * 3], pose.pos[J.spine2 * 3 + 1], pose.pos[J.spine2 * 3 + 2]), inp.backN, BACK_DEPTH);
+  if (side === 'L') {
+    mirrorV(inp.backN, inp.backN);
+    mirrorV(inp.backP, inp.backP);
+  }
   inp.struck.fill(0);
   for (let j = 0; j < inp.kit.length && j < inp.struck.length; j++) {
     const x = inp.kit[j];
@@ -1299,8 +1342,9 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose): DrummerPose 
   set3(fD, lx - pose.pos[nb], ly - pose.pos[nb + 1], lz - pose.pos[nb + 2]);
   applyT3(fD, pose.world, fD, J.chest * 9);
   const lookYaw = clamp(Math.atan2(-fD[0], -fD[2]), -1.2, 1.2) * 0.6;
-  const lookPitch = clamp(Math.atan2(fD[1], Math.hypot(fD[0], fD[2])) + 0.25, -1.0, 0.4) * 0.62;
-  composeYXZ(fM, 0.5 * lookYaw, 0.55 * lookPitch, 0);
+  const lookPitch = clamp(Math.atan2(fD[1], Math.hypot(fD[0], fD[2])) + 0.12, -1.0, 0.4) * 0.62;
+  // the neck carries the head a little forward of the shoulders (as the lean rounds the upper back), the head looking down
+  composeYXZ(fM, 0.5 * lookYaw, clamp(0.55 * lookPitch + NECK_FORWARD, NECK_PITCH[0] + LIMIT_MARGIN, NECK_PITCH[1] - LIMIT_MARGIN), 0);
   pose.local.set(fM, J.neck * 9);
   composeYXZ(fM, 0.5 * lookYaw, 0.45 * lookPitch, -0.03 * lookYaw);
   pose.local.set(fM, J.head * 9);

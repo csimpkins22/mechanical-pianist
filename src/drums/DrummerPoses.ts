@@ -90,7 +90,8 @@ export function namedPoses(): NamedPose[] {
     { name: 'snare', label: 'Snare head', targets: pose(stroke('snare', 'head', 0, { across: 0.03 }), stroke('snare', 'head', 0.12, { across: -0.035 }), 'R'), strikes: ['R'] },
     { name: 'snareL', label: 'Snare head (left hand)', targets: pose(stroke('hihat', 'head', 0.06), stroke('snare'), 'L'), strikes: ['L'] },
     { name: 'tom1', label: 'Tom 1 head', targets: pose(stroke('tom1'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
-    { name: 'tom1L', label: 'Tom 1 head (left hand)', targets: pose(stroke('snare', 'head', 0.1), stroke('tom1'), 'L'), strikes: ['L'] },
+    // the right hand waits to the snare's right, out of the left arm's way to tom 1 (the hi-hat is on its other side)
+    { name: 'tom1L', label: 'Tom 1 head (left hand)', targets: pose(stroke('snare', 'head', 0.1, { across: 0.07 }), stroke('tom1'), 'L'), strikes: ['L'] },
     { name: 'tom2', label: 'Tom 2 head', targets: pose(stroke('tom2'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
     { name: 'floorTom', label: 'Floor tom head', targets: pose(stroke('floorTom'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
     // cymbals

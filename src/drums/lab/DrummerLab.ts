@@ -1,19 +1,22 @@
 // The drummer lab (development only, not part of the app): the robot drummer
-// on a placeholder kit built from KitLayout, in a lit studio with the app's
-// post pipeline, posed by the IK at every strike spot, in the special poses,
-// or in a slow sweep between spots.
+// at the kit (the app's own model, or the plain solids from KitLayout that
+// the clearance checks use), in a lit studio with the app's post pipeline,
+// posed by the IK at every strike spot, in the special poses, or in a slow
+// sweep between spots.
 //
 //   npx vite --host 127.0.0.1 --port 5193 --strictPort, then /drummer-lab.html
-//   query: pose=<name>|sweep  t=<s>  view=front|left|right|top|hands|feet|back|close
-//          fast=1 (no post)  figure=skeleton|robot|both  ui=0 (no panel)
-//   window.lab: setPose(name), setTime(t), setView(name), renderNow()
+//   query: pose=<name>|sweep  t=<s>  view=front|left|right|top|hands|feet|back|close|...
+//          kit=model|solids  fast=1 (no post)  figure=skeleton|robot|both  ui=0 (no panel)
+//   window.lab: setPose(name), setTime(t), setView(name), setKit(kind), renderNow()
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PostPipeline, type PostParams } from '../../presentation/PostPipeline';
-import { createPose, limitViolations, refreshKit, solveDrummer, type DrummerPose, type DrummerTargets } from '../DrummerIK';
-import { useLayout, type LayoutName } from './ProposedLayout';
+import { createPose, limitViolations, solveDrummer, type DrummerPose, type DrummerTargets } from '../DrummerIK';
 import { forwardKinematics } from '../DrummerSpec';
+import { HIHAT_OPEN_GAP, PEDAL_TRAVEL } from '../KitLayout';
+import type { KitState } from '../KitMotion';
+import { DrumKitModel } from '../../presentation/DrumKitModel';
 
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 import { SWEEP, blendTargets, emptyTargets, namedPoses, type NamedPose } from '../DrummerPoses';
@@ -51,6 +54,9 @@ const VIEWS: Record<string, View> = {
   // side-on from the drummer's right, as the concert footage (clip 8)
   sideR: { pos: [1.75, 1.12, 0.02], target: [0.0, 0.86, -0.02], focal: 50 },
   portrait: { pos: [0.75, 1.3, -1.45], target: [-0.02, 0.98, -0.08], focal: 55 },
+  // the whole drummer side-on from his right (as clip 8), and three-quarters from the front on his right
+  sideFull: { pos: [2.6, 1.25, -0.12], target: [0.0, 0.88, -0.25], focal: 40 },
+  front34: { pos: [1.35, 1.5, -1.95], target: [-0.06, 0.86, -0.16], focal: 40 },
   grip: { pos: [-0.62, 0.98, -0.78], target: [-0.2, 0.8, -0.16], focal: 85 },
   // as the reference footage (clip 4): above the drummer's right, looking down across the kit
   clip4: { pos: [1.05, 1.7, -0.32], target: [-0.3, 0.78, -0.42], focal: 20 },
@@ -62,12 +68,15 @@ class Lab {
   readonly camera = new THREE.PerspectiveCamera(35, 16 / 9, 0.05, 40);
   readonly post: PostPipeline | null;
   readonly controls: OrbitControls;
-  kit = new PlaceholderKit();
+  /** the plain solids (KitProxy), and the app's own kit model */
+  readonly solids = new PlaceholderKit();
+  readonly model = new DrumKitModel();
+  kitKind: 'model' | 'solids' = 'model';
+  private kitState: KitState = restKit();
   readonly skeleton = new SkeletonFigure();
   rig: DrummerRig | null = null;
   readonly pose: DrummerPose = createPose();
   poses: NamedPose[] = namedPoses();
-  layout: LayoutName = 'kit';
   private blend: DrummerTargets = emptyTargets();
   current = 'groove';
   sweeping = false;
@@ -96,7 +105,11 @@ class Lab {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = false;
     this.studio();
-    this.scene.add(this.kit.root);
+    this.scene.add(this.solids.root, this.model.root);
+    this.model.root.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+    });
+    this.setKit('model');
     this.scene.add(this.skeleton.root);
   }
 
@@ -159,16 +172,11 @@ class Lab {
     if (this.rig) this.rig.root.visible = f === 'robot' || f === 'both';
   }
 
-  /** KitLayout as it is, or with the moves this stage proposes (ProposedLayout.ts) */
-  setLayout(name: LayoutName) {
-    this.layout = name;
-    useLayout(name);
-    refreshKit();
-    this.scene.remove(this.kit.root);
-    this.kit = new PlaceholderKit(this.kit.mats);
-    this.scene.add(this.kit.root);
-    this.poses = namedPoses();
-    this.solve();
+  /** the app's kit model, or the solids the clearance checks see */
+  setKit(kind: string) {
+    this.kitKind = kind === 'solids' ? 'solids' : 'model';
+    this.solids.root.visible = this.kitKind === 'solids';
+    this.model.root.visible = this.kitKind === 'model';
   }
 
   setView(name: string) {
@@ -218,7 +226,13 @@ class Lab {
     }
     this.skeleton.update(this.pose);
     this.rig?.apply(this.pose);
-    this.kit.update(this.pose.pedal, open);
+    this.solids.update(this.pose.pedal, open);
+    // the kit model: the hi-hat open as far as the left foot lets it, the beater as the right foot presses
+    const ks = this.kitState;
+    ks.hihatClosed = 1 - open;
+    ks.hihatGap = open * HIHAT_OPEN_GAP;
+    ks.beater = Math.min(1, Math.max(0, -this.pose.pedal.kickPedal / PEDAL_TRAVEL));
+    this.model.update(ks);
     if (this.info && (!this.sweeping || Math.floor(this.t * 4) !== Math.floor((this.t - 1 / 60) * 4))) this.report(targets, name);
   }
 
@@ -229,7 +243,7 @@ class Lab {
     const lim = limitViolations(p);
     const clr = clearance(p, targets, { margin: 0.003 });
     const st = (s: 'R' | 'L') => `${s}: ${(p.error[s] * 1000).toFixed(1)} mm, stick ${deg(p.stickAngle[s])}${targets[s].lift > 0 ? `, lifted ${(targets[s].lift * 100).toFixed(1)} cm` : ''}`;
-    this.info.innerHTML = `<b>${name}</b> <span class="h">${this.layout === 'kit' ? 'KitLayout' : 'proposed layout'}</span><br>${st('R')}<br>${st('L')}<br>torso turn ${deg(p.torso[0])}, lean ${deg(-p.torso[1])}, bend ${deg(p.torso[2])}<br>shoulders ${p.pos[3 * 7 + 1].toFixed(3)} m` +
+    this.info.innerHTML = `<b>${name}</b><br>${st('R')}<br>${st('L')}<br>torso turn ${deg(p.torso[0])}, lean ${deg(-p.torso[1])}, bend ${deg(p.torso[2])}<br>shoulders ${p.pos[3 * 7 + 1].toFixed(3)} m` +
       `<br><span class="${lim.length ? 'bad' : 'ok'}">limits: ${lim.length ? lim.map((x) => `${x.name} ${deg(x.value)}`).join(', ') : 'all within'}</span>` +
       `<br><span class="${clr.some((c) => c.distance < 0) ? 'bad' : 'ok'}">clearance: ${clr.length ? clr.slice(0, 6).map(describe).join('<br>') : 'clear'}</span>`;
   }
@@ -255,9 +269,9 @@ class Lab {
     add('Slow sweep between spots', () => this.setPose('sweep'), 'accent');
     h('View');
     for (const v of Object.keys(VIEWS)) add(v, () => this.setView(v), 'small');
-    h('Kit layout');
-    add('KitLayout', () => this.setLayout('kit'), 'small');
-    add('proposed', () => this.setLayout('proposed'), 'small');
+    h('Kit');
+    add('model', () => this.setKit('model'), 'small');
+    add('solids (clearance)', () => this.setKit('solids'), 'small');
     h('Figure');
     for (const f of ['robot', 'skeleton', 'both']) add(f, () => this.setFigure(f), 'small');
     this.info = document.createElement('div');
@@ -331,6 +345,22 @@ class Lab {
   };
 }
 
+/** the kit at rest */
+function restKit(): KitState {
+  const z = () => ({ x: 0, z: 0 });
+  return {
+    t: 0,
+    cymbals: { crash: { ...z(), drop: 0 }, ride: { ...z(), drop: 0 }, hihat: { ...z(), drop: 0 } },
+    stands: { crash: z(), ride: z(), hihat: z() },
+    hihatClosed: 1,
+    hihatGap: 0,
+    beater: 0,
+    heads: { kick: 0, snare: 0, tom1: 0, tom2: 0, floorTom: 0 },
+    buzz: 0,
+    toms: { tom1: z(), tom2: z(), floorTom: z() },
+  };
+}
+
 async function main() {
   const canvas = document.getElementById('lab') as HTMLCanvasElement;
   const lab = new Lab(canvas);
@@ -341,7 +371,7 @@ async function main() {
   lab.resize();
   window.addEventListener('resize', () => lab.resize());
   await lab.loadRobot();
-  if (params.get('layout') === 'proposed') lab.setLayout('proposed');
+  lab.setKit(params.get('kit') ?? 'model');
   lab.setView(params.get('view') ?? 'front');
   lab.t = parseFloat(params.get('t') ?? '0');
   lab.setPose(params.get('pose') ?? 'groove');

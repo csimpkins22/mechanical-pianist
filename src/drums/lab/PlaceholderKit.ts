@@ -1,10 +1,10 @@
-// A placeholder drum kit for the drummer lab: plain cylinders and discs from
-// KitLayout (through KitProxy, the same solids the clearance checks use), so
-// the drummer can be judged against where everything really is. The real kit
-// is modelled elsewhere.
+// The kit as the clearance checks see it, for the drummer lab: KitProxy's
+// solids (drums as cylinders, cymbals on their real profiles, the stands as
+// rods), so the drummer can be judged against exactly what the checks test.
+// The lab shows the app's own kit model by default (DrumKitModel).
 import * as THREE from 'three';
-import { DRUMS, PEDALS, SEAT, type DrumId, type PedalId } from '../KitLayout';
-import { kitProxies, type Proxy } from '../KitProxy';
+import { CYMBAL_HOLE, DRUMS, HIHAT_OPEN_GAP, PEDALS, SEAT, cymbalTop, type DrumId, type PedalId } from '../KitLayout';
+import { cymbalThickness, kitProxies, type Proxy } from '../KitProxy';
 
 const up = new THREE.Vector3(0, 1, 0);
 
@@ -40,8 +40,8 @@ export class PlaceholderKit {
   readonly root = new THREE.Group();
   /** footboards, turned about their heel hinges by the pose */
   readonly boards: Record<PedalId, THREE.Object3D> = {} as Record<PedalId, THREE.Object3D>;
-  private hatTop: THREE.Object3D | null = null;
-  private hatOpenY = 0;
+  /** the hi-hat's top cymbal, pull rod and clutch: lifted when the pedal is up */
+  private hatParts: THREE.Object3D[] = [];
 
   constructor(readonly mats: KitMaterials = kitMaterials()) {
     this.root.name = 'PlaceholderKit';
@@ -114,7 +114,7 @@ export class PlaceholderKit {
     for (const id of Object.keys(this.boards) as PedalId[]) {
       this.boards[id].rotation.x = -pedal[id];
     }
-    if (this.hatTop) this.hatTop.position.y = (this.hatTop.userData.y0 ??= this.hatTop.position.y) + hihatOpen * this.hatOpenY;
+    for (const g of this.hatParts) g.position.y = (g.userData.y0 ??= g.position.y) + hihatOpen * HIHAT_OPEN_GAP;
   }
 
   private tripod(at: THREE.Vector3, spread: number, height: number) {
@@ -138,31 +138,30 @@ export class PlaceholderKit {
     const m = this.mats;
     if (p.kind === 'rod') {
       const g = new THREE.Group();
-      g.add(this.rod(new THREE.Vector3(...p.a), new THREE.Vector3(...p.b), p.radius * 0.8, m.chrome));
-      if (p.a[1] < 0.01 && !p.label.includes('leg')) this.tripod(new THREE.Vector3(p.a[0], 0, p.a[2]), 0.25, 0.3);
+      g.add(this.rod(new THREE.Vector3(...p.a), new THREE.Vector3(...p.b), p.radius, m.chrome));
+      if (p.label === 'hi-hat rod' || p.label === 'hi-hat clutch') this.hatParts.push(g);
       return g;
     }
-    if (p.kind === 'disc') {
-      // a cymbal: a thin bronze disc with a low bell, in its playing plane
+    if (p.kind === 'cymbal') {
+      // a cymbal: its cross-section turned on a lathe (the top surface, then the underside back out)
       const g = new THREE.Group();
-      const prof: THREE.Vector2[] = [];
       const R = p.radius;
-      const bell = Math.min(0.06, R * 0.24);
-      const pts = 28;
+      const prof: THREE.Vector2[] = [];
+      const pts = 48;
       for (let i = 0; i <= pts; i++) {
-        const r = (i / pts) * R;
-        const y = r < bell ? 0.014 * Math.cos((Math.PI / 2) * (r / bell)) ** 1.5 : -0.006 * ((r - bell) / (R - bell)) ** 1.4;
-        prof.push(new THREE.Vector2(Math.max(r, 1e-4), y + 0.0015));
+        const r = Math.max(CYMBAL_HOLE, (i / pts) * R);
+        prof.push(new THREE.Vector2(r, cymbalTop(p.profile, R, r)));
       }
-      for (let i = pts; i >= 0; i--) prof.push(new THREE.Vector2(Math.max(prof[i].x, 1e-4), prof[i].y - 0.002));
+      for (let i = pts; i >= 0; i--) {
+        const r = prof[i].x;
+        prof.push(new THREE.Vector2(r, prof[i].y - cymbalThickness(p.profile, R, r)));
+      }
+      prof.push(prof[0].clone());
       const mesh = new THREE.Mesh(new THREE.LatheGeometry(prof, 64), m.bronze);
       g.add(mesh);
       g.position.set(...p.centre);
       along(g, p.normal);
-      if (p.id === 'hihat' && p.centre[1] >= DRUMS.hihat.centre[1] - 1e-6) {
-        this.hatTop = g;
-        this.hatOpenY = 0.025;
-      }
+      if (p.id === 'hihat' && p.normal[1] > 0) this.hatParts.push(g);
       return g;
     }
     // a drum: shell, batter head, hoops

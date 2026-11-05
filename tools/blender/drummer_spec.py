@@ -53,8 +53,8 @@ BALL = (0.0, -0.058, -0.150)   # the toe joint (MTP), from the ankle
 TOE = 0.062            # toe joint to the tip of the toe cap
 HEEL = (0.0, -ANKLE_H, 0.040)  # the heel's contact on the sole, from the ankle
 HIP_HALF = 0.090       # half the distance between the hip joints
-HIP_UP = 0.085         # hip joints above the seat
-SIT_Z = 0.075          # hip joints behind the seat's centre (the drummer sits a little back: see the report)
+HIP_UP = 0.077         # hip joints above the seat (the pelvis's rounded bottom resting on the cushion)
+SIT_Z = 0.0            # hip joints over the seat's centre
 
 # spine: hip-joint midpoint -> lumbar -> lower thorax -> chest -> neck base -> head pivot. The torso's three
 # joints sit on its centre line, at the heights where its shells overlap, so each shell turns about its own
