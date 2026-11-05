@@ -48,11 +48,17 @@ export function measure(file: string) {
     ['pose', poses, 3000],
     ['solve', solves, 600],
   ] as const) {
-    f(n);
-    gc();
-    const h0 = process.memoryUsage().heapUsed;
-    f(n);
-    out[k] = (process.memoryUsage().heapUsed - h0) / n;
+    // (warmed up well past the optimizing compiler's thresholds first, so what is measured is optimized code; the
+    // median of five runs, each after a collection)
+    for (let w = 0; w < 4; w++) f(n);
+    const runs: number[] = [];
+    for (let r = 0; r < 5; r++) {
+      gc();
+      const h0 = process.memoryUsage().heapUsed;
+      f(n);
+      runs.push((process.memoryUsage().heapUsed - h0) / n);
+    }
+    out[k] = runs.sort((a, b) => a - b)[2];
   }
   return out;
 }
