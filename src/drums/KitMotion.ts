@@ -135,6 +135,21 @@ export class KitMotion {
     return out;
   }
 
+  /** the last hit of a piece at or before t, no more than `window` before it, or null (allocates nothing) */
+  lastAtOrBefore(piece: DrumId, t: number, window: number): DrumHit | null {
+    const l = this.by.get(piece);
+    if (!l) return null;
+    let lo = 0;
+    let hi = l.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (l[mid].t <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    const h = l[lo - 1];
+    return h && h.t >= t - window ? h : null;
+  }
+
   /** the next hit of a piece after t (strictly), or null */
   next(piece: DrumId, t: number): DrumHit | null {
     const l = this.by.get(piece);
@@ -223,7 +238,7 @@ export class KitMotion {
    */
   beater(t: number): number {
     const next = this.next('kick', t);
-    const last = this.recent('kick', t, 1.5)[0] ?? null;
+    const last = this.lastAtOrBefore('kick', t, 1.5);
     if (next) {
       const ta = this.approach(next, last);
       if (t >= next.t - ta) {

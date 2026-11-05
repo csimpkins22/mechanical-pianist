@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CC4_CLOSED, DRUM_MAP, drumMidiBytes, inferPedal, pedalAt, readDrumMidi, scanAftertouch } from '../src/drums/DrumScore';
 import { KitMotion, SWING } from '../src/drums/KitMotion';
 import * as THREE from 'three';
-import { CYMBAL_PROFILES, DRUMS, PEDALS, PEDAL_TRAVEL, SPOTS, cymbalTop, surfaceNormal, type DrumId } from '../src/drums/KitLayout';
+import { CYMBAL_PROFILES, DRUMS, FOOTBOARD_TOP, PEDALS, PEDAL_BOARDS, PEDAL_TRAVEL, SPOTS, cymbalTop, footboardAt, surfaceNormal, type DrumId } from '../src/drums/KitLayout';
 import { orientation } from '../src/presentation/DrumKitModel';
 import { articulationFor } from '../src/drums/DrumAudio';
 
@@ -246,6 +246,42 @@ describe('the kit layout contract', () => {
     expect(len - along).toBeGreaterThan(0.04);
     expect(PEDAL_TRAVEL).toBeGreaterThan(0.05);
     expect(PEDAL_TRAVEL).toBeLessThan(0.3);
+  });
+});
+
+describe('the kit model on the layout contract', () => {
+  it("seats the hi-hat's top cymbal on KitLayout's centre (the column under its tilted head)", async () => {
+    const { DrumKitModel } = await import('../src/presentation/DrumKitModel');
+    const kit = new DrumKitModel();
+    kit.root.updateMatrixWorld(true);
+    const top = kit.root.getObjectByName('hihat-top')!;
+    const p = top.getWorldPosition(new THREE.Vector3());
+    const c = DRUMS.hihat.centre;
+    expect(Math.hypot(p.x - c[0], p.y - c[1], p.z - c[2])).toBeLessThan(1e-4);
+  });
+
+  it("turns the footboards exactly as footboardAt says, at every press (the foot stands on the same board)", async () => {
+    const { DrumKitModel } = await import('../src/presentation/DrumKitModel');
+    const { restState } = await import('../src/presentation/DrumStage');
+    const kit = new DrumKitModel();
+    const s = restState();
+    const o = { point: [0, 0, 0], along: [0, 0, 0], normal: [0, 0, 0] };
+    for (const press of [-0.2, -0.05, 0, 0.3, 0.7, 1]) {
+      s.beater = press;
+      s.hihatClosed = Math.max(0, press);
+      kit.update(s);
+      kit.root.updateMatrixWorld(true);
+      for (const [id, name, pr] of [['kickPedal', 'kick-footboard', press], ['hihatPedal', 'hihat-footboard', Math.max(0, press)]] as const) {
+        const board = kit.root.getObjectByName(name)!.parent!;
+        const b = PEDAL_BOARDS[id];
+        for (const along of [0.05, b.ballAlong, b.length - 0.02]) {
+          // the board's top surface, `along` from its hinge, in the board's own frame (built along -z)
+          const w = new THREE.Vector3(0, FOOTBOARD_TOP, -along).applyMatrix4(board.matrixWorld);
+          footboardAt(id, pr, along, o);
+          expect(Math.hypot(w.x - o.point[0], w.y - o.point[1], w.z - o.point[2]), `${id} press ${pr} at ${along}`).toBeLessThan(1e-6);
+        }
+      }
+    }
   });
 });
 

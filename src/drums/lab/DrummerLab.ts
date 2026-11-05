@@ -4,8 +4,12 @@
 // posed by the IK at every strike spot, in the special poses, or in a slow
 // sweep between spots.
 //
+// It also plays a library piece (piece=groove-rock|groove-funk|groove-jazz): the
+// drummer's planned performance (DrummerMotion) with the kit's reactions, a
+// scrubber and play/pause, for looking at the motion frame by frame.
+//
 //   npx vite --host 127.0.0.1 --port 5193 --strictPort, then /drummer-lab.html
-//   query: pose=<name>|sweep  t=<s>  view=front|left|right|top|hands|feet|back|close|...
+//   query: pose=<name>|sweep  piece=<id>  t=<s>  view=front|left|right|top|hands|feet|back|close|...
 //          kit=model|solids  fast=1 (no post)  figure=skeleton|robot|both  ui=0 (no panel)
 //   window.lab: setPose(name), setTime(t), setView(name), setKit(kind), renderNow()
 import * as THREE from 'three';
@@ -25,6 +29,18 @@ import { SkeletonFigure } from './SkeletonFigure';
 import { PlaceholderKit } from './PlaceholderKit';
 import { DrummerRig, loadDrummer } from '../DrummerRig';
 import { createDrummerPalette } from '../drummerMaterials';
+import { DRUM_PIECES } from '../drumLibrary';
+import { readDrumMidi } from '../DrumScore';
+import { assignLimbs } from '../Sticking';
+import { KitMotion } from '../KitMotion';
+import { DrummerMotion, blankTargets } from '../DrummerMotion';
+
+function bytesOf(url: string): Uint8Array {
+  const raw = atob(url.slice(url.indexOf(',') + 1));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
 
 const params = new URLSearchParams(location.search);
 const FAST = params.get('fast') === '1';
@@ -60,6 +76,14 @@ const VIEWS: Record<string, View> = {
   grip: { pos: [-0.62, 0.98, -0.78], target: [-0.2, 0.8, -0.16], focal: 85 },
   // as the reference footage (clip 4): above the drummer's right, looking down across the kit
   clip4: { pos: [1.05, 1.7, -0.32], target: [-0.3, 0.78, -0.42], focal: 20 },
+  // as clip 1: from the drummer's left at the snare's height, the forearms and sticks side-on
+  clip1: { pos: [-1.3, 0.98, -0.4], target: [-0.05, 0.88, -0.4], focal: 50 },
+  // as clip 6: from the front at the snare, a little above it
+  clip6: { pos: [-0.12, 1.0, -1.25], target: [-0.1, 0.85, -0.3], focal: 45 },
+  // over the drummer's right shoulder, as from the stool
+  stool: { pos: [0.85, 1.75, 0.25], target: [-0.15, 0.8, -0.6], focal: 30 },
+  // the whole drummer from his right, a little in front (for the motion clips)
+  sideMid: { pos: [1.95, 1.15, -0.2], target: [0.0, 0.9, -0.3], focal: 36 },
 };
 
 class Lab {
@@ -80,6 +104,12 @@ class Lab {
   private blend: DrummerTargets = emptyTargets();
   current = 'groove';
   sweeping = false;
+  /** a piece being played: its planned performance and the kit's motion */
+  piece: { id: string; motion: DrummerMotion; kit: KitMotion; duration: number } | null = null;
+  playing = false;
+  private pieceTargets = blankTargets();
+  private scrub: HTMLInputElement | null = null;
+  private clock: HTMLElement | null = null;
   t = 0;
   focal = 40;
   private last = performance.now();
@@ -188,7 +218,24 @@ class Lab {
     this.controls.update();
   }
 
+  /** play a library piece (its drummer's performance planned here, once) */
+  setPiece(id: string) {
+    const e = DRUM_PIECES.find((p) => p.id === id);
+    if (!e) return;
+    const perf = readDrumMidi(bytesOf(e.data), e.title);
+    const kit = new KitMotion(perf);
+    const t0 = performance.now();
+    const motion = new DrummerMotion(perf, assignLimbs(perf), kit);
+    console.log(`planned ${id} in ${(performance.now() - t0).toFixed(0)} ms`);
+    this.piece = { id, motion, kit, duration: perf.duration };
+    this.sweeping = false;
+    if (this.scrub) this.scrub.max = String(perf.duration);
+    this.solve();
+  }
+
   setPose(name: string) {
+    this.piece = null;
+    this.playing = false;
     this.sweeping = name === 'sweep';
     if (!this.sweeping) this.current = name;
     this.solve();
@@ -217,6 +264,7 @@ class Lab {
   }
 
   solve() {
+    if (this.piece) return this.solvePiece();
     const { targets, name, open } = this.targets();
     solveDrummer(targets, this.pose);
     if (this.current === 'rest' && !this.sweeping) {
@@ -234,6 +282,20 @@ class Lab {
     ks.beater = Math.min(1, Math.max(0, -this.pose.pedal.kickPedal / PEDAL_TRAVEL));
     this.model.update(ks);
     if (this.info && (!this.sweeping || Math.floor(this.t * 4) !== Math.floor((this.t - 1 / 60) * 4))) this.report(targets, name);
+  }
+
+  private solvePiece() {
+    const pc = this.piece!;
+    const t = Math.max(0, Math.min(pc.duration, this.t));
+    pc.motion.pose(t, this.pieceTargets, this.pose);
+    this.skeleton.update(this.pose);
+    this.rig?.apply(this.pose);
+    const ks = pc.kit.evaluate(t);
+    this.solids.update(this.pose.pedal, 1 - ks.hihatClosed);
+    this.model.update(ks);
+    if (this.scrub && document.activeElement !== this.scrub) this.scrub.value = String(t);
+    if (this.clock) this.clock.textContent = `${t.toFixed(3)} s`;
+    if (this.info && (!this.playing || Math.floor(t * 4) !== Math.floor((t - 1 / 60) * 4))) this.report(this.pieceTargets, `${pc.id} at ${t.toFixed(2)} s`);
   }
 
   private report(targets: DrummerTargets, name: string) {
@@ -263,6 +325,36 @@ class Lab {
       e.textContent = t;
       panel.appendChild(e);
     };
+    h('Play a piece');
+    for (const e of DRUM_PIECES) add(e.title, () => this.setPiece(e.id), 'small');
+    const row = document.createElement('div');
+    const play = document.createElement('button');
+    play.className = 'small accent';
+    play.textContent = 'play / pause';
+    play.onclick = () => {
+      if (!this.piece) this.setPiece(DRUM_PIECES[0].id);
+      this.playing = !this.playing;
+    };
+    const step = (dt: number) => {
+      const b = document.createElement('button');
+      b.className = 'small';
+      b.textContent = dt > 0 ? `+${Math.round(dt * 1000)}ms` : `${Math.round(dt * 1000)}ms`;
+      b.onclick = () => this.setTime(this.t + dt);
+      return b;
+    };
+    row.append(play, step(-1 / 30), step(1 / 30), step(-1 / 120), step(1 / 120));
+    panel.appendChild(row);
+    const scrub = document.createElement('input');
+    scrub.type = 'range';
+    scrub.min = '0';
+    scrub.max = '60';
+    scrub.step = '0.001';
+    scrub.style.width = '100%';
+    scrub.oninput = () => this.setTime(parseFloat(scrub.value));
+    panel.appendChild(scrub);
+    this.scrub = scrub;
+    this.clock = document.createElement('div');
+    panel.appendChild(this.clock);
     h('Poses');
     for (const p of this.poses) add(p.label, () => this.setPose(p.name));
     add('Rest (the model as built)', () => this.setPose('rest'));
@@ -334,8 +426,9 @@ class Lab {
 
   tick = () => {
     const now = performance.now();
-    if (this.sweeping) {
+    if (this.sweeping || (this.piece && this.playing)) {
       this.t += Math.min(0.05, (now - this.last) / 1000);
+      if (this.piece && this.t > this.piece.duration) this.t = 0;
       this.solve();
     }
     this.last = now;
@@ -374,7 +467,8 @@ async function main() {
   lab.setKit(params.get('kit') ?? 'model');
   lab.setView(params.get('view') ?? 'front');
   lab.t = parseFloat(params.get('t') ?? '0');
-  lab.setPose(params.get('pose') ?? 'groove');
+  if (params.get('piece')) lab.setPiece(params.get('piece')!);
+  else lab.setPose(params.get('pose') ?? 'groove');
   lab.renderNow();
   (window as unknown as { __ready: boolean }).__ready = true;
   if (params.get('still') !== '1') requestAnimationFrame(lab.tick);

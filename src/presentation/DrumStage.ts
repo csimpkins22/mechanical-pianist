@@ -23,6 +23,8 @@ import { shutterTime, type Look } from './SceneRenderer';
 import { DrumKitModel } from './DrumKitModel';
 import type { DrumCameraState } from './DrumCamera';
 import type { KitState } from '../drums/KitMotion';
+import type { DrummerRig } from '../drums/DrummerRig';
+import type { DrummerPose } from '../drums/DrummerIK';
 import { drift } from '../core/random';
 
 /** where the kit's frame (KitLayout: the floor under the stool) stands in the room */
@@ -80,6 +82,9 @@ export class DrumStage {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(30, 16 / 9, 0.02, 30);
   readonly kit: DrumKitModel;
+  /** the robot drummer on the stool (loaded by prepare(); null until then, or if its model could not load) */
+  drummer: DrummerRig | null = null;
+  private drummerMeshes: THREE.Object3D[] = [];
   readonly sunDir = new THREE.Vector3(1.75, -1.2, -1.05).normalize();
   private sun: THREE.DirectionalLight;
   private win: THREE.RectAreaLight;
@@ -303,8 +308,36 @@ export class DrumStage {
     }
   }
 
+  /** load the robot drummer and seat it at the kit (in the kit's frame: KitLayout's, as the IK poses it) */
+  private async loadDrummer() {
+    try {
+      // (loaded with the drum stage, so the piano's pages never load the drummer)
+      const [{ DrummerRig, loadDrummer }, { createDrummerPalette }] = await Promise.all([import('../drums/DrummerRig'), import('../drums/drummerMaterials')]);
+      const palette = createDrummerPalette();
+      const model = await loadDrummer('./assets/robot_drummer.glb', palette);
+      const rig = new DrummerRig(model, palette);
+      rig.root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.castShadow = true;
+        m.receiveShadow = true;
+        this.drummerMeshes.push(m);
+      });
+      this.kit.root.add(rig.root);
+      this.drummer = rig;
+    } catch (e) {
+      console.warn('the robot drummer could not be loaded; the kit plays alone', e);
+    }
+  }
+
+  /** pose the drummer */
+  setDrummer(pose: DrummerPose) {
+    this.drummer?.apply(pose);
+  }
+
   /** compile, capture the room's reflections and its bounced light (twice: two bounces) */
   async prepare() {
+    await this.loadDrummer();
     this.setLights(this.lights);
     this.kit.update(restState());
     this.scene.updateMatrixWorld();
@@ -402,11 +435,14 @@ export class DrumStage {
     c.updateMatrixWorld();
   }
 
-  /** for motion blur: the kit and the camera as the shutter opened */
-  setPrevious(state: KitState, cam: DrumCameraState, aspect: number) {
+  /** for motion blur: the kit, the drummer and the camera as the shutter opened */
+  setPrevious(state: KitState, cam: DrumCameraState, aspect: number, pose?: DrummerPose) {
     this.kit.update(state);
+    if (pose) this.drummer?.apply(pose);
     this.scene.updateMatrixWorld();
     for (const o of this.kit.moving) ((o.userData.prevMW ??= new THREE.Matrix4()) as THREE.Matrix4).copy(o.matrixWorld);
+    // every part of the drummer moves (the sticks fastest): each mesh's own transform as the shutter opened
+    for (const o of this.drummerMeshes) ((o.userData.prevMW ??= new THREE.Matrix4()) as THREE.Matrix4).copy(o.matrixWorld);
     this.kit.keepPrevious();
     this.applyCamera(this.prevCam, cam, aspect);
     this.prevViewProj.multiplyMatrices(this.prevCam.projectionMatrix, this.prevCam.matrixWorldInverse);

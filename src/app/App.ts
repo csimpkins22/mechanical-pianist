@@ -17,7 +17,7 @@ import type { Quality } from '../presentation/PostPipeline';
 import type { Override, Performance } from '../core/types';
 import { DEFAULT_LIVE, LiveSession, type LiveSettings } from '../live/LiveSession';
 import { DrumAudio } from '../drums/DrumAudio';
-import { DrumSession } from '../drums/DrumSession';
+import { DrumSession, loadDrummerModules } from '../drums/DrumSession';
 import { readDrumMidi } from '../drums/DrumScore';
 import { DrumStage } from '../presentation/DrumStage';
 
@@ -483,6 +483,8 @@ export class App {
       await stage.prepare();
       this.drumStage = stage;
     }
+    // the drummer's modules (the piano's pages never load them)
+    const drummer = await loadDrummerModules();
     if (seq !== this.buildSeq) return;
     // playing live is the piano's; the drums leave it
     if (this.live) this.exitLive();
@@ -490,7 +492,8 @@ export class App {
     if (wasPlaying) this.pause();
     this.drumAudio.stop();
     this.drumAudio.resume();
-    this.drums = new DrumSession(e.bytes(), source, e.title, e.artist, e.year, this.drumAudio, this.drumStage);
+    this.drums?.dispose();
+    this.drums = new DrumSession(e.bytes(), source, e.title, e.artist, e.year, this.drumAudio, this.drumStage, drummer);
     this.t = 0;
     this.loading = null;
     progress?.(1, '');
@@ -503,6 +506,7 @@ export class App {
   private leaveDrums() {
     if (!this.drums) return;
     this.drumAudio.dispose();
+    this.drums.dispose();
     this.drums = null;
   }
 
