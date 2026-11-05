@@ -34,7 +34,7 @@
 // (M R M), so its angles mean the same. Everything is closed form or a fixed
 // number of iterations, and nothing is allocated per solve.
 import { PEDAL_BOARDS, PEDAL_TRAVEL, PRESS_MIN, SEAT, STICK, footboardAt, type PedalId } from './KitLayout';
-import { kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
+import { kitProxies, proxyDistance, segPointDistance, segSegDistance, type Proxy } from './KitProxy';
 import {
   DOF_BASE,
   DRUMMER,
@@ -168,6 +168,8 @@ export interface WarmStart {
   R: Float64Array;
   L: Float64Array;
   steps: number;
+  /** take each Newton step as it is, without searching along it (a smooth function of t, for frames) */
+  smooth?: boolean;
 }
 
 /** fingers of one hand: node local rotations, 9 each, in this order (the hand's own node names) */
@@ -345,10 +347,14 @@ export function refreshKit() {
   KIT_M = KIT.map(mirrorProxy);
   KIT_B = bounds(KIT);
   KIT_MB = bounds(KIT_M);
-  near = new Uint8Array(KIT.length);
+  nearStick = new Uint8Array(KIT.length);
+  nearArm = new Uint8Array(KIT.length);
+  nearLeg = new Uint8Array(KIT.length);
 }
-/** which solids are near the arm being tried */
-let near = new Uint8Array(0);
+/** which solids are near the stick, and the forearm and hand, being tried */
+let nearStick = new Uint8Array(0);
+let nearArm = new Uint8Array(0);
+let nearLeg = new Uint8Array(0);
 refreshKit();
 /** clearance kept from the kit (metres) */
 const CLEAR = 0.02;
@@ -608,7 +614,7 @@ const STICK_R = DRUMMER.stick.diameter / 2;
 const CAPS = DRUMMER.capsules;
 
 /** how far a point (a sphere of radius r) is inside the kit's clearance; `letOff` (0..1) excuses the struck surface */
-function pointPenalty(inp: ArmIn, p: Vec3, r: number, letOff: number): number {
+function pointPenalty(inp: ArmIn, p: Vec3, r: number, letOff: number, near: Uint8Array): number {
   let pen = 0;
   const kit = inp.kit;
   for (let j = 0; j < kit.length; j++) {
@@ -630,14 +636,28 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
   addScaled3(obButt, out.fulcrum, obDir, -STICK_BACK);
   addScaled3(obTip, out.fulcrum, obDir, STICK_FRONT);
   addScaled3(obC, obTip, obDir, -inp.contactFromTip);
-  // the solids whose bounding spheres reach the arm's (butt, tip, elbow, wrist)
-  let cx = 0.25 * (obButt[0] + obTip[0] + out.elbow[0] + out.wrist[0]);
-  let cy = 0.25 * (obButt[1] + obTip[1] + out.elbow[1] + out.wrist[1]);
-  let cz = 0.25 * (obButt[2] + obTip[2] + out.elbow[2] + out.wrist[2]);
-  const ra = Math.max(Math.hypot(obButt[0] - cx, obButt[1] - cy, obButt[2] - cz), Math.hypot(obTip[0] - cx, obTip[1] - cy, obTip[2] - cz), Math.hypot(out.elbow[0] - cx, out.elbow[1] - cy, out.elbow[2] - cz), Math.hypot(out.wrist[0] - cx, out.wrist[1] - cy, out.wrist[2] - cz)) + 0.06;
+  apply3(obK, Rp, set3(obP, 0, -0.012, -0.085));
+  addScaled3(obK, obK, out.wrist, 1);
+  // the solids whose bounding spheres come within clearance of the stick, and of the forearm and hand (the rest
+  // cannot add anything: a solid is no nearer to a point than its bounding sphere)
   const B = inp.kitBounds;
-  for (let j = 0; j < inp.kit.length; j++) near[j] = Math.hypot(B[j * 4] - cx, B[j * 4 + 1] - cy, B[j * 4 + 2] - cz) < ra + B[j * 4 + 3] ? 1 : 0;
-  cx = cy = cz = 0;
+  const ra = CLEAR + Math.max(CAPS.forearm, CAPS.hand * 0.8);
+  for (let j = 0; j < inp.kit.length; j++) {
+    const x = inp.kit[j];
+    if (x.kind === 'rod') {
+      // a rod is its own capsule
+      nearStick[j] = segSegDistance(x.a, x.b, obButt, obTip) < x.radius + STICK_R + CLEAR ? 1 : 0;
+      nearArm[j] = segSegDistance(x.a, x.b, out.elbow, out.wrist) < x.radius + ra || segSegDistance(x.a, x.b, out.wrist, obK) < x.radius + ra ? 1 : 0;
+      continue;
+    }
+    const o = j * 4;
+    obA[0] = B[o];
+    obA[1] = B[o + 1];
+    obA[2] = B[o + 2];
+    const r = B[o + 3];
+    nearStick[j] = segPointDistance(obA, obButt, obTip) < r + STICK_R + CLEAR ? 1 : 0;
+    nearArm[j] = segPointDistance(obA, out.elbow, out.wrist) < r + ra || segPointDistance(obA, out.wrist, obK) < r + ra ? 1 : 0;
+  }
   let pen = 0;
   const n = 8;
   for (let k = 0; k <= n; k++) {
@@ -646,18 +666,16 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
     // near the contact the struck surface is let off, fading back in as the stick lifts or the point moves away
     const dc = dist3(obP, obC);
     const off = (1 - clamp((inp.lift - 0.002) / 0.01, 0, 1)) * (1 - clamp((dc - 0.035) / 0.02, 0, 1));
-    pen += pointPenalty(inp, obP, STICK_R, off);
+    pen += pointPenalty(inp, obP, STICK_R, off, nearStick);
   }
   // the hand, out to the knuckles, and the forearm
-  apply3(obK, Rp, set3(obP, 0, -0.012, -0.085));
-  addScaled3(obK, obK, out.wrist, 1);
   for (let k = 1; k <= 2; k++) {
     for (let i = 0; i < 3; i++) obP[i] = out.wrist[i] + (obK[i] - out.wrist[i]) * (k / 2);
-    pen += pointPenalty(inp, obP, CAPS.hand * 0.8, 0);
+    pen += pointPenalty(inp, obP, CAPS.hand * 0.8, 0, nearArm);
   }
   for (let k = 1; k <= 3; k++) {
     for (let i = 0; i < 3; i++) obP[i] = out.elbow[i] + (out.wrist[i] - out.elbow[i]) * (0.25 + 0.25 * k);
-    pen += pointPenalty(inp, obP, CAPS.forearm, 0);
+    pen += pointPenalty(inp, obP, CAPS.forearm, 0, nearArm);
   }
   // the other arm: stick, forearm and hand against this one's
   const O = inp.other;
@@ -933,7 +951,7 @@ const searchStep = new Float64Array(3);
  * too: the same targets give the same pose, and nearby targets nearby poses (no jumps as a stroke moves), while
  * the grid keeps it out of the poor basins a single descent can fall into.
  */
-function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: number) {
+function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: number, smoothSteps = false) {
   if (warm) {
     // a planned start: refine it, no grid
     searchP[0] = warm[0];
@@ -972,6 +990,12 @@ function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: num
     }
     // take the step, halved until the cost comes down (a joint's stop or the kit can make the valley steep)
     for (let k = 0; k < 3; k++) searchStep[k] = clamp(searchStep[k], -STEP_MAX, STEP_MAX) * NEWTON_DAMP;
+    if (smoothSteps) {
+      // the step as it is (no search): a smooth function of the start and the targets, so neighbouring frames move smoothly
+      for (let k = 0; k < 3; k++) searchP[k] += searchStep[k];
+      if (it + 1 < steps) c0 = armTry(inp, searchP[0], searchP[1], searchP[2], armTrial);
+      continue;
+    }
     let f = 1;
     for (let tries = 0; tries < 5; tries++, f *= 0.5) {
       const c1 = armTry(inp, searchP[0] + f * searchStep[0], searchP[1] + f * searchStep[1], searchP[2] + f * searchStep[2], armTrial);
@@ -999,8 +1023,9 @@ const STEP_MAX = 0.15;
 
 // ---------------------------------------------------------------- the leg (canonical)
 interface LegIn {
-  /** the kit as this side sees it */
+  /** the kit as this side sees it, and its solids' bounding spheres */
   kit: Proxy[];
+  kitBounds: Float64Array;
   pelvis: Mat3;
   hip: Vec3;
   /** the footboard at its press (KitLayout's footboardAt): where the ball of the foot stands on its top, the board's
@@ -1026,7 +1051,7 @@ interface LegOut {
   /** the shin's turn about its axis */
   twist: number;
 }
-const legIn: LegIn = { kit: [], pelvis: mat3(), hip: vec3(), ball: vec3(), along: vec3(), normal: vec3(), heelLift: 0, press: 0 };
+const legIn: LegIn = { kit: [], kitBounds: new Float64Array(0), pelvis: mat3(), hip: vec3(), ball: vec3(), along: vec3(), normal: vec3(), heelLift: 0, press: 0 };
 const boardOut = { point: legIn.ball, along: legIn.along, normal: legIn.normal };
 const legOut: LegOut = { thigh: mat3(), shin: mat3(), foot: mat3(), toes: mat3(), ang: new Float64Array(8), short: 0, board: 0, splay: 0, twist: 0 };
 const lgB = vec3();
@@ -1073,7 +1098,8 @@ function solveLeg(inp: LegIn, out: LegOut) {
   fromCols3(lgRb, lgXB, lgNB, scale3(lgZ, lgBH, -1));
   // the foot on it: the ball of the foot on the board's ball point and the toes flat on the board, the heel
   // lifted by turning the foot about the ball (none: the whole sole on the board)
-  const gamma = HEEL_UP * clamp(inp.heelLift, 0, 1);
+  // (past 1: the leg lifting the heel higher still before a loud stroke, the ball of the foot on the board)
+  const gamma = HEEL_UP * clamp(inp.heelLift, 0, 1.5);
   mulM3(lgRfoot, lgRb, rotX3(lgM, -gamma));
   addScaled3(lgT, lgBall, lgNB, FOOT.ankleHeight + FOOT.ball[1]);
   apply3(lgA, lgRfoot, set3(lgZ, FOOT.ball[0], FOOT.ball[1], FOOT.ball[2]));
@@ -1105,12 +1131,26 @@ function solveLeg(inp: LegIn, out: LegOut) {
     addScaled3(lgK, H, lgWH, a);
     addScaled3(lgK, lgK, lgKT, h);
     let pen = 0;
+    // only the solids within clearance of the thigh or the shin can add anything
+    const B = inp.kitBounds;
+    for (let j = 0; j < inp.kit.length; j++) {
+      const x = inp.kit[j];
+      if (x.kind === 'rod') nearLeg[j] = segSegDistance(x.a, x.b, H, lgK) < x.radius + CAPS.thigh + CLEAR || segSegDistance(x.a, x.b, lgK, lgAJ) < x.radius + CAPS.shin + CLEAR ? 1 : 0;
+      else {
+        lgP[0] = B[j * 4];
+        lgP[1] = B[j * 4 + 1];
+        lgP[2] = B[j * 4 + 2];
+        const r = B[j * 4 + 3];
+        nearLeg[j] = segPointDistance(lgP, H, lgK) < r + CAPS.thigh + CLEAR || segPointDistance(lgP, lgK, lgAJ) < r + CAPS.shin + CLEAR ? 1 : 0;
+      }
+    }
     for (let q = 1; q <= 7; q++) {
       const thigh = q <= 4;
       const u = thigh ? q / 4 : (q - 4) / 3.5;
       for (let i = 0; i < 3; i++) lgP[i] = thigh ? H[i] + (lgK[i] - H[i]) * u : lgK[i] + (lgAJ[i] - lgK[i]) * u;
       const r = thigh ? CAPS.thigh : CAPS.shin;
       for (let j = 0; j < inp.kit.length; j++) {
+        if (!nearLeg[j]) continue;
         const dd = proxyDistance(lgP, inp.kit[j]) - r;
         if (dd < CLEAR) pen += (CLEAR - dd) * (CLEAR - dd);
       }
@@ -1404,7 +1444,7 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose, warm: WarmSta
       putOther(armIn.other, 2, firstArm.wrist, firstArm.knuckle, CAPS.hand * 0.8);
       armIn.nOther = 3;
     }
-    solveArm(armIn, armBest, warm ? warm[s] : null, warm ? warm.steps : NEWTON_STEPS);
+    solveArm(armIn, armBest, warm ? warm[s] : null, warm ? warm.steps : NEWTON_STEPS, !!warm?.smooth);
     pose.free[s][0] = searchP[0];
     pose.free[s][1] = searchP[1];
     pose.free[s][2] = searchP[2];
@@ -1480,6 +1520,7 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose, warm: WarmSta
       mirrorV(legIn.normal, legIn.normal);
     }
     legIn.kit = s === 'L' ? KIT_M : KIT;
+    legIn.kitBounds = s === 'L' ? KIT_MB : KIT_B;
     legIn.heelLift = ft.heelLift ?? (ft.heel === 'up' ? 1 : 0);
     legIn.press = ft.press;
     solveLeg(legIn, legOut);

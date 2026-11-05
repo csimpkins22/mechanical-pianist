@@ -207,17 +207,14 @@ export function kitStands(): KitStands {
   }
 
   // the boom stands for the crash and the ride, behind and outside their cymbals
-  for (const [id, base] of [
-    ['crash', [DRUMS.crash.centre[0] - 0.3, DRUMS.crash.centre[2] - 0.28]],
-    ['ride', [DRUMS.ride.centre[0] + 0.34, DRUMS.ride.centre[2] - 0.3]],
-  ] as ['crash' | 'ride', P2][]) {
+  for (const id of ['crash', 'ride'] as const) {
     const d = DRUMS[id];
     const p = CYMBAL_PROFILES[id];
     const n = rot(d, [0, 1, 0]);
     const stack = p.bellHeight + 0.03;
     const tilt = add(d.centre, n, -stack);
+    const { base, joint } = boomStand(id);
     tripod(id, `${id} stand`, base, 0.27, 0.3, 0.0085);
-    const joint: V3 = [base[0], tilt[1] - 0.2, base[1]];
     rod(id, `${id} stand`, [base[0], 0.08, base[1]], [base[0], 0.62, base[1]], 0.0145);
     rod(id, `${id} stand`, [base[0], 0.62, base[1]], joint, 0.011);
     const arm = sub(tilt, joint);
@@ -228,6 +225,20 @@ export function kitStands(): KitStands {
     rod(id, `${id} wing nut`, add(d.centre, n, p.bellHeight + 0.008), add(d.centre, n, p.bellHeight + 0.02), 0.016);
   }
   return { rods, legClearance };
+}
+
+/**
+ * A boom stand's base on the floor (behind and outside its cymbal) and its
+ * boom joint, about which the stand's top gives a little with the cymbal
+ * (DrumKitModel turns it there).
+ */
+export function boomStand(id: 'crash' | 'ride'): { base: [number, number]; joint: V3 } {
+  const d = DRUMS[id];
+  const p = CYMBAL_PROFILES[id];
+  const base: [number, number] = id === 'crash' ? [d.centre[0] - 0.3, d.centre[2] - 0.28] : [d.centre[0] + 0.34, d.centre[2] - 0.3];
+  const n = rot(d, [0, 1, 0]);
+  const tilt = add(d.centre, n, -(p.bellHeight + 0.03));
+  return { base, joint: [base[0], tilt[1] - 0.2, base[1]] };
 }
 
 /**
