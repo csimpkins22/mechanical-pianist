@@ -9,6 +9,7 @@
 import { CYMBAL_PROFILES, DRUMS, hihatMount, surfaceNormal, type V3 } from './KitLayout';
 import { boomStand } from './KitStands';
 import type { CymbalId, KitState, Tilt } from './KitMotion';
+import { kitProxies, type Proxy } from './KitProxy';
 
 type M3 = number[];
 
@@ -135,3 +136,33 @@ export function cymbalNormal(id: CymbalId, s: Pick<KitState, 'cymbals' | 'stands
 
 /** the hi-hat's column head (for tests) */
 export const HIHAT_HEAD = MOUNT.head;
+
+/**
+ * The kit's solids (KitProxy) as the kit in `s` has moved them: the crash and the ride tilted on their felts
+ * and their stands, the hi-hat's top cymbal and clutch lifted by the pedal and rocking. (For checks; allocates.)
+ */
+export function posedProxies(s: Pick<KitState, 'cymbals' | 'stands' | 'hihatGap'>): Proxy[] {
+  const base = kitProxies({ hihatOpen: false });
+  const out: Proxy[] = [];
+  let hhTop = true;
+  for (const x of base) {
+    if (x.kind === 'cymbal' && (x.id === 'crash' || x.id === 'ride' || (x.id === 'hihat' && hhTop))) {
+      const id = x.id as CymbalId;
+      if (id === 'hihat') hhTop = false;
+      const c = cymbalPoint(id, x.centre, s, [0, 0, 0]);
+      const n = cymbalNormal(id, s, [0, 0, 0]);
+      out.push({ ...x, centre: c as V3, normal: n as V3 });
+      continue;
+    }
+    if (x.kind === 'rod' && x.id === 'hihat' && /rod|clutch/.test(x.label)) {
+      out.push({ ...x, a: cymbalPoint('hihat', x.a, s, [0, 0, 0]) as V3, b: cymbalPoint('hihat', x.b, s, [0, 0, 0]) as V3 });
+      continue;
+    }
+    if (x.kind === 'rod' && (x.id === 'crash' || x.id === 'ride') && /tilter|wing nut/.test(x.label)) {
+      out.push({ ...x, a: cymbalPoint(x.id, x.a, s, [0, 0, 0]) as V3, b: cymbalPoint(x.id, x.b, s, [0, 0, 0]) as V3 });
+      continue;
+    }
+    out.push(x);
+  }
+  return out;
+}

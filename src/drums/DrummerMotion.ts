@@ -55,7 +55,7 @@
 // the pedal curve, rocking heel to toe for chicks, and keeps time with a heel
 // bounce while the hi-hat is held closed.
 import { DRUMS, HIHAT_OPEN_GAP, SPOTS, STICK, strikePoint, surfaceNormal, type DrumId, type V3 } from './KitLayout';
-import { pedalAt, type DrumHit, type DrumPerformance, type Zone } from './DrumScore';
+import { pedalAt, type DrumHit, type DrumPerformance, type PedalPoint, type Zone } from './DrumScore';
 import { beatGrid, type Hand, type Level, type Sticking } from './Sticking';
 import type { CymbalId, KitMotion } from './KitMotion';
 import { cymbalPoint } from './KitPose';
@@ -87,12 +87,14 @@ export const DOWN_POWER = 2.2;
 /** the stick on the surface: it dwells this long and leaves at this share of the speed it came in with */
 export const DWELL = 0.003;
 const RESTITUTION = { drum: 0.68, cymbal: 0.55 };
+/** the most a stick under the other, crossed arm lifts (m) */
+const UNDER_ARM = 0.2;
 /** where a waiting stick hovers (m) */
 const HOVER = 0.035;
 /** the sticks' height before the first note (ready) */
 const READY = 0.11;
 /** the forearm's lead in big strokes (radians at the top of a 40 cm stroke) */
-const ARM_MAX = 0.32;
+const ARM_MAX = 0.2;
 /** how far ahead of the hands the torso turns and the head looks (s) */
 const TORSO_LEAD = 0.1;
 const LOOK_LEAD = 0.15;
@@ -100,6 +102,10 @@ const LOOK_LEAD = 0.15;
 const RATE = 120;
 /** Newton steps for each planned key, from the key before */
 const WARM_STEPS = 2;
+/** a key whose arms cost more than this is searched afresh too */
+const KEY_COST = 0.6;
+/** a key is added between two where the interpolated arms cost this much more than either end */
+const REFINE_COST = 0.4;
 
 export type StrokeKind = 'ready' | 'full' | 'down' | 'up' | 'tap' | 'double' | 'buzz' | 'grace' | 'choke';
 
@@ -142,6 +148,10 @@ export interface Stroke {
   armPeak: number;
   armDown: number;
   fingers: number;
+  /** the arm on top when the arms are crossed at this stroke (Sticking's), or null */
+  over: Hand | null;
+  /** 1 on the hi-hat's top cymbal: its contact rises and falls with the pedal (added at evaluation) */
+  hh: number;
   /** after a crash, the stick follows through past the edge (offset, m) over ftT seconds */
   ft: Float64Array;
   ftT: number;
@@ -179,6 +189,8 @@ function newStroke(): Stroke {
     armPeak: 0,
     armDown: 0,
     fingers: 0.3,
+    over: null,
+    hh: 0,
     ft: new Float64Array(3),
     ftT: 0,
   };
@@ -189,20 +201,22 @@ function contactOf(piece: DrumId, zone: Zone): { cft: number; angle: number } {
   if (piece === 'crash') return { cft: STICK_SHOULDER, angle: zone === 'edge' ? -10 * D2R : -14 * D2R };
   if (piece === 'ride') {
     if (zone === 'bell') return { cft: STICK_SHOULDER, angle: 12 * D2R };
-    if (zone === 'edge') return { cft: STICK_SHOULDER, angle: -8 * D2R };
+    if (zone === 'edge') return { cft: STICK_SHOULDER, angle: -12 * D2R };
     return { cft: STICK_BEAD, angle: STICK_ANGLE.ride };
   }
   if (piece === 'hihat') {
-    if (zone === 'edge') return { cft: STICK_SHOULDER, angle: -7 * D2R };
+    if (zone === 'edge') return { cft: STICK_SHOULDER, angle: -12 * D2R };
     return { cft: STICK_BEAD, angle: STICK_ANGLE.hihat };
   }
   // a rimshot: the shaft meets the near rim as the tip meets the head toward its middle (a flatter stick, held where
   // it always is); a cross-stick lies nearly flat across the head, its shaft on the rim
-  if (zone === 'rim') return { cft: 0.14, angle: 4.5 * D2R };
+  if (zone === 'rim') return { cft: 0.14, angle: 3.8 * D2R };
   if (zone === 'crossStick') return { cft: 0.16, angle: 3 * D2R };
   return { cft: STICK_BEAD, angle: STICK_ANGLE[piece] };
 }
 
+/** the hi-hat's axis, along which its pedal lifts the top cymbal */
+const HH_AXIS = surfaceNormal(DRUMS.hihat);
 /** the rim's height above the head (the hoop): a rimshot's contact is on it */
 const HOOP = 0.008;
 
@@ -213,7 +227,17 @@ class HandPlan {
   readonly strokes: Stroke[] = [];
   /** the strokes' times, for the binary search */
   times = new Float64Array(0);
-  constructor(readonly hand: Hand) {}
+  constructor(
+    readonly hand: Hand,
+    private hihat: PedalPoint[],
+  ) {}
+
+  /** the hi-hat's top cymbal lifted by its pedal at t, along its axis, weighted (the stick on or over it) */
+  private lifted(o: StickTarget, t: number, w: number) {
+    if (w <= 0) return;
+    const g = HIHAT_OPEN_GAP * (1 - pedalAt(this.hihat, t)) * w;
+    for (let k = 0; k < 3; k++) o.point[k] += HH_AXIS[k] * g;
+  }
 
   finish() {
     this.times = Float64Array.from(this.strokes.map((s) => s.t));
@@ -313,10 +337,14 @@ class HandPlan {
         const u = (t - b.top) / (b.t - b.top);
         lift = b.prep * (1 - Math.pow(clamp(u, 0, 1), DOWN_POWER));
       } else lift = this.between(a, b, t);
-      if (t >= b.ta) this.setFrame(b, o);
-      else {
+      if (t >= b.ta) {
+        this.setFrame(b, o);
+        this.lifted(o, t, b.hh);
+      } else {
         // on the way (a fast move goes on into the downstroke, arriving as the stick lands)
         const c = this.aim(a, b, t, o);
+        const u = b.ta > b.tl ? minJerk(clamp((t - b.tl) / (b.ta - b.tl), 0, 1)) : 1;
+        this.lifted(o, t, a.hh + (b.hh - a.hh) * u);
         // the stick lifted clear of what lies between: never lower than the bump (a smooth maximum)
         if (c > 0) lift = Math.sqrt(lift * lift + c * c);
       }
@@ -334,6 +362,7 @@ class HandPlan {
     } else if (a) {
       // after the last stroke: the rebound settles to a hover, and the hand waits
       this.setFrame(a, o);
+      this.lifted(o, t, a.hh);
       const t0 = a.t + DWELL;
       const T1 = clamp((1.6 * HOVER) / Math.max(0.2, a.vout), 0.06, 0.3);
       lift = t <= t0 ? 0 : t < t0 + T1 ? hermite(t0, 0, Math.min(a.vout, (2.5 * HOVER) / T1), t0 + T1, HOVER * 1.6, 0, t) : HOVER * 1.6;
@@ -343,6 +372,7 @@ class HandPlan {
       o.fingers = 0.3;
     } else if (b) {
       this.setFrame(b, o);
+      this.lifted(o, t, b.hh);
       lift = b.prep;
       o.arm = 0;
       o.fingers = b.fingers;
@@ -372,7 +402,7 @@ export interface DrummerMotionOptions {
 }
 
 export class DrummerMotion {
-  readonly hands: Record<Hand, HandPlan> = { R: new HandPlan('R'), L: new HandPlan('L') };
+  readonly hands: Record<Hand, HandPlan>;
   readonly duration: number;
   /** body signals at RATE */
   private sig: Record<string, Signal> = {};
@@ -395,6 +425,7 @@ export class DrummerMotion {
     opts: DrummerMotionOptions = {},
   ) {
     this.duration = perf.duration;
+    this.hands = { R: new HandPlan('R', perf.hihat), L: new HandPlan('L', perf.hihat) };
     const g = beatGrid(perf);
     this.beat = g.beat;
     this.origin = g.origin;
@@ -449,6 +480,7 @@ export class DrummerMotion {
           s.level = lh.level;
           s.velocity = h.velocity;
           s.kind = lh.grace ? 'grace' : lh.double ? 'double' : 'tap';
+          s.over = lh.over;
           this.frameAt(s, h.piece, h.zone, h, hand);
         }
         list.push(s);
@@ -464,12 +496,15 @@ export class DrummerMotion {
     const n = surfaceNormal(d);
     // the hit's own spot (its r and angle, as the kit's reactions take it), or the instrument's usual one
     let p: V3 = h ? strikePoint(d, h.r, h.angle) : (SPOTS.head(d).slice() as V3);
-    const c = zone === 'choke' ? { cft: STICK.length * 0.62, angle: 30 * D2R } : contactOf(piece, zone);
+    // (the left hand, uncrossed on the hi-hat, plays its edge with the tip: its shoulder would have to reach across it)
+    const c = zone === 'choke' ? { cft: STICK.length * 0.62, angle: 30 * D2R } : hand === 'L' && piece === 'hihat' ? contactOf('hihat', 'bow') : contactOf(piece, zone);
     if (zone === 'rim') for (let k = 0; k < 3; k++) p[k] += n[k] * HOOP;
     if (zone === 'choke') p = edgeNear(piece);
     // a cymbal where it is at that instant: swinging from earlier hits, the hi-hat lifted by its pedal
     if (h && d.kind === 'cymbal') {
       const ks = this.kit.evaluate(Math.max(0, h.t - 1e-4));
+      // (the hi-hat's lift by its pedal is added as the hand plays, so a stick waiting over it rises and falls with it)
+      ks.hihatGap = 0;
       const id = piece as CymbalId;
       const q = [0, 0, 0];
       cymbalPoint(id, p, ks, q);
@@ -479,14 +514,14 @@ export class DrummerMotion {
       const nn = [(q1[0] - q[0]) / 0.05, (q1[1] - q[1]) / 0.05, (q1[2] - q[2]) / 0.05];
       s.N.set(nn);
     } else s.N.set(n);
-    if (!h && piece === 'hihat') for (let k = 0; k < 3; k++) p[k] += n[k] * HIHAT_OPEN_GAP * (1 - pedalAt(this.perf.hihat, s.t));
+    s.hh = piece === 'hihat' ? 1 : 0;
     s.P.set(p);
     s.angle = c.angle;
     s.cft = c.cft;
     s.roll = PALM_ROLL[piece] + (zone === 'crossStick' ? 0.25 : 0);
-    // a hand reaching across its body to the far side of a drum turns the stick's line a little
-    s.sweep = 0;
-    void hand;
+    // the left hand on the snare plays from a little further right, its stick pointing more forward: clear of the
+    // hi-hat beside it when it lifts
+    s.sweep = hand === 'L' && piece === 'snare' && zone !== 'crossStick' ? 0.12 : 0;
   }
 
   /** heights, timings, rebounds, travel and the forearm, stroke by stroke for one hand */
@@ -513,6 +548,9 @@ export class DrummerMotion {
         // never the same twice: ±20% per hit
         H *= 0.82 + 0.36 * var1;
         H = Math.min(H, maxLift(D));
+        // under the other arm (the left hand on the snare with the right crossed over it to the hi-hat) a stroke
+        // has only the room below that arm
+        if (this.crossedOver(hand, s.t)) H = Math.min(H, UNDER_ARM * (0.9 + 0.2 * var1));
         H = Math.max(H, 0.006);
       }
       s.prep = H;
@@ -535,7 +573,9 @@ export class DrummerMotion {
       // --- the interval before it: the rebound out of the last contact, a hover if there is time, the lift
       const t0 = a.t + DWELL;
       const A = s.top - t0;
-      const Tp = clamp(0.5 * A, 0.1 + 0.55 * H, 0.35);
+      // the lift into the preparation: clip 6's taps take about 0.25 s; clip 9's slow full strokes rise for most of
+      // their cycle, the stick held up while the hand drops, then the snap
+      const Tp = clamp(0.55 * A, 0.12 + 0.55 * H, s.level === 'accent' ? 0.9 : 0.3);
       s.k1t = NaN;
       s.k2t = NaN;
       if (a.kind === 'ready') {
@@ -545,7 +585,9 @@ export class DrummerMotion {
       } else {
         const vout = a.vout;
         // the rebound alone rises about this far, and takes this long (decelerating)
-        const Hreb = clamp(0.55 * a.prep + 0.008, 0.006, 0.18);
+        // (clip 6: after a tap or a ghost note the stick is held just off the head until the next lift; after an
+        // accent it rebounds further before it is caught)
+        const Hreb = a.level === 'accent' ? clamp(0.55 * a.prep + 0.008, 0.006, 0.18) : clamp(0.18 * a.prep + 0.003, 0.003, 0.03);
         const Treb = clamp((1.6 * Hreb) / Math.max(vout, 0.15), 0.035, 0.22);
         if (A > Treb + Tp + 0.06) {
           // time to spare: the rebound, a hover (or held low after a down stroke), then the preparation
@@ -553,7 +595,7 @@ export class DrummerMotion {
           s.k1t = t0 + Treb;
           s.k1h = H1;
           s.v0 = Math.min(vout, (2.6 * H1) / Treb);
-          const hover = Math.min(HOVER * (0.8 + 0.5 * var2), Math.max(H, 0.012));
+          const hover = s.level === 'accent' ? Math.min(HOVER * (0.8 + 0.5 * var2), H) : 0.004 + 0.004 * var2;
           s.k2t = s.top - Tp;
           s.k2h = Math.min(H1, hover);
           if (s.k2t - s.k1t < 0.05) s.k2t = NaN;
@@ -564,9 +606,11 @@ export class DrummerMotion {
       }
       // --- the forearm: up with the preparation, ahead of the stick, and down first (the wrist lags, then snaps)
       if (s.arm > 0) {
-        s.armUp = Math.max(t0 + 0.02, s.top - Tp - 0.12);
-        s.armPeak = s.top - 0.45 * Tp;
-        s.armDown = s.t - 0.3 * Td;
+        // (clip 9: the hand rises with the stick, peaks well before the stick's top, and is on its way down while the
+        // stick is still up; it lands first and the wrist snaps the stick after it)
+        s.armUp = Math.max(t0 + 0.02, s.top - Tp - 0.08);
+        s.armPeak = s.top - 0.62 * Tp;
+        s.armDown = s.t - 0.35 * Td;
         if (s.armPeak <= s.armUp + 0.04 || s.armDown <= s.armPeak + 0.03) s.arm = 0;
       }
       // --- travel from the last instrument
@@ -594,6 +638,13 @@ export class DrummerMotion {
         s.ftT = Math.min(0.3, 0.8 * Dn);
       }
     }
+  }
+
+  /** whether the other hand is crossed over this one near t (Sticking marks the hits played crossed with the arm on top) */
+  private crossedOver(hand: Hand, t: number): boolean {
+    const other: Hand = hand === 'R' ? 'L' : 'R';
+    for (const h of this.sticking.hits) if (h.played && h.limb === other && h.over === other && Math.abs(h.t - t) < 0.4) return true;
+    return false;
   }
 
   // ------------------------------------------------------------ body
@@ -813,15 +864,19 @@ export class DrummerMotion {
   private kTargets = blankTargets();
   private kWarm: WarmStart = { R: new Float64Array(3), L: new Float64Array(3), steps: WARM_STEPS };
   private kFree = new Float64Array(6);
+  private kCost = 0;
 
   private grow(cap: number) {
     if (cap <= this.keyT.length) return;
     const T = new Float64Array(cap);
     const F = new Float64Array(cap * 6);
+    const C = new Float64Array(cap);
     T.set(this.keyT.subarray(0, this.nKeys));
     F.set(this.keyF.subarray(0, this.nKeys * 6));
+    C.set(this.keyC.subarray(0, this.nKeys));
     this.keyT = T;
     this.keyF = F;
+    this.keyC = C;
   }
 
   /** how far past their ranges the joints are (radians, summed) */
@@ -850,51 +905,64 @@ export class DrummerMotion {
       ex = DrummerMotion.excess(this.kPose);
       this.kFree.set(this.kPose.free.R, 0);
       this.kFree.set(this.kPose.free.L, 3);
+      this.kCost = this.kPose.cost.R + this.kPose.cost.L;
     }
-    if (ex > 0.004) {
-      // stuck past a joint's range: search afresh, and keep that if it does better
+    if (ex > 0.004 || this.kCost > KEY_COST) {
+      // stuck past a joint's range, or into the kit or the other arm: search afresh, and keep that if it does better
+      const c1 = from ? this.kCost : Infinity;
       solveDrummer(this.kTargets, this.kPose, null);
       const ex2 = DrummerMotion.excess(this.kPose);
-      if (ex2 < ex - 0.004 || !from) {
+      const c2 = this.kPose.cost.R + this.kPose.cost.L;
+      if (ex2 < ex - 0.004 || (ex2 <= ex + 0.001 && c2 < c1 - 0.3) || !from) {
         ex = ex2;
         this.kFree.set(this.kPose.free.R, 0);
         this.kFree.set(this.kPose.free.L, 3);
+        this.kCost = this.kPose.cost.R + this.kPose.cost.L;
       }
     }
     return ex;
   }
 
-  private pushKey(t: number, F: Float64Array) {
+  private pushKey(t: number, F: Float64Array, cost: number) {
     this.grow(this.nKeys + 1 > this.keyT.length ? this.keyT.length * 2 : 0);
     this.keyT[this.nKeys] = t;
     this.keyF.set(F, this.nKeys * 6);
+    this.keyC[this.nKeys] = cost;
     this.nKeys++;
   }
+  /** each key's arms' cost */
+  private keyC = new Float64Array(0);
 
   /** check the interpolation between the last key and (tb, Fb) at its middle, adding keys there as needed (depth-first, in time order) */
-  private refine(tb: number, Fb: Float64Array, depth: number) {
+  private refine(tb: number, Fb: Float64Array, cb: number, depth: number) {
     const ia = this.nKeys - 1;
     const ta = this.keyT[ia];
     if (depth < 4 && tb - ta > 0.024) {
       const tm = 0.5 * (ta + tb);
       const Fa = this.keyF.subarray(ia * 6, ia * 6 + 6);
       let diff = 0;
-      for (let k = 0; k < 6; k++) {
-        this.kFree[k] = 0.5 * (Fa[k] + Fb[k]);
-        diff = Math.max(diff, Math.abs(Fb[k] - Fa[k]));
+      for (let k = 0; k < 6; k++) diff = Math.max(diff, Math.abs(Fb[k] - Fa[k]));
+      // past a joint's range, the choices changing a lot, or much worse than both ends (into the kit or the other
+      // arm), at a quarter, the half or three quarters of the way
+      let bad = diff > 0.35;
+      for (let q = 1; q <= 3 && !bad; q++) {
+        const u = q === 1 ? 0.5 : q === 2 ? 0.25 : 0.75;
+        for (let k = 0; k < 6; k++) this.kFree[k] = Fa[k] + (Fb[k] - Fa[k]) * u;
+        this.evaluate(ta + (tb - ta) * u, this.kTargets);
+        this.kWarm.R.set(this.kFree.subarray(0, 3));
+        this.kWarm.L.set(this.kFree.subarray(3, 6));
+        this.kWarm.steps = 0;
+        solveDrummer(this.kTargets, this.kPose, this.kWarm);
+        const cost = this.kPose.cost.R + this.kPose.cost.L;
+        bad = DrummerMotion.excess(this.kPose) > 0.004 || cost > Math.max(this.keyC[ia], cb) + REFINE_COST;
       }
-      this.evaluate(tm, this.kTargets);
-      this.kWarm.R.set(this.kFree.subarray(0, 3));
-      this.kWarm.L.set(this.kFree.subarray(3, 6));
-      this.kWarm.steps = 0;
-      solveDrummer(this.kTargets, this.kPose, this.kWarm);
-      if (DrummerMotion.excess(this.kPose) > 0.004 || diff > 0.35) {
+      if (bad) {
         this.solveKey(tm, Fa.slice());
         const Fm = this.kFree.slice();
-        this.refine(tm, Fm, depth + 1);
-        this.pushKey(tm, Fm);
-        this.refine(tb, Fb, depth + 1);
-        return;
+        const cm = this.kCost;
+        this.refine(tm, Fm, cm, depth + 1);
+        this.pushKey(tm, Fm, cm);
+        this.refine(tb, Fb, cb, depth + 1);
       }
     }
   }
@@ -906,13 +974,14 @@ export class DrummerMotion {
       const tb = B[this.baseDone++];
       if (this.nKeys === 0) {
         this.solveKey(tb, null);
-        this.pushKey(tb, this.kFree);
+        this.pushKey(tb, this.kFree, this.kCost);
         continue;
       }
       this.solveKey(tb, this.keyF.subarray((this.nKeys - 1) * 6, this.nKeys * 6).slice());
       const Fb = this.kFree.slice();
-      this.refine(tb, Fb, 0);
-      this.pushKey(tb, Fb);
+      const cb = this.kCost;
+      this.refine(tb, Fb, cb, 0);
+      this.pushKey(tb, Fb, cb);
     }
   }
 
@@ -1015,6 +1084,8 @@ function clearLift(a: Stroke, b: Stroke): number {
   const cym = (s: Stroke) => s.piece === 'crash' || s.piece === 'ride' || s.piece === 'hihat';
   let c = 0.05;
   if (cym(a) || cym(b)) c = 0.09;
+  // off the hi-hat (or onto it): up off its top cymbal and clear of its edge before crossing toward the drums
+  if (a.piece === 'hihat' || b.piece === 'hihat') c = 0.14;
   if (a.piece === 'crash' || b.piece === 'crash' || a.piece === 'ride' || b.piece === 'ride') c = 0.14;
   // from under the ride (the floor tom) up to it, or across under the crash
   if ((a.piece === 'floorTom' && b.piece === 'ride') || (b.piece === 'floorTom' && a.piece === 'ride')) c = 0.2;

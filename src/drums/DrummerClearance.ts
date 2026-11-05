@@ -5,7 +5,7 @@
 // A diagnostic for tests and the lab, not for every frame.
 import { DRUMMER, J, apply3, vec3, type Side, type V3 } from './DrummerSpec';
 import type { DrummerPose, DrummerTargets } from './DrummerIK';
-import { cymbalSide, kitProxies, proxyDistance, segSegDistance, type Proxy } from './KitProxy';
+import { cymbalSide, kitProxies, proxyDistance, segPointDistance, segSegDistance, type Proxy } from './KitProxy';
 
 export interface Contact {
   /** e.g. "stick R" */
@@ -76,9 +76,9 @@ export function bodyCapsules(pose: DrummerPose): Capsule[] {
  * Every place the drummer comes closer than `margin` to the kit or to itself
  * (between parts that should never meet), closest first.
  */
-export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { margin?: number; hihatOpen?: boolean } = {}): Contact[] {
+export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { margin?: number; hihatOpen?: boolean; kit?: Proxy[] } = {}): Contact[] {
   const margin = opts.margin ?? 0;
-  const kit = kitProxies({ hihatOpen: opts.hihatOpen });
+  const kit = opts.kit ?? kitProxies({ hihatOpen: opts.hihatOpen });
   const caps = bodyCapsules(pose);
   const out: Contact[] = [];
   const pt = new Float64Array(3);
@@ -104,6 +104,8 @@ export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { ma
   for (const c of caps) {
     if (c.name === 'torso') continue;
     for (const x of kit) {
+      // nothing nearer than the margin can come of a solid whose bounds are farther (an exact, conservative cull)
+      if (lowerBound(c, x) - c.r > margin + 0.002) continue;
       let min = Infinity;
       for (let i = 0; i <= SAMPLES; i++) {
         const u = i / SAMPLES;
@@ -164,6 +166,15 @@ export function clearance(pose: DrummerPose, targets: DrummerTargets, opts: { ma
   }
   out.sort((x, y) => x.distance - y.distance);
   return out;
+}
+
+/** a lower bound on the distance from a capsule's axis to a solid */
+function lowerBound(c: Capsule, x: Proxy): number {
+  if (x.kind === 'rod') return segSegDistance(c.a, c.b, x.a, x.b) - x.radius;
+  if (x.kind === 'cymbal') return segPointDistance(x.centre, c.a, c.b) - Math.hypot(x.radius, x.profile.bellHeight + x.profile.drop + 0.004);
+  // a drum: its shell's middle, the half-diagonal of its cylinder
+  const m = [x.centre[0] - (x.normal[0] * x.depth) / 2, x.centre[1] - (x.normal[1] * x.depth) / 2, x.centre[2] - (x.normal[2] * x.depth) / 2];
+  return segPointDistance(m, c.a, c.b) - Math.hypot(x.radius, x.depth / 2);
 }
 
 /** a contact as a line of text */

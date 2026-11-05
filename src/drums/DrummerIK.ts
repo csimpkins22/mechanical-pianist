@@ -112,6 +112,8 @@ export interface StickTarget {
   arm?: number;
   /** the fingers' share of the wrist and fingers' turn (the stick rocking in the grip as the back fingers open), 0..1 */
   fingers?: number;
+  /** the elbow's preferred swivel about the shoulder-to-wrist line (radians, + out and up; default 0, hanging) */
+  swivel?: number;
 }
 
 /**
@@ -210,6 +212,8 @@ export interface DrummerPose {
   stickAngle: Record<Side, number>;
   /** each arm's free choices as solved: the hand's turn about the stick, the elbow's swivel, the stick's line (for WarmStart) */
   free: Record<Side, Float64Array>;
+  /** each arm's cost as solved: joints near their stops, reach, comfort, the kit and the other arm (for planning) */
+  cost: Record<Side, number>;
 }
 
 export function createPose(): DrummerPose {
@@ -228,6 +232,7 @@ export function createPose(): DrummerPose {
     torso: vec3(),
     stickAngle: { R: 0, L: 0 },
     free: { R: new Float64Array(3), L: new Float64Array(3) },
+    cost: { R: 0, L: 0 },
   };
   for (let j = 0; j < NJ; j++) identity3(pose.local.subarray(j * 9, j * 9 + 9));
   return pose;
@@ -463,6 +468,8 @@ interface ArmIn {
   lift: number;
   palmRoll: number;
   sweep: number;
+  /** the elbow's preferred swivel (radians; + out and up) */
+  swivel: number;
   /** the forearm's turn in a lifted stroke (NaN: the fixed split), and the fingers' share of the rest */
   arm: number;
   fingers: number;
@@ -509,6 +516,7 @@ const mkArmIn = (): ArmIn => ({
   lift: 0,
   palmRoll: 0,
   sweep: 0,
+  swivel: 0,
   arm: NaN,
   fingers: SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS),
   kit: [],
@@ -641,13 +649,14 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
   // the solids whose bounding spheres come within clearance of the stick, and of the forearm and hand (the rest
   // cannot add anything: a solid is no nearer to a point than its bounding sphere)
   const B = inp.kitBounds;
-  const ra = CLEAR + Math.max(CAPS.forearm, CAPS.hand * 0.8);
+  const ra = CLEAR + Math.max(CAPS.forearm, CAPS.hand);
+  const rb = CLEAR + CAPS.upperArm;
   for (let j = 0; j < inp.kit.length; j++) {
     const x = inp.kit[j];
     if (x.kind === 'rod') {
       // a rod is its own capsule
       nearStick[j] = segSegDistance(x.a, x.b, obButt, obTip) < x.radius + STICK_R + CLEAR ? 1 : 0;
-      nearArm[j] = segSegDistance(x.a, x.b, out.elbow, out.wrist) < x.radius + ra || segSegDistance(x.a, x.b, out.wrist, obK) < x.radius + ra ? 1 : 0;
+      nearArm[j] = segSegDistance(x.a, x.b, out.elbow, out.wrist) < x.radius + ra || segSegDistance(x.a, x.b, out.wrist, obK) < x.radius + ra || segSegDistance(x.a, x.b, out.elbow, inp.shoulder) < x.radius + rb ? 1 : 0;
       continue;
     }
     const o = j * 4;
@@ -656,7 +665,7 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
     obA[2] = B[o + 2];
     const r = B[o + 3];
     nearStick[j] = segPointDistance(obA, obButt, obTip) < r + STICK_R + CLEAR ? 1 : 0;
-    nearArm[j] = segPointDistance(obA, out.elbow, out.wrist) < r + ra || segPointDistance(obA, out.wrist, obK) < r + ra ? 1 : 0;
+    nearArm[j] = segPointDistance(obA, out.elbow, out.wrist) < r + ra || segPointDistance(obA, out.wrist, obK) < r + ra || segPointDistance(obA, out.elbow, inp.shoulder) < r + rb ? 1 : 0;
   }
   let pen = 0;
   const n = 8;
@@ -671,11 +680,16 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
   // the hand, out to the knuckles, and the forearm
   for (let k = 1; k <= 2; k++) {
     for (let i = 0; i < 3; i++) obP[i] = out.wrist[i] + (obK[i] - out.wrist[i]) * (k / 2);
-    pen += pointPenalty(inp, obP, CAPS.hand * 0.8, 0, nearArm);
+    pen += pointPenalty(inp, obP, CAPS.hand, 0, nearArm);
   }
   for (let k = 1; k <= 3; k++) {
     for (let i = 0; i < 3; i++) obP[i] = out.elbow[i] + (out.wrist[i] - out.elbow[i]) * (0.25 + 0.25 * k);
     pen += pointPenalty(inp, obP, CAPS.forearm, 0, nearArm);
+  }
+  // the elbow and the upper arm's lower half (leaning in, it hangs near the snare's and the hi-hat's near rims)
+  for (let k = 0; k <= 1; k++) {
+    for (let i = 0; i < 3; i++) obP[i] = out.elbow[i] + (inp.shoulder[i] - out.elbow[i]) * (0.3 * k);
+    pen += pointPenalty(inp, obP, CAPS.upperArm, 0, nearArm);
   }
   // the other arm: stick, forearm and hand against this one's
   const O = inp.other;
@@ -685,7 +699,7 @@ function obstaclePenalty(inp: ArmIn, out: ArmOut, Rp: Mat3, rock: number): numbe
     copy3(obB, O, o + 3);
     const ro = O[o + 6];
     const ds = segSegDistance(obButt, obTip, obA, obB) - STICK_R - ro;
-    const dh = segSegDistance(out.wrist, obK, obA, obB) - CAPS.hand * 0.8 - ro;
+    const dh = segSegDistance(out.wrist, obK, obA, obB) - CAPS.hand - ro;
     const df = segSegDistance(out.elbow, out.wrist, obA, obB) - CAPS.forearm - ro;
     // the arms only keep out of each other (a clearance zone between them would flip the way one passes the other)
     if (ds < ARM_GAP) pen += (1 + PENETRATION) * (ARM_GAP - ds) * (ARM_GAP - ds);
@@ -919,7 +933,7 @@ function armTry(inp: ArmIn, roll: number, swivel: number, sweep: number, out: Ar
   const rock = inp.lift > 1e-5 ? liftStroke(inp, out, atRp, swivel) : 0;
   const cost = armFromHand(inp, atRp, rock, swivel, out);
   // stay near the natural choices
-  return cost + 0.15 * (roll - inp.palmRoll) ** 2 + 0.06 * swivel * swivel + 0.1 * (sweep - inp.sweep) ** 2;
+  return cost + 0.15 * (roll - inp.palmRoll) ** 2 + 0.06 * (swivel - inp.swivel) ** 2 + 0.1 * (sweep - inp.sweep) ** 2;
 }
 
 function copyArm(o: ArmOut, a: ArmOut) {
@@ -1269,6 +1283,7 @@ function armInput(pose: DrummerPose, side: Side, t: StickTarget, inp: ArmIn) {
   inp.lift = Math.max(0, t.lift);
   inp.palmRoll = t.palmRoll;
   inp.sweep = (t.sweep ?? 0) * (side === 'L' ? -1 : 1);
+  inp.swivel = t.swivel ?? 0;
   inp.arm = t.arm ?? NaN;
   inp.fingers = clamp(t.fingers ?? SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS), 0, 1);
   inp.kit = side === 'L' ? KIT_M : KIT;
@@ -1441,13 +1456,14 @@ export function solveDrummer(t: DrummerTargets, pose: DrummerPose, warm: WarmSta
       // the first arm's stick, forearm and hand, in this side's (mirrored) frame
       putOther(armIn.other, 0, firstArm.butt, firstArm.tip, STICK_R);
       putOther(armIn.other, 1, firstArm.elbow, firstArm.wrist, CAPS.forearm);
-      putOther(armIn.other, 2, firstArm.wrist, firstArm.knuckle, CAPS.hand * 0.8);
+      putOther(armIn.other, 2, firstArm.wrist, firstArm.knuckle, CAPS.hand);
       armIn.nOther = 3;
     }
     solveArm(armIn, armBest, warm ? warm[s] : null, warm ? warm.steps : NEWTON_STEPS, !!warm?.smooth);
     pose.free[s][0] = searchP[0];
     pose.free[s][1] = searchP[1];
     pose.free[s][2] = searchP[2];
+    pose.cost[s] = armBest.cost;
     if (first) {
       // remember it in the canonical world of its own side (the next side's frame is its mirror)
       stickDirInPalm(fV, armBest.rock);
