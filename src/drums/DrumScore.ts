@@ -72,6 +72,12 @@ export interface DrumHit {
   r: number;
   /** and where around it, radians from the side nearest the drummer */
   angle: number;
+  /**
+   * a cross-stick note in the middle of the snare's own playing (another snare note within CLICK_WINDOW, as in a
+   * second line's rolls): there is no time to lay the stick across the drum, so it is a rim click, the shaft on
+   * the near hoop as for a rimshot. It still sounds as the cross-stick the kit recorded.
+   */
+  click?: boolean;
 }
 
 export interface PedalPoint {
@@ -93,15 +99,22 @@ export interface DrumPerformance {
   /** bar lines (seconds), for the camera's cuts */
   bars: number[];
   bpm: number;
+  /** the felt beat, in quarter notes: 1 (also when absent), or 1.5 in a compound meter (6/8, 9/8, 12/8: a dotted quarter) */
+  pulse?: number;
 }
+
+/** where around the snare a cross-stick's shaft meets the hoop (radians from the side nearest the drummer, + to the right) */
+export const CROSS_STICK_ANGLE = 2.5;
+/** a cross-stick with another snare note this close (s) is a rim click (DrumHit.click) */
+export const CLICK_WINDOW = 0.35;
 
 /** TD-11's pedal sends at most about 90 when fully closed; anything above counts as closed */
 export const CC4_CLOSED = 90 / 127;
 
 /** where on its surface each kind of stroke lands (fraction of the radius), before a little per-hit variation */
 function strikeRadius(zone: Zone, piece: DrumId): number {
-  if (zone === 'rim') return 0.97;
-  if (zone === 'crossStick') return 0.9;
+  // (a cross-stick's shaft meets the hoop, as a rimshot's does)
+  if (zone === 'rim' || zone === 'crossStick') return 0.97;
   if (zone === 'bell') return 0.14;
   if (zone === 'edge') return 0.95;
   if (zone === 'pedal') return 0;
@@ -199,13 +212,23 @@ export function readDrumMidi(bytes: Uint8Array, name = 'drums'): DrumPerformance
     .map(({ n }) => ({ t: n.time, midi: n.midi, velocity: n.velocity }))
     .filter((n) => DRUM_MAP[n.midi])
     .sort((a, b) => a.t - b.t || a.midi - b.midi);
+  // cross-sticks in the middle of the snare's own playing: rim clicks
+  const snareT = raw.filter((n) => DRUM_MAP[n.midi].piece === 'snare').map((n) => n.t);
+  const isClick = (t: number) => snareT.some((u) => u !== t && Math.abs(u - t) < CLICK_WINDOW);
   const hits: DrumHit[] = raw.map((n, i) => {
     const m = DRUM_MAP[n.midi];
+    const click = m.zone === 'crossStick' && isClick(n.t);
+    // (a cross-stick lies across the head from the hand resting on its near side: its shaft meets the hoop on the
+    // far side, a little to the right, about half past one as the drummer sees it; a rim click is struck where a
+    // rimshot is)
+    const across = m.zone === 'crossStick' && !click;
     // a hand never lands twice on the same spot: a little, fixed scatter per hit
     const r0 = strikeRadius(m.zone, m.piece);
     const r = m.zone === 'pedal' ? 0 : Math.min(1, Math.max(0, r0 + (hash01(i, 11) - 0.5) * (m.zone === 'head' ? 0.16 : 0.06)));
-    const angle = (hash01(i, 12) - 0.5) * (DRUMS[m.piece].kind === 'cymbal' ? 0.7 : 0.5);
-    return { i, t: n.t, midi: n.midi, velocity: Math.max(0.02, Math.min(1, n.velocity)), piece: m.piece, zone: m.zone, r, angle };
+    const angle = (hash01(i, 12) - 0.5) * (DRUMS[m.piece].kind === 'cymbal' ? 0.7 : across ? 0.2 : 0.5) + (across ? CROSS_STICK_ANGLE : 0);
+    const h: DrumHit = { i, t: n.t, midi: n.midi, velocity: Math.max(0.02, Math.min(1, n.velocity)), piece: m.piece, zone: m.zone, r, angle };
+    if (click) h.click = true;
+    return h;
   });
   // the hi-hat pedal: CC4 when the file has it, else inferred
   const cc4 = midi.tracks
@@ -227,15 +250,18 @@ export function readDrumMidi(bytes: Uint8Array, name = 'drums'): DrumPerformance
   const lastHit = hits.length ? hits[hits.length - 1].t : 0;
   const duration = Math.max(midi.duration, lastHit) + 1.5;
   const bpm = midi.header.tempos[0]?.bpm ?? 120;
-  const beatsPerBar = midi.header.timeSignatures[0]?.timeSignature?.[0] ?? 4;
+  // a bar's length in quarter notes from the time signature (3/4: 3; 6/8: 3, felt as two dotted quarters)
+  const [num, den] = midi.header.timeSignatures[0]?.timeSignature ?? [4, 4];
+  const quartersPerBar = num > 0 && den > 0 ? (num * 4) / den : 4;
+  const pulse = den === 8 && num >= 6 && num % 3 === 0 ? 1.5 : 1;
   const bars: number[] = [];
   const ppq = midi.header.ppq;
-  for (let tick = 0; ; tick += ppq * beatsPerBar) {
+  for (let tick = 0; ; tick += ppq * quartersPerBar) {
     const t = midi.header.ticksToSeconds(tick);
     if (t > duration) break;
     bars.push(t);
   }
-  return { name: midi.name || name, duration, hits, hihat, hihatFromCC, chokes, bars, bpm };
+  return { name: midi.name || name, duration, hits, hihat, hihatFromCC, chokes, bars, bpm, pulse };
 }
 
 /**
@@ -301,15 +327,16 @@ export function scanAftertouch(bytes: Uint8Array): { tick: number; key: number; 
  */
 export function drumMidiBytes(
   hits: { t: number; midi: number; velocity: number }[],
-  opts: { bpm?: number; cc4?: { t: number; value: number }[]; aftertouch?: { t: number; midi: number }[] } = {},
+  opts: { bpm?: number; cc4?: { t: number; value: number }[]; aftertouch?: { t: number; midi: number }[]; timeSignature?: [number, number] } = {},
 ): Uint8Array {
   const bpm = opts.bpm ?? 120;
+  const [num, den] = opts.timeSignature ?? [4, 4];
   const ppq = 480;
   const tick = (t: number) => Math.round((t * bpm * ppq) / 60);
   const ev: { tick: number; order: number; data: number[] }[] = [];
   const us = Math.round(60e6 / bpm);
   ev.push({ tick: 0, order: 0, data: [0xff, 0x51, 3, (us >> 16) & 255, (us >> 8) & 255, us & 255] });
-  ev.push({ tick: 0, order: 0, data: [0xff, 0x58, 4, 4, 2, 24, 8] });
+  ev.push({ tick: 0, order: 0, data: [0xff, 0x58, 4, num, Math.round(Math.log2(den)), 24, 8] });
   for (const h of hits) {
     const v = Math.max(1, Math.min(127, Math.round(h.velocity * 127)));
     ev.push({ tick: tick(h.t), order: 2, data: [0x99, h.midi, v] });

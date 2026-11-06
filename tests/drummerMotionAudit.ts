@@ -5,12 +5,14 @@ import { readFileSync } from 'node:fs';
 import { readDrumMidi, type DrumPerformance } from '../src/drums/DrumScore';
 import { assignLimbs, type Sticking } from '../src/drums/Sticking';
 import { KitMotion } from '../src/drums/KitMotion';
-import { DrummerMotion, blankTargets } from '../src/drums/DrummerMotion';
+import { DrummerMotion, blankTargets, handSpot, sharedDrumSides } from '../src/drums/DrummerMotion';
 import { createPose, limitViolations, PEDAL_TRAVEL } from '../src/drums/DrummerIK';
 import { clearance, type Contact } from '../src/drums/DrummerClearance';
 import { posedProxies } from '../src/drums/KitPose';
 import { DRUMMER, J, apply3, vec3 } from '../src/drums/DrummerSpec';
-import { PEDAL_BOARDS, PRESS_MIN, footboardAt } from '../src/drums/KitLayout';
+import { DRUMS, PEDAL_BOARDS, PRESS_MIN, footboardAt, surfaceNormal } from '../src/drums/KitLayout';
+import { cymbalPoint } from '../src/drums/KitPose';
+import type { CymbalId } from '../src/drums/KitMotion';
 
 export const GROOVES = ['groove-rock-87', 'groove-funk-102', 'groove-jazz-93'] as const;
 
@@ -19,6 +21,22 @@ export function loadGroove(name: string) {
   const sticking = assignLimbs(perf);
   const kit = new KitMotion(perf);
   return { perf, sticking, kit, motion: new DrummerMotion(perf, sticking, kit) };
+}
+
+/**
+ * Where each hand stroke should land: the hit's own spot (its r and angle), on the hand's side of the snare in a
+ * roll, on a cymbal where the kit's reactions have it at that instant, a rimshot's and a cross-stick's on the hoop.
+ */
+export function strokeSpots(g: ReturnType<typeof loadGroove>) {
+  const sides = sharedDrumSides(g.sticking);
+  return (k: number): number[] => {
+    const hit = g.perf.hits[k];
+    const d = DRUMS[hit.piece];
+    let spot = handSpot(d, hit, sides[k]) as number[];
+    if (d.kind === 'cymbal') spot = cymbalPoint(hit.piece as CymbalId, spot, g.kit.evaluate(hit.t), [0, 0, 0]) as number[];
+    else if (hit.zone === 'rim' || hit.zone === 'crossStick') spot = spot.map((x, i) => x + surfaceNormal(d)[i] * 0.008);
+    return spot;
+  };
 }
 
 /**
@@ -46,13 +64,17 @@ export interface Audit {
   handOver: number;
   accelOver: number;
   tipOver: number;
+  /** frames with any joint angle or stick point not a number */
+  nan: number;
+  /** frames with any contact (the contacts' own counts are per contact) */
+  contactFrames: number;
 }
 
-export function audit(g: ReturnType<typeof loadGroove>, from = 0, to = Infinity): Audit {
+export function audit(g: ReturnType<typeof loadGroove>, from = 0, to = Infinity, fps = 120): Audit {
   const { perf, sticking, kit, motion } = g;
   const tg = blankTargets();
   const pose = createPose();
-  const res: Audit = { samples: 0, contacts: new Map(), limits: new Map(), maxHand: 0, maxHandAccel: 0, maxTip: 0, feet: 0, board: 0, handOver: 0, accelOver: 0, tipOver: 0 };
+  const res: Audit = { samples: 0, contacts: new Map(), limits: new Map(), maxHand: 0, maxHandAccel: 0, maxTip: 0, feet: 0, board: 0, handOver: 0, accelOver: 0, tipOver: 0, nan: 0, contactFrames: 0 };
   const note = (m: Audit['contacts'], k: string, d: number, t: number) => {
     const e = m.get(k) ?? { n: 0, worst: 0, at: t };
     e.n++;
@@ -65,20 +87,27 @@ export function audit(g: ReturnType<typeof loadGroove>, from = 0, to = Infinity)
   const near = (s: 'R' | 'L', t: number, w: number) => hits[s].some((h) => Math.abs(h.t - t) < w);
   const struckNear = (s: 'R' | 'L', t: number, piece: string) => hits[s].some((h) => Math.abs(h.t - t) < 0.015 && h.piece === piece);
   const prev = { R: [] as number[][], L: [] as number[][] };
-  const DT = 1 / 120;
+  const DT = 1 / fps;
   const ball = vec3();
   const board = { point: [0, 0, 0], along: [0, 0, 0], normal: [0, 0, 0] };
   for (let t = Math.max(0, from); t < Math.min(perf.duration, to); t += DT) {
     motion.pose(t, tg, pose);
     res.samples++;
+    let finite = true;
+    for (const a of pose.angles) if (!Number.isFinite(a)) finite = false;
+    for (const s of ['R', 'L'] as const) for (let k = 0; k < 3; k++) if (!Number.isFinite(pose.stick[s].tip[k]) || !Number.isFinite(pose.stick[s].fulcrum[k])) finite = false;
+    if (!finite) res.nan++;
     const prox = posedProxies(kit.evaluate(t));
+    let touched = false;
     for (const c of clearance(pose, tg, { kit: prox, margin: -TOLERANCE })) {
       // the stick on what it is striking, in the instant of the stroke (the shoulder on a crash's edge, the tip on a head)
       const side = c.a.startsWith('stick ') ? (c.a.slice(6) as 'R' | 'L') : null;
       const piece = c.b === 'hi-hat' ? 'hihat' : c.b;
       if (side && struckNear(side, t, piece)) continue;
       note(res.contacts, describeContact(c), c.distance, t);
+      touched = true;
     }
+    if (touched) res.contactFrames++;
     for (const v of limitViolations(pose, 0.5 * (Math.PI / 180))) note(res.limits, v.name, -Math.max(v.limits[0] - v.value, v.value - v.limits[1]), t);
     for (const s of ['R', 'L'] as const) {
       const p = prev[s];
@@ -119,9 +148,9 @@ export function describeContact(c: Contact) {
   return `${c.a} / ${c.b}`;
 }
 
-export function report(name: string, a: Audit): string {
+export function report(name: string, a: Audit, fps = 120): string {
   const lines = [
-    `${name}: ${a.samples} frames at 120 fps; hands at most ${a.maxHand.toFixed(2)} m/s, ${a.maxHandAccel.toFixed(0)} m/s² away from contacts; tips at most ${a.maxTip.toFixed(1)} m/s; feet ${(a.feet * 1000).toFixed(2)} mm off their boards`,
+    `${name}: ${a.samples} frames at ${fps} fps, ${a.contactFrames} (${((100 * a.contactFrames) / a.samples).toFixed(2)}%) with a contact; hands at most ${a.maxHand.toFixed(2)} m/s, ${a.maxHandAccel.toFixed(0)} m/s² away from contacts; tips at most ${a.maxTip.toFixed(1)} m/s; feet ${(a.feet * 1000).toFixed(2)} mm off their boards`,
     `  hand-frames past ${LIMITS.hand} m/s: ${a.handOver}, past ${LIMITS.handAccel} m/s²: ${a.accelOver}; tip-frames past ${LIMITS.tip} m/s: ${a.tipOver}`,
   ];
   for (const [k, v] of [...a.contacts].sort((x, y) => x[1].worst - y[1].worst)) lines.push(`  contact ${k}: ${v.n} frames, deepest ${(-v.worst * 1000).toFixed(1)} mm at ${v.at.toFixed(3)} s`);
@@ -142,23 +171,23 @@ export type { DrumPerformance, Sticking };
  * pass briefly through a pose its keys did not have. The right stick grazing the hi-hat (4-6 mm) is its shoulder
  * on the edge in the frames either side of a stroke, as the open top cymbal rocks.
  */
-export const KNOWN: Record<(typeof GROOVES)[number], { contacts: Record<string, [number, number]>; limits: Record<string, [number, number]>; handOver: number; accelOver: number; tipOver: number }> = {
+export const KNOWN: Record<(typeof GROOVES)[number], Known> = {
+  // (tightened when its cross-sticks became rim clicks and its roll two-sided: fewer frames through the hi-hat and
+  // between the sticks, fewer bursts)
   'groove-rock-87': {
     contacts: {
-      'stick L / hi-hat': [56, 73],
-      'stick R / stick L': [60, 14],
-      'hand L / hi-hat': [6, 14],
-      'forearm L / hi-hat': [4, 9],
-      'stick R / hi-hat': [66, 6],
-      'stick R / crash': [3, 5],
-      'stick L / hand R': [18, 5],
-      'stick R / hand L': [4, 5],
-      'stick L / forearm R': [5, 5],
+      'stick L / hi-hat': [46, 71],
+      'stick R / stick L': [30, 13],
+      'stick R / hi-hat': [57, 4],
+      'stick R / crash': [1, 4],
+      'stick L / hand R': [15, 4],
+      'stick R / hand L': [2, 3],
+      'stick L / forearm R': [3, 3],
     },
     limits: {},
-    handOver: 14,
-    accelOver: 86,
-    tipOver: 5,
+    handOver: 6,
+    accelOver: 60,
+    tipOver: 3,
   },
   'groove-funk-102': {
     contacts: {
@@ -194,9 +223,22 @@ export const KNOWN: Record<(typeof GROOVES)[number], { contacts: Record<string, 
   },
 };
 
+/** what an audit may find: contacts and limits [frames, mm or degrees], and hand- and tip-frames past the limits */
+export interface Known {
+  contacts: Record<string, [number, number]>;
+  limits: Record<string, [number, number]>;
+  handOver: number;
+  accelOver: number;
+  tipOver: number;
+}
+
 /** the audit against KNOWN: what is new or worse (empty when nothing is) */
 export function regressions(name: (typeof GROOVES)[number], a: Audit): string[] {
-  const k = KNOWN[name];
+  return against(KNOWN[name], a);
+}
+
+/** an audit against what is known of it: what is new or worse (empty when nothing is) */
+export function against(k: Known, a: Audit): string[] {
   const out: string[] = [];
   for (const [c, v] of a.contacts) {
     const lim = k.contacts[c];
