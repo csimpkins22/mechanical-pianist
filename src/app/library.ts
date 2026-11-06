@@ -21,6 +21,8 @@ export interface LibraryEntry {
   bytes(): Uint8Array;
   /** played on the drum stage (a drum kit) rather than the piano */
   stage?: 'drums';
+  /** a heading within its group, for the entries that follow it there (the drums' families of styles) */
+  section?: string;
 }
 
 function fromDataUrl(url: string): () => Uint8Array {
@@ -108,7 +110,7 @@ const BUILT_IN: LibraryEntry[] = [
 const GROUPS: LibraryGroup[] = ['Songs', 'Classical', 'Original', 'Drums'];
 const EXTRA: LibraryEntry[] = extra.pieces.map(({ data, ...p }) => ({ ...p, bytes: fromDataUrl(data) }));
 /** the drum performances, for the drum stage */
-const DRUMS: LibraryEntry[] = DRUM_PIECES.map(({ data, source: _source, ...p }) => ({ ...p, group: 'Drums', stage: 'drums', bytes: fromDataUrl(data) }));
+const DRUMS: LibraryEntry[] = DRUM_PIECES.map(({ data, source: _source, family, ...p }) => ({ ...p, section: family, group: 'Drums', stage: 'drums', bytes: fromDataUrl(data) }));
 export const LIBRARY: LibraryEntry[] = [...EXTRA, ...BUILT_IN.filter((e) => !EXTRA.some((x) => x.id === e.id)), ...DRUMS]
   .map((e, i) => ({ e, i }))
   .sort((a, b) => GROUPS.indexOf(a.e.group) - GROUPS.indexOf(b.e.group) || a.i - b.i)
