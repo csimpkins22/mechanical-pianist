@@ -31,13 +31,13 @@ export const STICK_ANGLE: Record<DrumId, number> = {
 /** how far each hand is turned about the stick, per instrument: American grip on drums, more thumb-up on cymbals */
 export const PALM_ROLL: Record<DrumId, number> = {
   kick: 0,
-  snare: 0.55,
-  hihat: 0.6,
-  tom1: 0.55,
-  tom2: 0.55,
-  floorTom: 0.5,
-  crash: 0.9,
-  ride: 0.62,
+  snare: 0.3,
+  hihat: 0.4,
+  tom1: 0.3,
+  tom2: 0.3,
+  floorTom: 0.3,
+  crash: 0.8,
+  ride: 0.45,
 };
 
 export type Spot = 'head' | 'edge' | 'bell';

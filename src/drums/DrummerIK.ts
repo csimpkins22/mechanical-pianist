@@ -161,8 +161,9 @@ export interface DrummerTargets {
 }
 
 /**
- * A warm start for the arms: their free choices (the hand's turn about the stick, the elbow's swivel, the
- * stick's line across the surface), as a performance planned them for this instant. The solve refines them
+ * A warm start for the arms: their free choices (how far the hand's turn about the stick and the stick's line
+ * across the surface depart from the planned ones, and the elbow's swivel), as a performance planned them for
+ * this instant. The solve refines them
  * with `steps` Newton steps instead of searching its grid: much cheaper, and still a function of the targets
  * and these choices only (so of t only), never of what was solved before.
  */
@@ -210,7 +211,7 @@ export interface DrummerPose {
   torso: Vec3;
   /** the stick's angle to the surface, as solved (radians; positive coming down onto it toward the tip) */
   stickAngle: Record<Side, number>;
-  /** each arm's free choices as solved: the hand's turn about the stick, the elbow's swivel, the stick's line (for WarmStart) */
+  /** each arm's free choices as solved: the hand's turn about the stick and the stick's line as offsets from the planned ones, and the elbow's swivel (for WarmStart) */
   free: Record<Side, Float64Array>;
   /** each arm's cost as solved: joints near their stops, reach, comfort, the kit and the other arm (for planning) */
   cost: Record<Side, number>;
@@ -291,7 +292,7 @@ const TORSO = [J.pelvis, J.spine1, J.spine2, J.chest];
  * it further: the back, from the pelvis to the chest's pivot, about 16.5
  * degrees off upright at the snare (17-19 reaching), the chest about 30.
  */
-export const BASE_LEAN = -0.5;
+export const BASE_LEAN = -0.22;
 /** the neck's forward carriage of the head, on top of where it looks (radians of the neck's pitch) */
 const NECK_FORWARD = -0.12;
 /** and the shoulders a little rounded: each clavicle's protraction when the hands are close (radians) */
@@ -300,6 +301,20 @@ const ROUND_SHOULDERS = 0.1;
 const COMFORT = 0.9;
 /** the torso's half-depth beside the elbows (the lower thorax's shell), and how far inside the back an elbow's middle keeps (its barrel's radius) */
 const BACK_DEPTH = 0.092;
+/** the elbow's natural hang: down, a little out and a little forward (clip 10: 5-25 degrees out, by the body) */
+const ELBOW_OUT = 0.18;
+const ELBOW_FWD = 0.25;
+/** the elbow out from the body (radians, chest frame) before it costs more; and the comfort weights */
+const WING_FREE = 0.3;
+const W_WING = 2.0;
+const W_OUT = 0.4;
+const W_TUCK = 1.0;
+const W_FLEX = 1.2;
+const W_DEV = 1.0;
+/** how strongly the hand keeps its planned turn about the stick, and the stick its planned line */
+const W_ROLL = 0.6;
+const W_SWEEP = 0.3;
+const W_SWIVEL = 0.25;
 const ELBOW_BEHIND = 0.045;
 /** joint limits are kept this far inside (radians), so a solved pose never sits on a stop */
 const LIMIT_MARGIN = 0.03;
@@ -596,6 +611,7 @@ const ahWH = vec3();
 const ahOut = vec3();
 const ahBack = vec3();
 const ahPref = vec3();
+const ahUpC = vec3();
 const ahEH = vec3();
 const ahU = vec3();
 const ahF = vec3();
@@ -732,7 +748,7 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
   // the elbow hangs, a little out to the side and back; the swivel turns it about the shoulder-wrist line
   apply3(ahOut, inp.chest, set3(ahT, 1, 0, 0));
   apply3(ahBack, inp.chest, set3(ahT, 0, 0, 1));
-  set3(ahPref, 0.45 * ahOut[0] + 0.2 * ahBack[0], -1 + 0.45 * ahOut[1] + 0.2 * ahBack[1], 0.45 * ahOut[2] + 0.2 * ahBack[2]);
+  set3(ahPref, ELBOW_OUT * ahOut[0] - ELBOW_FWD * ahBack[0], -1 + ELBOW_OUT * ahOut[1] - ELBOW_FWD * ahBack[1], ELBOW_OUT * ahOut[2] - ELBOW_FWD * ahBack[2]);
   perpNorm3(ahEH, ahPref, ahWH, ahBack);
   if (swivel !== 0) {
     axisAngle3(ahM, ahWH, swivel);
@@ -790,15 +806,26 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
     over += ex * ex + 3000 * hard * hard;
   }
   const back = Math.max(0, -A[0] - 0.05);
-  const wing = Math.max(0, A[1] - 0.55);
+  // the elbow out from the body and forward of it, seen in the chest's frame (as the footage is measured)
+  apply3(ahUpC, inp.chest, set3(ahT, 0, 1, 0));
+  sub3(ahT, E, S);
+  const eo = dot3(ahT, ahOut);
+  const ed = -dot3(ahT, ahUpC);
+  const ef = -dot3(ahT, ahBack);
+  const outAng = Math.atan2(eo, Math.max(ed, 0.02));
+  const fwdAng = Math.atan2(ef, Math.max(ed, 0.02));
+  const wing = Math.max(0, outAng - WING_FREE);
+  const tuck = Math.max(0, -fwdAng - 0.05);
   // the elbow kept in front of the back: it may hang beside the torso, not poke out behind it
   const BP = inp.backP, BN = inp.backN;
   const behind = Math.max(0, (E[0] - BP[0]) * BN[0] + (E[1] - BP[1]) * BN[1] + (E[2] - BP[2]) * BN[2] + ELBOW_BEHIND);
   const comfort =
-    0.5 * (flex - 0.05) ** 2 +
-    0.6 * (dev + 0.15) ** 2 +
+    W_FLEX * (flex - 0.05) ** 2 +
+    W_DEV * (dev + 0.12) ** 2 +
     0.8 * back * back +
-    0.6 * wing * wing +
+    W_WING * wing * wing +
+    W_OUT * outAng * outAng +
+    W_TUCK * tuck * tuck +
     150 * behind * behind +
     0.12 * A[2] * A[2] +
     0.15 * Math.max(0, sup - 1.4) ** 2;
@@ -845,6 +872,18 @@ const lsR0 = mat3();
 const lsRot = mat3();
 const lsR = mat3();
 const lsTip = vec3();
+
+/**
+ * How much of the lift's axis is kept in the palm's plane (1: all of it, a pure turn of the wrist up, which swings
+ * the tip sideways about as far as the hand is turned about the stick; 0: level across the stick, the tip rising
+ * straight up, the wrist adding a little radial turn and the forearm rolling). Low strokes are the wrist's (1);
+ * big ones, where a sideways swing would carry the tip far off its line, rise nearly straight (clips 6 and 9: the
+ * tip of a full stroke goes up and comes down in the stick's own plane), easing between LIFT_IN_PALM_FROM and _TO.
+ */
+const LIFT_IN_PALM = 1;
+const LIFT_IN_PALM_HIGH = 0.4;
+const LIFT_IN_PALM_FROM = 0.05;
+const LIFT_IN_PALM_TO = 0.25;
 
 let lsInp: ArmIn;
 let lsOut: ArmOut;
@@ -896,11 +935,14 @@ function liftStroke(inp: ArmIn, out: ArmOut, Rp: Mat3, swivel: number): number {
   apply3(lsHinge, inp.clav, lsHinge);
   copyM3(lsR0, Rp);
   perpNorm3(lsPlan, out.dir, UP, set3(lsT, 0, 0, -1));
-  // level and across the stick, so that turning about it raises the tip; without its part about the back of the
-  // hand's normal, so the wrist extends and the forearm rolls (as in American grip) rather than bending sideways
+  // level and across the stick, so that turning about it raises the tip; with part of it about the back of the
+  // hand's normal taken out (LIFT_IN_PALM), so the wrist mostly extends and the forearm rolls (as in American grip)
+  // rather than bending sideways, while the tip still rises nearly straight up
   norm3(lsAx, cross3(lsAx, lsPlan, UP));
   apply3(lsT, lsR0, set3(lsT, 0, 1, 0));
-  perpNorm3(lsAx, lsAx, lsT, lsAx);
+  const ku = clamp((inp.lift - LIFT_IN_PALM_FROM) / (LIFT_IN_PALM_TO - LIFT_IN_PALM_FROM), 0, 1);
+  const kn = (LIFT_IN_PALM + (LIFT_IN_PALM_HIGH - LIFT_IN_PALM) * ku * ku * (3 - 2 * ku)) * dot3(lsAx, lsT);
+  norm3(lsAx, set3(lsAx, lsAx[0] - kn * lsT[0], lsAx[1] - kn * lsT[1], lsAx[2] - kn * lsT[2]));
   lsInp = inp;
   lsOut = out;
   lsFingers = inp.fingers;
@@ -924,16 +966,20 @@ function liftStroke(inp: ArmIn, out: ArmOut, Rp: Mat3, swivel: number): number {
 // armTry scratch
 const atUp = vec3();
 const atRp = mat3();
-/** the arm for given free choices; the result in `out`, its cost returned */
-function armTry(inp: ArmIn, roll: number, swivel: number, sweep: number, out: ArmOut): number {
-  stickAtContact(inp, sweep, out.dir, out.fulcrum, out.tip);
+/**
+ * the arm for given free choices: the hand's turn about the stick and the stick's line as offsets from the planned
+ * ones (so a warm start carries how the arm departs from the plan, not where it was), and the elbow's swivel; the
+ * result in `out`, its cost returned
+ */
+function armTry(inp: ArmIn, dRoll: number, swivel: number, dSweep: number, out: ArmOut): number {
+  stickAtContact(inp, inp.sweep + dSweep, out.dir, out.fulcrum, out.tip);
   // the back of the hand away from the surface (blended with up, so a tilted cymbal does not tip the hand over)
   norm3(atUp, set3(atUp, inp.normal[0] + UP[0], inp.normal[1] + UP[1], inp.normal[2] + UP[2]));
-  palmFromStick(atRp, out.dir, atUp, roll, 0);
+  palmFromStick(atRp, out.dir, atUp, inp.palmRoll + dRoll, 0);
   const rock = inp.lift > 1e-5 ? liftStroke(inp, out, atRp, swivel) : 0;
   const cost = armFromHand(inp, atRp, rock, swivel, out);
   // stay near the natural choices
-  return cost + 0.15 * (roll - inp.palmRoll) ** 2 + 0.06 * (swivel - inp.swivel) ** 2 + 0.1 * (sweep - inp.sweep) ** 2;
+  return cost + W_ROLL * dRoll * dRoll + W_SWIVEL * (swivel - inp.swivel) ** 2 + W_SWEEP * dSweep * dSweep;
 }
 
 function copyArm(o: ArmOut, a: ArmOut) {
@@ -975,7 +1021,7 @@ function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: num
     let cmin = Infinity;
     for (let i = 0; i < ARM_GRID.length; i++) {
       const g = ARM_GRID[i];
-      gridCost[i] = armTry(inp, inp.palmRoll + g[0], g[1], inp.sweep + g[2], armTrial);
+      gridCost[i] = armTry(inp, g[0], g[1], g[2], armTrial);
       if (gridCost[i] < cmin) cmin = gridCost[i];
     }
     let W = 0;
@@ -983,9 +1029,9 @@ function solveArm(inp: ArmIn, out: ArmOut, warm: Float64Array | null, steps: num
     for (let i = 0; i < ARM_GRID.length; i++) {
       const w = Math.exp(-(gridCost[i] - cmin) / SOFT_T);
       W += w;
-      searchP[0] += w * (inp.palmRoll + ARM_GRID[i][0]);
+      searchP[0] += w * ARM_GRID[i][0];
       searchP[1] += w * ARM_GRID[i][1];
-      searchP[2] += w * (inp.sweep + ARM_GRID[i][2]);
+      searchP[2] += w * ARM_GRID[i][2];
     }
     for (let k = 0; k < 3; k++) searchP[k] /= W;
   }
@@ -1379,7 +1425,7 @@ export function naturalTorso(R: ArrayLike<number>, L: ArrayLike<number>, leadL: 
   const dz = cz - PELVIS_AT[2];
   const horiz = Math.hypot(dx, dz);
   o[0] = 0.42 * Math.atan2(-dx, -dz);
-  o[1] = BASE_LEAN - 0.35 * Math.max(0, horiz - 0.42) - 0.3 * Math.max(0, 0.72 - cy);
+  o[1] = BASE_LEAN - 0.35 * Math.max(0, horiz - 0.5) - 0.3 * Math.max(0, 0.72 - cy);
   o[2] = -0.4 * dx * clamp((1.0 - cy) / 0.4, 0, 1);
   return o;
 }
