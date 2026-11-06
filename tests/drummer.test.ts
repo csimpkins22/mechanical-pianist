@@ -5,6 +5,7 @@
 // foot through the kit (its drums, its cymbals' real profiles and every
 // stand, leg and brace where the kit's model puts them).
 import { describe, expect, test } from 'vitest';
+import { armPosture } from './drummerPosture';
 import { DRUMS, SPOTS, type DrumId } from '../src/drums/KitLayout';
 import { kitStands } from '../src/drums/KitStands';
 import { GRIP_FIT, STICK_BEAD, STICK_SHOULDER, createPose, limitViolations, solveDrummer, type DrummerPose, type DrummerTargets, type StickTarget } from '../src/drums/DrummerIK';
@@ -241,21 +242,49 @@ describe("a drummer's posture", () => {
   const lean = (a: ArrayLike<number>, b: ArrayLike<number>) => Math.atan2(-(b[2] - a[2]), b[1] - a[1]) / D;
   const P = (j: number) => pose.pos.subarray(j * 3, j * 3 + 3);
 
-  test('leaning in from the hips, the upper back a little rounded, in every pose', () => {
+  test('sitting up, leaning in a little from the hips, the upper back a little rounded, in every pose', () => {
     for (const np of poses) {
       solveDrummer(np.targets, pose);
-      // the back, from the pelvis to the chest's pivot (as in clips 4 and 8: 15-20 degrees, a little more when reaching)
+      // the back, from the pelvis to the chest's pivot (clip 10, MediaPipe Pose: 4-14 degrees, a little more when reaching)
       const back = lean(P(J.pelvis), P(J.chest));
-      expect(back, np.name).toBeGreaterThan(15);
-      expect(back, np.name).toBeLessThan(21);
+      expect(back, np.name).toBeGreaterThan(5);
+      expect(back, np.name).toBeLessThan(13);
       // the chest leans further than the back below it: the upper back rounds
       const cw = pose.world.subarray(J.chest * 9, J.chest * 9 + 9);
       expect(Math.atan2(-cw[7], cw[4]) / D, np.name).toBeGreaterThan(back + 4);
     }
-    // at the snare, nothing reaching: 15-18 degrees
+    // at the snare, nothing reaching: 6-9 degrees
     solveDrummer(poses.find((p) => p.name === 'snare')!.targets, pose);
-    expect(lean(P(J.pelvis), P(J.chest))).toBeGreaterThan(15);
-    expect(lean(P(J.pelvis), P(J.chest))).toBeLessThan(18);
+    expect(lean(P(J.pelvis), P(J.chest))).toBeGreaterThan(6);
+    expect(lean(P(J.pelvis), P(J.chest))).toBeLessThan(9);
+  });
+
+  test('the elbows by the body, the hands low over the drums, the wrists near straight (clips 1 and 10)', () => {
+    // every drum and the hi-hat, each hand that strikes: the elbow at most 25 degrees out from the body (the robot
+    // had 40-50 at the snare before), bent no more than 120 degrees, the forearm no steeper than 32 degrees up to the
+    // hand (level at the snare), the wrist bent at most 25 degrees, and over the spot by at most 13.5 cm (18 on the
+    // floor tom)
+    for (const np of poses) {
+      solveDrummer(np.targets, pose);
+      for (const s of np.strikes) {
+        const pt = np.targets[s].point;
+        const off = (k: DrumId) => Math.hypot(pt[0] - DRUMS[k].centre[0], pt[1] - DRUMS[k].centre[1], pt[2] - DRUMS[k].centre[2]) / (DRUMS[k].diameter / 2);
+        const id = (Object.keys(DRUMS) as DrumId[]).filter((k) => k !== 'kick').sort((x, y) => off(x) - off(y))[0];
+        if (id === 'ride' || id === 'crash' || (id === 'tom1' && s === 'L')) continue;
+        const a = armPosture(pose, s, np.targets[s].point);
+        const what = `${np.name} ${s} (${id})`;
+        expect(a.elbowOut, what).toBeLessThan(25);
+        expect(a.elbowOut, what).toBeGreaterThan(-25);
+        expect(a.elbowFlex, what).toBeLessThan(120);
+        expect(a.forearmPitch, what).toBeLessThan(32);
+        // (the right hand crossed over to the hi-hat, higher, bends a little more)
+        expect(Math.abs(a.flex), what).toBeLessThan(id === 'hihat' ? 30 : 25);
+        expect(a.wristVert, what).toBeGreaterThan(id === 'hihat' ? -30 : -25);
+        // (the floor tom stands lower than the snare, struck with a steeper stick from about the same height)
+        expect(a.wristAbove, what).toBeLessThan(id === 'floorTom' ? 0.18 : 0.135);
+        if (id === 'snare') expect(Math.abs(a.forearmPitch), what).toBeLessThan(8);
+      }
+    }
   });
 
   // (leaning in, the back tilts forward over elbows that still hang: they may sit up to 3 cm past its plane; the

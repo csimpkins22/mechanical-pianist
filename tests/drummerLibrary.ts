@@ -12,6 +12,7 @@ import { blankTargets, maxLift } from '../src/drums/DrummerMotion';
 import { createPose } from '../src/drums/DrummerIK';
 import { DRUM_MAP } from '../src/drums/DrumScore';
 import { mulberry32 } from '../src/core/random';
+import { PostureLog, armPosture, postureGroup } from './drummerPosture';
 
 const dist = (a: ArrayLike<number>, b: ArrayLike<number>) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
@@ -36,10 +37,11 @@ export function libraryGrooves(names: readonly NewGroove[]) {
         }
     });
 
-    test("every hand's stroke lands on its spot at its time, the stick's contact within 2 mm; preparations within reach", () => {
+    test("every hand's stroke lands on its spot at its time, the stick's contact within 2 mm, the arms held as real drummers hold them; preparations within reach", () => {
       const tg = blankTargets();
       const pose = createPose();
       const spotOf = strokeSpots(g);
+      const posture = new PostureLog();
       const bad: string[] = [];
       let n = 0;
       for (const h of g.sticking.hits) {
@@ -48,10 +50,13 @@ export function libraryGrooves(names: readonly NewGroove[]) {
         const e = Math.max(pose.error[h.limb], dist(pose.stick[h.limb].contact, tg[h.limb].point));
         const off = dist(tg[h.limb].point, spotOf(h.hit));
         n++;
+        posture.add(postureGroup(h.piece, h.limb), armPosture(pose, h.limb, tg[h.limb].point));
         if (!(e <= 0.002 && off <= 0.002 && tg[h.limb].lift <= 1e-9)) bad.push(`${h.t.toFixed(3)} ${h.limb} ${h.piece}/${h.zone}: contact ${(e * 1000).toFixed(2)} mm, spot ${(off * 1000).toFixed(2)} mm`);
       }
       expect(n).toBeGreaterThan(100);
       expect(bad).toEqual([]);
+      console.log(`${name} posture at impact:\n${posture.summary()}`);
+      expect(posture.check()).toEqual([]);
       // no stroke prepared higher than its hand can lift between it and the stroke before
       for (const hand of ['R', 'L'] as const) {
         const S = g.motion.hands[hand].strokes;
