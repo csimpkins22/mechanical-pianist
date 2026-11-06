@@ -145,7 +145,7 @@ describe('two hands on the snare in a roll', () => {
     for (let k = 0; k < 32; k++) notes.push([0.5 + k * b * 0.25, 38, k % 4 === 0 ? 0.9 : 0.45]);
     notes.push([0.5 + 32 * b * 0.25, 38, 0.95], [0.5 + 32 * b * 0.25, 36, 0.9]);
     const g = play(notes, { bpm: 110 });
-    const sides = sharedDrumSides(g.sticking);
+    const sides = sharedDrumSides(g.sticking, g.perf.hits);
     const hands = g.sticking.hits.filter((h) => h.limb === 'R' || h.limb === 'L');
     expect(new Set(hands.map((h) => h.limb)).size).toBe(2);
     for (const h of hands) expect(sides[h.hit]).toBe(h.limb === 'L' ? -1 : 1);

@@ -87,8 +87,9 @@ export const DOWN_POWER = 2.2;
 /** the stick on the surface: it dwells this long and leaves at this share of the speed it came in with */
 export const DWELL = 0.003;
 const RESTITUTION = { drum: 0.68, cymbal: 0.55 };
-/** the most a stick under the other, crossed arm lifts (m) */
-const UNDER_ARM = 0.2;
+/** the most a stick under the other, crossed arm lifts (m): with the hands as low as real drummers hold them, the right
+ * stick crossing to the hi-hat runs about 20 cm over the snare */
+const UNDER_ARM = 0.14;
 /** where a waiting stick hovers (m) */
 const HOVER = 0.035;
 /** the sticks' height before the first note (ready) */
@@ -109,6 +110,8 @@ const REFINE_COST = 0.4;
 /** a frame whose arms cost this much more than the keys around it is refined on its own */
 const FIX_COST = 0.5;
 const FIX_RANGE = 2;
+/** a frame still costing this much after that (a joint near or past its stop) takes the nearer key's arms */
+const GLITCH_COST = 5;
 
 export type StrokeKind = 'ready' | 'full' | 'down' | 'up' | 'tap' | 'double' | 'buzz' | 'grace' | 'choke';
 
@@ -228,24 +231,38 @@ function contactOf(piece: DrumId, zone: Zone): { cft: number; angle: number } {
  * lifted a few centimetres and dropped, the hand staying where it rests. (The grip cannot turn the stick round, as
  * some players do to strike the hoop with the butt; this is the other common way, the stick held as usual.)
  */
+/** a rimshot's stick turned toward the hand's own side from its natural line (radians) */
+const RIM_SWEEP = 0.3;
+
 const CROSS_STICK = { cft: 0.075, angle: 3.5 * D2R, sweep: -0.25, roll: 0.15, maxPrep: 0.06 };
 
 /**
- * Two hands on the snare in a roll (a second line's sixteenths, a press roll): each plays its own side of it, the
- * left hand SHARED_SIDE to the left of the hit's spot and the right hand as far to the right, so the tips stay
- * apart and the sticks make a V rather than crossing. A roll is at least ROLL_MIN hand strokes on the snare's head,
- * each within ROLL_GAP of the one before (an eighth at 120 bpm), both hands among them. (Not a flam or a short
- * figure: there the hands have time to keep apart. Not the toms: the first rack tom stands against the hi-hat, and
- * the left hand moved to its left side would reach under the hi-hat.)
+ * Two hands on the snare (a second line's sixteenths, a train beat, a press roll): each plays its own side of it,
+ * the left hand SHARED_SIDE to the left of the hit's spot and the right hand as far to the right, so the tips stay
+ * apart and the sticks make a V rather than crossing. That is any passage of ROLL_MIN or more hand strokes on the
+ * snare's head, each within ROLL_GAP of the one before (an eighth at 120 bpm), both hands among them. (Not the
+ * toms: the first rack tom stands against the hi-hat, and the left hand moved to its left side would reach under
+ * the hi-hat.) A rimshot (or a rim click) is struck on the hand's own side of the near rim, its spot turned
+ * RIM_TURN round the rim toward the hand, and the stick laid across the head from there toward its middle: the
+ * right hand's from about five o'clock, the left's from about seven, as the drummer sees it, so a rimshot's stick
+ * does not lie across the other hand's.
  */
 export const SHARED_SIDE = 0.025;
 const ROLL_GAP = 0.25;
-const ROLL_MIN = 8;
+const ROLL_MIN = 2;
+/** how far round the rim, toward its hand, a rimshot is struck (radians) */
+export const RIM_TURN = 0.45;
+/**
+ * how far round toward the drummer's left the left hand strikes the hi-hat's edge (radians): sitting up, the edge
+ * nearest the drummer is too close for the stick and the hand in front of it, so the left hand plays it from its side
+ */
+export const HIHAT_EDGE_TURN = 1.3;
 
-/** per hit, the side its hand plays the snare on in a roll: -1 (left), +1 (right), or 0 elsewhere */
-export function sharedDrumSides(st: Sticking): Int8Array {
+/** per hit, the side its hand plays on: -1 (left), +1 (right) in a two-handed passage on the snare's head, for every rimshot or rim click, and the left hand's hi-hat edge strokes; or 0 */
+export function sharedDrumSides(st: Sticking, hits: readonly DrumHit[]): Int8Array {
   const out = new Int8Array(st.hits.length);
-  const list = st.hits.filter((h) => h.played && (h.limb === 'R' || h.limb === 'L') && h.zone === 'head' && h.piece === 'snare');
+  const hand = (h: (typeof st.hits)[number]) => h.played && (h.limb === 'R' || h.limb === 'L');
+  const list = st.hits.filter((h) => hand(h) && h.zone === 'head' && h.piece === 'snare');
   for (let i = 0; i < list.length; ) {
     let j = i + 1;
     while (j < list.length && list[j].t - list[j - 1].t <= ROLL_GAP) j++;
@@ -254,11 +271,19 @@ export function sharedDrumSides(st: Sticking): Int8Array {
       for (const h of run) out[h.hit] = h.limb === 'L' ? -1 : 1;
     i = j;
   }
+  for (const h of st.hits) if (hand(h) && (h.zone === 'rim' || hits[h.hit].click)) out[h.hit] = h.limb === 'L' ? -1 : 1;
+  // (and the left hand playing the hi-hat's edge, uncrossed: from its own side)
+  for (const h of st.hits) if (hand(h) && h.limb === 'L' && h.piece === 'hihat' && h.zone === 'edge') out[h.hit] = -1;
   return out;
 }
 
-/** a hit's spot as its hand plays it: its own r and angle, moved to the hand's side of the snare in a roll (side -1 or +1) */
+/**
+ * a hit's spot as its hand plays it: its own r and angle, moved to the hand's side of the snare in a two-handed
+ * passage (side -1 or +1), or, for a rimshot or a rim click, turned round the rim toward the hand
+ */
 export function handSpot(d: (typeof DRUMS)[DrumId], h: DrumHit, side: number): V3 {
+  if (side && (h.zone === 'rim' || h.click)) return strikePoint(d, h.r, h.angle + side * RIM_TURN);
+  if (side && d.id === 'hihat' && h.zone === 'edge') return strikePoint(d, h.r, h.angle + side * HIHAT_EDGE_TURN);
   const p = strikePoint(d, h.r, h.angle);
   if (side) {
     // across the head, toward the drummer's right
@@ -495,7 +520,7 @@ export class DrummerMotion {
   private planHands() {
     const perf = this.perf;
     const st = this.sticking;
-    this.shared = sharedDrumSides(st);
+    this.shared = sharedDrumSides(st, perf.hits);
     for (const hand of ['R', 'L'] as Hand[]) {
       const plan = this.hands[hand];
       const list: Stroke[] = plan.strokes;
@@ -578,8 +603,11 @@ export class DrummerMotion {
     s.cft = c.cft;
     s.roll = zone === 'crossStick' ? CROSS_STICK.roll : PALM_ROLL[piece];
     // the left hand on the snare plays from a little further right, its stick pointing more forward: clear of the
-    // hi-hat beside it when it lifts
-    s.sweep = zone === 'crossStick' ? CROSS_STICK.sweep : hand === 'L' && piece === 'snare' ? 0.12 : 0;
+    // hi-hat beside it when it lifts. A rimshot's stick lies across the head from the near rim: turned toward the
+    // hand's own side (pointing more forward), so its tip stays over the hand's own half, clear of the other stick
+    // (and on the first rack tom, beside the hi-hat, the left hand plays from further right still: clear of the hi-hat's
+    // edge, which its pedal can lift into a hand waiting there)
+    s.sweep = zone === 'crossStick' ? CROSS_STICK.sweep : zone === 'rim' ? (hand === 'L' ? RIM_SWEEP : -RIM_SWEEP) : hand === 'L' && piece === 'snare' ? 0.12 : hand === 'L' && piece === 'tom1' ? 0.4 : 0;
   }
 
   /** heights, timings, rebounds, travel and the forearm, stroke by stroke for one hand */
@@ -998,8 +1026,11 @@ export class DrummerMotion {
   }
   /** each key's arms' cost */
   private keyC = new Float64Array(0);
-  /** the keys' cost interpolated at the last warm start */
+  /** the keys' cost interpolated at the last warm start, and the keys either side */
   private warmCost = 0;
+  private warmLo = 0;
+  private warmHi = 0;
+  private glitchBuf = new Float64Array(6);
   private fixBuf = new Float64Array(6);
 
   /** check the interpolation between the last key and (tb, Fb) at its middle, adding keys there as needed (depth-first, in time order) */
@@ -1096,6 +1127,8 @@ export class DrummerMotion {
     o.steps = steps;
     o.smooth = true;
     this.warmCost = this.keyC[lo] + (this.keyC[hi] - this.keyC[lo]) * u;
+    this.warmLo = lo;
+    this.warmHi = hi;
     return o;
   }
 
@@ -1161,6 +1194,28 @@ export class DrummerMotion {
       w.steps = 0;
       w.smooth = true;
       solveDrummer(targets, pose, w);
+      // still far worse (between two keys that hold an arm in quite different ways, the way between them can pass a
+      // joint's stop): hold the arms as the nearer of the two keys does instead, for this frame
+      if (pose.cost.R + pose.cost.L > GLITCH_COST) {
+        const F = this.keyF;
+        const g = this.glitchBuf;
+        let best = Infinity;
+        for (let q = 0; q < 2; q++) {
+          const k = q ? this.warmHi : this.warmLo;
+          w.R.set(F.subarray(k * 6, k * 6 + 3));
+          w.L.set(F.subarray(k * 6 + 3, k * 6 + 6));
+          solveDrummer(targets, pose, w);
+          const c = pose.cost.R + pose.cost.L;
+          if (c < best) {
+            best = c;
+            g.set(w.R, 0);
+            g.set(w.L, 3);
+          }
+        }
+        w.R.set(g.subarray(0, 3));
+        w.L.set(g.subarray(3, 6));
+        solveDrummer(targets, pose, w);
+      }
     }
     return pose;
   }

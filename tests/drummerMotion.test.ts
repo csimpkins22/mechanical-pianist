@@ -7,16 +7,18 @@ import { blankTargets, maxLift, PREP } from '../src/drums/DrummerMotion';
 import { createPose } from '../src/drums/DrummerIK';
 import { mulberry32 } from '../src/core/random';
 import { execFileSync } from 'node:child_process';
+import { PostureLog, armPosture, postureGroup } from './drummerPosture';
 
 const dist = (a: ArrayLike<number>, b: ArrayLike<number>) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
 describe.each(GROOVES)('%s', (name) => {
   const g = loadGroove(name);
 
-  test("every hand's stroke lands on its spot at its time: the stick's contact within 2 mm, the spot where the kit's reactions put the hit", () => {
+  test("every hand's stroke lands on its spot at its time: the stick's contact within 2 mm, the spot where the kit's reactions put the hit; the arms held as real drummers hold them (drummerPosture.ts)", () => {
     const tg = blankTargets();
     const pose = createPose();
     const spotOf = strokeSpots(g);
+    const posture = new PostureLog();
     const bad: string[] = [];
     let n = 0;
     let worst = 0;
@@ -31,11 +33,14 @@ describe.each(GROOVES)('%s', (name) => {
       const off = dist(tg[h.limb].point, spot);
       worst = Math.max(worst, e, off);
       n++;
+      posture.add(postureGroup(hit.piece, h.limb), armPosture(pose, h.limb, tg[h.limb].point));
       if (e > 0.002 || off > 0.002 || tg[h.limb].lift > 1e-9) bad.push(`${h.t.toFixed(3)} ${h.limb} ${hit.piece}/${hit.zone}: contact ${(e * 1000).toFixed(2)} mm, spot ${(off * 1000).toFixed(2)} mm, lift ${tg[h.limb].lift}`);
     }
     expect(n).toBeGreaterThan(100);
     expect(bad).toEqual([]);
     expect(worst).toBeLessThan(0.002);
+    console.log(`${name} posture at impact:\n${posture.summary()}`);
+    expect(posture.check()).toEqual([]);
   }, 240000);
 
   test('stroke heights by loudness, held down by the tempo', () => {

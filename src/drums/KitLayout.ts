@@ -5,7 +5,7 @@
 // A conventional right-handed five-piece, set up the way a working drummer
 // would set it for a seated player of human proportions:
 //
-//   frame   origin on the floor under the centre of the stool's seat;
+//   frame   origin on the floor where the stool first stood (it now stands 8 cm behind: SEAT);
 //           +x to the drummer's right, +y up, -z forward (the drummer
 //           faces -z, as a three.js camera does)
 //   sizes   nominal drum and cymbal sizes in inches, as sold, and their
@@ -43,10 +43,17 @@ export interface DrumSpec {
 
 const IN = 0.0254;
 
-/** the stool: the top of its seat */
-export const SEAT: { centre: V3; diameter: number } = { centre: [0, 0.52, 0], diameter: 0.36 };
+/**
+ * The stool: the top of its seat. Set from the robot drummer's posture stage (reference footage measured with
+ * MediaPipe: real drummers' elbows hang 10-15 cm above the snare's head, the upper arm by the body, the forearm near
+ * level, the wrist 15-30 cm in front of the shoulder): first at the origin and 52 cm high, which, for the robot's
+ * proportions, sat its shoulders too low over the snare and its hands too close to them (its elbows were forced out
+ * and back, the forearms rising to the hands); now 5 cm higher and 8 cm further back. The kit's frame keeps its
+ * origin where the stool first stood, so nothing else moved.
+ */
+export const SEAT: { centre: V3; diameter: number } = { centre: [0, 0.57, 0.08], diameter: 0.36 };
 
-// the stool is at the origin, so a drum's yaw is the angle that turns its tilt toward it
+// a drum's yaw is the angle that turns its tilt toward the origin (where the stool first stood)
 const yawTo = (x: number, z: number) => Math.atan2(-x, -z);
 
 function drum(id: DrumId, kind: DrumSpec['kind'], diameterIn: number, depthIn: number, centre: V3, tiltDeg: number, usual: DrumSpec['usual']): DrumSpec {
