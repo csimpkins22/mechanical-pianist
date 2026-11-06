@@ -9,7 +9,8 @@
 // between). That fixes the stick; the grip (a fulcrum between thumb and index
 // finger a third of the way up the stick) fixes the palm, and the palm the
 // wrist. A two-bone solve with a natural elbow (hanging, a little out to the
-// side, never flapping) places the elbow; the forearm's roll and the wrist's
+// side, never flapping; raised out from the shoulder for a reach up and out,
+// as elbowRise plans it) places the elbow; the forearm's roll and the wrist's
 // two axes take up the rest exactly. A lifted stick is the impact pose turned
 // up the way a drummer's stroke is made: mostly at the wrist, some at the
 // elbow, the rest in the fingers (the stick rocks about its fulcrum as the
@@ -114,6 +115,12 @@ export interface StickTarget {
   fingers?: number;
   /** the elbow's preferred swivel about the shoulder-to-wrist line (radians, + out and up; default 0, hanging) */
   swivel?: number;
+  /**
+   * how far the upper arm is raised out from the shoulder for this reach (radians, 0 hanging by the body): the
+   * elbow's preferred direction and the out-angle its comfort aims for. A performance plans it from where each
+   * stroke lands (elbowRise) and moves it with the hand between strokes; unset, it is elbowRise of the point.
+   */
+  elbow?: number;
 }
 
 /**
@@ -485,6 +492,8 @@ interface ArmIn {
   sweep: number;
   /** the elbow's preferred swivel (radians; + out and up) */
   swivel: number;
+  /** the upper arm raised out from the shoulder for the reach (radians; elbowRise) */
+  elbow: number;
   /** the forearm's turn in a lifted stroke (NaN: the fixed split), and the fingers' share of the rest */
   arm: number;
   fingers: number;
@@ -532,6 +541,7 @@ const mkArmIn = (): ArmIn => ({
   palmRoll: 0,
   sweep: 0,
   swivel: 0,
+  elbow: 0,
   arm: NaN,
   fingers: SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS),
   kit: [],
@@ -745,10 +755,13 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
   scale3(ahWH, ahSW, 1 / (d || 1));
   d = clamp(d, dmin, dmax);
   addScaled3(W, S, ahWH, d);
-  // the elbow hangs, a little out to the side and back; the swivel turns it about the shoulder-wrist line
+  // the elbow hangs, a little out to the side and forward, raised out from the shoulder as far as the reach plans
+  // (inp.elbow); the swivel turns it about the shoulder-wrist line from there
   apply3(ahOut, inp.chest, set3(ahT, 1, 0, 0));
   apply3(ahBack, inp.chest, set3(ahT, 0, 0, 1));
-  set3(ahPref, ELBOW_OUT * ahOut[0] - ELBOW_FWD * ahBack[0], -1 + ELBOW_OUT * ahOut[1] - ELBOW_FWD * ahBack[1], ELBOW_OUT * ahOut[2] - ELBOW_FWD * ahBack[2]);
+  const cr = Math.cos(inp.elbow);
+  const ko = ELBOW_OUT * cr + Math.sin(inp.elbow);
+  set3(ahPref, ko * ahOut[0] - ELBOW_FWD * ahBack[0], -cr + ko * ahOut[1] - ELBOW_FWD * ahBack[1], ko * ahOut[2] - ELBOW_FWD * ahBack[2]);
   perpNorm3(ahEH, ahPref, ahWH, ahBack);
   if (swivel !== 0) {
     axisAngle3(ahM, ahWH, swivel);
@@ -814,7 +827,8 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
   const ef = -dot3(ahT, ahBack);
   const outAng = Math.atan2(eo, Math.max(ed, 0.02));
   const fwdAng = Math.atan2(ef, Math.max(ed, 0.02));
-  const wing = Math.max(0, outAng - WING_FREE);
+  // (out from the body as far as the reach plans: past that it costs, and far past it more)
+  const wing = Math.max(0, outAng - inp.elbow - WING_FREE);
   const tuck = Math.max(0, -fwdAng - 0.05);
   // the elbow kept in front of the back: it may hang beside the torso, not poke out behind it
   const BP = inp.backP, BN = inp.backN;
@@ -824,7 +838,7 @@ function armFromHand(inp: ArmIn, Rp: Mat3, rock: number, swivel: number, out: Ar
     W_DEV * (dev + 0.12) ** 2 +
     0.8 * back * back +
     W_WING * wing * wing +
-    W_OUT * outAng * outAng +
+    W_OUT * (outAng - inp.elbow) * (outAng - inp.elbow) +
     W_TUCK * tuck * tuck +
     150 * behind * behind +
     0.12 * A[2] * A[2] +
@@ -1330,6 +1344,7 @@ function armInput(pose: DrummerPose, side: Side, t: StickTarget, inp: ArmIn) {
   inp.palmRoll = t.palmRoll;
   inp.sweep = (t.sweep ?? 0) * (side === 'L' ? -1 : 1);
   inp.swivel = t.swivel ?? 0;
+  inp.elbow = t.elbow ?? elbowRise(t.point, side);
   inp.arm = t.arm ?? NaN;
   inp.fingers = clamp(t.fingers ?? SHARE_FINGERS / (SHARE_WRIST + SHARE_FINGERS), 0, 1);
   inp.kit = side === 'L' ? KIT_M : KIT;
@@ -1409,6 +1424,47 @@ const PELVIS_AT = vec3();
   forwardKinematics(p.local, p.root, p.world, p.pos);
   copy3(PELVIS_AT, p.pos, J.pelvis * 3);
 }
+
+/** the right shoulder joint's place as the drummer sits at BASE_LEAN, facing the kit (the left's is its mirror) */
+const SHOULDER_AT = vec3();
+{
+  const p = createPose();
+  set3(p.root, SEAT.centre[0], SEAT.centre[1], SEAT.centre[2]);
+  forwardKinematics(p.local, p.root, p.world, p.pos);
+  setTorso(p, 0, BASE_LEAN, 0);
+  forwardKinematics(p.local, p.root, p.world, p.pos);
+  copy3(SHOULDER_AT, p.pos, J.arm.R.upper * 3);
+}
+
+/**
+ * The reach model: how far the upper arm is raised out from the shoulder to play a contact (radians), a smooth
+ * function of where it is from the shoulder. Up toward shoulder height and out to the hand's own side (the ride, the
+ * crash for the left hand, the bell), a drummer lifts the upper arm out and forward from the shoulder, so the forearm
+ * runs near level and the wrist stays near straight; low (the snare, the floor tom) or across the body (the hi-hat,
+ * the crash for the right hand) the elbow hangs. Clip 10, from behind (46.6-51.6 s), the right arm reaching up to the
+ * cymbals: the elbow 30-50 degrees out (median 44), against about 13 at the snare.
+ */
+export function elbowRise(point: ArrayLike<number>, side: Side): number {
+  const dx = (side === 'R' ? point[0] : -point[0]) - SHOULDER_AT[0];
+  const dy = point[1] - SHOULDER_AT[1];
+  const sm = (u: number) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
+  // out to the hand's own side; or far across the body and up near the shoulder's height (the right hand to the
+  // crash), where a hanging elbow would be drawn across the chest and the arm wrung to its stops
+  const own = sm((dy - RISE_Y0) / RISE_DY) * sm((dx - RISE_X0) / RISE_DX);
+  const across = sm((dy - CROSS_Y0) / CROSS_DY) * sm((-dx - CROSS_X0) / CROSS_DX);
+  return RISE_MAX * Math.max(own, across);
+}
+/** the most the upper arm is raised for a reach, and where the rise begins (and is full) in height and out to the side */
+const RISE_MAX = 0.75;
+const RISE_Y0 = -0.33;
+const RISE_DY = 0.25;
+const RISE_X0 = -0.1;
+const RISE_DX = 0.35;
+/** and across the body: only near the shoulder's height (not the crossed hi-hat, lower), only far across */
+const CROSS_Y0 = -0.15;
+const CROSS_DY = 0.12;
+const CROSS_X0 = 0.3;
+const CROSS_DX = 0.2;
 
 /**
  * The torso's turn, lean and side bend toward where the hands are playing

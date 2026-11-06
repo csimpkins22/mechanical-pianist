@@ -40,6 +40,11 @@
 //   - moving between instruments the hand follows a minimum-jerk path,
 //     leaving early enough to arrive before the downstroke, the stick lifted
 //     clear of what lies between (more around the cymbals and the ride);
+//     after a fill the left hand goes home to the snare when it has time,
+//     rather than waiting over the drum it left;
+//   - reaching up and out (the ride, the right hand across to the crash) the
+//     upper arm is raised from the shoulder, as planned for each stroke from
+//     where it lands (DrummerIK's elbowRise) and carried with the hand;
 //   - a hand with nothing to play hovers with a little life in it; before the
 //     first note the sticks are up and the drummer counts in.
 // Body. The torso turns toward where the hands are working (the leading
@@ -59,8 +64,8 @@ import { pedalAt, type DrumHit, type DrumPerformance, type PedalPoint, type Zone
 import { beatGrid, type Hand, type Level, type Sticking } from './Sticking';
 import type { CymbalId, KitMotion } from './KitMotion';
 import { cymbalPoint } from './KitPose';
-import { STICK_BEAD, STICK_SHOULDER, createPose, naturalTorso, solveDrummer, type BodyTarget, type DrummerPose, type DrummerTargets, type StickTarget, type WarmStart } from './DrummerIK';
-import { PALM_ROLL, STICK_ANGLE } from './DrummerPoses';
+import { STICK_BEAD, STICK_SHOULDER, createPose, elbowRise, naturalTorso, solveDrummer, type BodyTarget, type DrummerPose, type DrummerTargets, type StickTarget, type WarmStart } from './DrummerIK';
+import { PALM_ROLL, STICK_ANGLE, TOM1_SWEEP_L } from './DrummerPoses';
 import { gaussianBlur, Signal } from '../core/math';
 import { JOINTS } from './DrummerSpec';
 import { drift, hash01 } from '../core/random';
@@ -92,6 +97,10 @@ const RESTITUTION = { drum: 0.68, cymbal: 0.55 };
 const UNDER_ARM = 0.14;
 /** where a waiting stick hovers (m) */
 const HOVER = 0.035;
+/** the left hand goes home to the snare from these when it has time: it leaves this long after the stroke, and waits there at least HOME_STAY before leaving for the next */
+const AWAY_FROM_HOME = new Set<DrumId>(['tom1', 'tom2', 'floorTom', 'crash', 'ride']);
+const HOME_LEAVE = 0.05;
+const HOME_STAY = 0.15;
 /** the sticks' height before the first note (ready) */
 const READY = 0.11;
 /** the forearm's lead in big strokes (radians at the top of a 40 cm stroke) */
@@ -161,6 +170,17 @@ export interface Stroke {
   /** after a crash, the stick follows through past the edge (offset, m) over ftT seconds */
   ft: Float64Array;
   ftT: number;
+  /** the upper arm raised out from the shoulder for this stroke's reach (DrummerIK's elbowRise of its contact) */
+  elbow: number;
+  /**
+   * on the way here, the hand first goes home (the left hand back to the snare after a fill, rather than waiting
+   * over a tom): the home frame, when it leaves for it and arrives, and how far it is lifted clear on the way
+   * (home: null when it goes straight here)
+   */
+  home: Stroke | null;
+  hl: number;
+  ha: number;
+  hc: number;
 }
 
 function newStroke(): Stroke {
@@ -199,6 +219,11 @@ function newStroke(): Stroke {
     hh: 0,
     ft: new Float64Array(3),
     ftT: 0,
+    elbow: 0,
+    home: null,
+    hl: 0,
+    ha: 0,
+    hc: 0,
   };
 }
 
@@ -363,9 +388,29 @@ class HandPlan {
     return hermite(pt, ph, pv, b.top, b.prep, 0, t);
   }
 
-  /** the aim between strokes a and b at t: the contact frame travelling from a's (after its follow-through) to b's */
+  /** the hi-hat's weight in the aim last made (the stick on or over its top cymbal) */
+  private aimHH = 0;
+
+  /**
+   * the aim between strokes a and b at t: the contact frame travelling from a's (after its follow-through) to b's,
+   * by way of home when b.home is set (first from a to home, then from home to b)
+   */
   private aim(a: Stroke, b: Stroke, t: number, o: StickTarget): number {
-    const u = b.ta > b.tl ? clamp((t - b.tl) / (b.ta - b.tl), 0, 1) : t >= b.ta ? 1 : 0;
+    const h = b.home;
+    let from = a;
+    let to = b;
+    let u: number;
+    let clear: number;
+    if (h && t < b.tl) {
+      // the first leg: from a home (or already there, waiting)
+      to = h;
+      u = b.ha > b.hl ? clamp((t - b.hl) / (b.ha - b.hl), 0, 1) : t >= b.ha ? 1 : 0;
+      clear = b.hc;
+    } else {
+      if (h) from = h;
+      u = b.ta > b.tl ? clamp((t - b.tl) / (b.ta - b.tl), 0, 1) : t >= b.ta ? 1 : 0;
+      clear = b.clear;
+    }
     const s = minJerk(u);
     // the follow-through after a crash: out past the edge and back
     let f = 0;
@@ -373,18 +418,23 @@ class HandPlan {
       const tau = (t - a.t) / a.ftT;
       f = tau <= 0 || tau >= 1 ? 0 : Math.sin(Math.PI * Math.pow(tau, 0.6));
     }
+    const fa = from === a ? f : 0;
     for (let k = 0; k < 3; k++) {
-      o.point[k] = a.P[k] + a.ft[k] * f + (b.P[k] - a.P[k] - a.ft[k] * f) * s;
-      ev.N[k] = a.N[k] + (b.N[k] - a.N[k]) * s;
+      o.point[k] = from.P[k] + a.ft[k] * fa + (to.P[k] - from.P[k] - a.ft[k] * fa) * s;
+      ev.N[k] = from.N[k] + (to.N[k] - from.N[k]) * s;
     }
     const nl = Math.hypot(ev.N[0], ev.N[1], ev.N[2]);
     for (let k = 0; k < 3; k++) o.normal[k] = ev.N[k] / nl;
-    o.angle = a.angle + (b.angle - a.angle) * s;
-    o.contactFromTip = a.cft + (b.cft - a.cft) * s;
-    o.palmRoll = a.roll + (b.roll - a.roll) * s;
-    o.sweep = a.sweep + (b.sweep - a.sweep) * s;
+    o.angle = from.angle + (to.angle - from.angle) * s;
+    o.contactFromTip = from.cft + (to.cft - from.cft) * s;
+    o.palmRoll = from.roll + (to.roll - from.roll) * s;
+    o.sweep = from.sweep + (to.sweep - from.sweep) * s;
+    // (the upper arm rises late on the way up to a reach, once the hand is nearly there: a hand leaving the floor tom
+    // for the ride clears the ride's edge before the arm lifts)
+    o.elbow = from.elbow + (to.elbow - from.elbow) * (to.elbow > from.elbow ? s * s : s);
+    this.aimHH = from.hh + (to.hh - from.hh) * s;
     // lifted clear on the way: a bump over the travel
-    return b.clear * Math.sin(Math.PI * u);
+    return clear * Math.sin(Math.PI * u);
   }
 
   private setFrame(s: Stroke, o: StickTarget) {
@@ -396,6 +446,7 @@ class HandPlan {
     o.contactFromTip = s.cft;
     o.palmRoll = s.roll;
     o.sweep = s.sweep;
+    o.elbow = s.elbow;
   }
 
   /** the forearm's turn at t, heading for stroke b (from a) */
@@ -423,8 +474,7 @@ class HandPlan {
       } else {
         // on the way (a fast move goes on into the downstroke, arriving as the stick lands)
         const c = this.aim(a, b, t, o);
-        const u = b.ta > b.tl ? minJerk(clamp((t - b.tl) / (b.ta - b.tl), 0, 1)) : 1;
-        this.lifted(o, t, a.hh + (b.hh - a.hh) * u);
+        this.lifted(o, t, this.aimHH);
         // the stick lifted clear of what lies between: never lower than the bump (a smooth maximum)
         if (c > 0) lift = Math.sqrt(lift * lift + c * c);
       }
@@ -599,15 +649,19 @@ export class DrummerMotion {
     } else s.N.set(n);
     s.hh = piece === 'hihat' ? 1 : 0;
     s.P.set(p);
+    // the upper arm raised from the shoulder for the reach (not on the hi-hat, played low by the body; nor the left hand's
+    // crash, where, raised, the arm changed its hold on the stick abruptly as the hand came back down to the snare)
+    s.elbow = piece === 'hihat' || (piece === 'crash' && hand === 'L') ? 0 : elbowRise(p, hand);
     s.angle = c.angle;
     s.cft = c.cft;
     s.roll = zone === 'crossStick' ? CROSS_STICK.roll : PALM_ROLL[piece];
     // the left hand on the snare plays from a little further right, its stick pointing more forward: clear of the
     // hi-hat beside it when it lifts. A rimshot's stick lies across the head from the near rim: turned toward the
     // hand's own side (pointing more forward), so its tip stays over the hand's own half, clear of the other stick
-    // (and on the first rack tom, beside the hi-hat, the left hand plays from further right still: clear of the hi-hat's
-    // edge, which its pedal can lift into a hand waiting there)
-    s.sweep = zone === 'crossStick' ? CROSS_STICK.sweep : zone === 'rim' ? (hand === 'L' ? RIM_SWEEP : -RIM_SWEEP) : hand === 'L' && piece === 'snare' ? 0.12 : hand === 'L' && piece === 'tom1' ? 0.4 : 0;
+    // (and on the first rack tom, beside the hi-hat, the left hand plays from a little further right: clear of the
+    // hi-hat's edge, which its pedal can lift into a hand there; turned further, the wrist bent 40 degrees and more to
+    // reach it, and since the hand goes home to the snare after a fill it no longer waits there under the hi-hat)
+    s.sweep = zone === 'crossStick' ? CROSS_STICK.sweep : zone === 'rim' ? (hand === 'L' ? RIM_SWEEP : -RIM_SWEEP) : hand === 'L' && piece === 'snare' ? 0.12 : hand === 'L' && piece === 'tom1' ? TOM1_SWEEP_L : 0;
   }
 
   /** heights, timings, rebounds, travel and the forearm, stroke by stroke for one hand */
@@ -636,7 +690,7 @@ export class DrummerMotion {
         H = Math.min(H, maxLift(D));
         // under the other arm (the left hand on the snare with the right crossed over it to the hi-hat) a stroke
         // has only the room below that arm
-        if (this.crossedOver(hand, s.t)) H = Math.min(H, UNDER_ARM * (0.9 + 0.2 * var1));
+        if (this.crossedOver(hand, s.t, a.kind === 'ready' ? s.t - 0.4 : a.t)) H = Math.min(H, UNDER_ARM * (0.9 + 0.2 * var1));
         // a cross-stick only lifts the stick's far end off the hoop, the hand resting on the head
         if (s.zone === 'crossStick') H = Math.min(H * 0.4, CROSS_STICK.maxPrep);
         H = Math.max(H, 0.006);
@@ -715,7 +769,27 @@ export class DrummerMotion {
       // (never before the last stroke has left the surface: it lands exactly on its own spot)
       if (a.kind !== 'ready' && s.tl < t0) s.tl = t0;
       if (s.ta <= s.tl) s.ta = Math.min(s.t, s.tl + 1e-3);
-      s.clear = moving ? clearLift(a, s) : 0;
+      s.clear = moving ? clearLift(a, s, s.ta - s.tl) : 0;
+      // --- the left hand home after playing away from it (a fill on the toms, a crash): with time before its next
+      // stroke it goes back over its own side of the snare and waits there, rather than over the drum it left (where
+      // the right arm crossing to the hi-hat would pass over it), then on from there
+      s.home = null;
+      if (hand === 'L' && a.kind !== 'ready' && AWAY_FROM_HOME.has(a.piece) && this.homeOf('L', a.t) === 'snare') {
+        const hm = this.homeFrame ??= this.makeHome();
+        const d1 = Math.hypot(hm.P[0] - a.P[0], hm.P[1] - a.P[1], hm.P[2] - a.P[2]);
+        const d2 = Math.hypot(s.P[0] - hm.P[0], s.P[1] - hm.P[1], s.P[2] - hm.P[2]);
+        const hl = Math.max(t0 + HOME_LEAVE, a.t + 0.6 * a.ftT);
+        const ha = hl + 0.12 + 0.55 * d1;
+        const tl2 = s.ta - (0.12 + 0.55 * d2);
+        if (ha + HOME_STAY <= tl2) {
+          s.home = hm;
+          s.hl = hl;
+          s.ha = ha;
+          s.tl = tl2;
+          s.clear = s.piece !== 'snare' || d2 > 0.06 ? clearLift(hm, s, s.ta - s.tl) : 0;
+          s.hc = clearLift(a, hm, s.ha - s.hl);
+        }
+      }
       // crossing over the other arm on the way (Sticking's arm on top): over it, higher
       if (moving && s.over === hand && s.piece !== 'hihat') s.clear += 0.1;
       // --- a crash follows through past its edge: along the stick's sweep and out, then the hand recovers
@@ -733,11 +807,36 @@ export class DrummerMotion {
     }
   }
 
-  /** whether the other hand is crossed over this one near t (Sticking marks the hits played crossed with the arm on top) */
-  private crossedOver(hand: Hand, t: number): boolean {
+  /** whether the other hand is crossed over this one near t, or since `from` (Sticking marks the hits played crossed with the arm on top) */
+  private crossedOver(hand: Hand, t: number, from = t - 0.4): boolean {
     const other: Hand = hand === 'R' ? 'L' : 'R';
-    for (const h of this.sticking.hits) if (h.played && h.limb === other && h.over === other && Math.abs(h.t - t) < 0.4) return true;
+    // (from the stroke before, while this one is prepared, to just after it)
+    const t0 = Math.min(from, t - 0.4);
+    for (const h of this.sticking.hits) if (h.played && h.limb === other && h.over === other && h.t > t0 && h.t < t + 0.4) return true;
     return false;
+  }
+
+  /** a hand's home at t (Sticking's: the time-keeping piece for the right, the snare for the left unless it keeps time too) */
+  private homeOf(hand: Hand, t: number): DrumId {
+    const H = this.sticking.home;
+    let k = 0;
+    while (k + 1 < H.length && H[k + 1].t <= t) k++;
+    return H.length ? H[k][hand] : hand === 'R' ? 'hihat' : 'snare';
+  }
+
+  /** the left hand's frame at home: over its own side of the snare, as it plays it */
+  private homeFrame: Stroke | null = null;
+  private makeHome(): Stroke {
+    const h = newStroke();
+    h.kind = 'ready';
+    this.frameAt(h, 'snare', 'head', null, 'L');
+    const d = DRUMS.snare;
+    const o = strikePoint(d, 0, 0);
+    const x = strikePoint(d, 1, Math.PI / 2);
+    const l = Math.hypot(x[0] - o[0], x[1] - o[1], x[2] - o[2]);
+    for (let k = 0; k < 3; k++) h.P[k] -= ((x[k] - o[k]) / l) * SHARED_SIDE;
+    h.elbow = elbowRise(h.P, 'L');
+    return h;
   }
 
   // ------------------------------------------------------------ body
@@ -941,6 +1040,8 @@ export class DrummerMotion {
         if (s.kind === 'ready') continue;
         ts.push(s.t, s.top);
         if (s.ta - s.tl > 0.1) ts.push(s.tl + 0.33 * (s.ta - s.tl), s.tl + 0.67 * (s.ta - s.tl));
+        // (and the way home, and the arrival there)
+        if (s.home) ts.push(s.hl + 0.33 * (s.ha - s.hl), s.hl + 0.67 * (s.ha - s.hl), s.ha);
       }
     ts.push(0, this.duration);
     ts.sort((a, b) => a - b);
@@ -1226,8 +1327,8 @@ function edgeNear(piece: DrumId): V3 {
   return strikePoint(DRUMS[piece], 0.98, 0);
 }
 
-/** how far the stick is lifted clear when moving between two strokes' instruments (m) */
-function clearLift(a: Stroke, b: Stroke): number {
+/** how far the stick is lifted clear when moving between two strokes' instruments in T seconds (m) */
+function clearLift(a: Stroke, b: Stroke, T: number): number {
   const cym = (s: Stroke) => s.piece === 'crash' || s.piece === 'ride' || s.piece === 'hihat';
   let c = 0.05;
   if (cym(a) || cym(b)) c = 0.09;
@@ -1235,8 +1336,11 @@ function clearLift(a: Stroke, b: Stroke): number {
   if (a.piece === 'hihat' || b.piece === 'hihat') c = 0.14;
   if (a.piece === 'crash' || b.piece === 'crash' || a.piece === 'ride' || b.piece === 'ride') c = 0.14;
   // from under the ride (the floor tom) up to it, or across under the crash
-  if ((a.piece === 'floorTom' && b.piece === 'ride') || (b.piece === 'floorTom' && a.piece === 'ride')) c = 0.2;
+  if ((a.piece === 'floorTom' && b.piece === 'ride') || (b.piece === 'floorTom' && a.piece === 'ride')) c = 0.22;
   if ((a.piece === 'tom1' && b.piece === 'crash') || (b.piece === 'tom1' && a.piece === 'crash')) c = 0.18;
+  // between the first rack tom and the floor tom, over the second rack tom (higher than the way between them), as
+  // high as the time for the move allows
+  if ((a.piece === 'tom1' && b.piece === 'floorTom') || (b.piece === 'tom1' && a.piece === 'floorTom')) c = 0.05 + 0.1 * Math.min(1, Math.max(0, (T - 0.2) / 0.15));
   return c;
 }
 
