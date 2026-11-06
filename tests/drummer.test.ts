@@ -263,16 +263,28 @@ describe("a drummer's posture", () => {
     // every drum and the hi-hat, each hand that strikes: the elbow at most 25 degrees out from the body (the robot
     // had 40-50 at the snare before), bent no more than 120 degrees, the forearm no steeper than 32 degrees up to the
     // hand (level at the snare), the wrist bent at most 25 degrees, and over the spot by at most 13.5 cm (18 on the
-    // floor tom)
+    // floor tom); the left hand on the first rack tom too (its wrist was bent 43 degrees before its stick was turned
+    // less far from the hi-hat)
     for (const np of poses) {
       solveDrummer(np.targets, pose);
       for (const s of np.strikes) {
         const pt = np.targets[s].point;
         const off = (k: DrumId) => Math.hypot(pt[0] - DRUMS[k].centre[0], pt[1] - DRUMS[k].centre[1], pt[2] - DRUMS[k].centre[2]) / (DRUMS[k].diameter / 2);
         const id = (Object.keys(DRUMS) as DrumId[]).filter((k) => k !== 'kick').sort((x, y) => off(x) - off(y))[0];
-        if (id === 'ride' || id === 'crash' || (id === 'tom1' && s === 'L')) continue;
         const a = armPosture(pose, s, np.targets[s].point);
         const what = `${np.name} ${s} (${id})`;
+        if (id === 'ride' || id === 'crash') {
+          // reaching up and out to a cymbal, the upper arm is raised out from the shoulder (clip 10 from behind, the
+          // right arm up at the cymbals: 30-50 degrees out, the forearm 2 degrees down to 23 up), so the forearm rises
+          // gently and the wrist stays near straight (before the reach model: the elbow 16 degrees out at the ride's
+          // bow, the forearm rising 41 degrees to a wrist bent 30)
+          expect(a.elbowOut, what).toBeGreaterThan(id === 'crash' && s === 'R' ? -25 : 30);
+          expect(a.forearmPitch, what).toBeLessThan(30);
+          // (a crash is struck with the shoulder of the stick rising over its edge: the hand a little more bent down)
+          expect(a.wristVert, what).toBeGreaterThan(id === 'crash' ? -28 : -25);
+          expect(Math.abs(a.flex), what).toBeLessThan(25);
+          continue;
+        }
         expect(a.elbowOut, what).toBeLessThan(25);
         expect(a.elbowOut, what).toBeGreaterThan(-25);
         expect(a.elbowFlex, what).toBeLessThan(120);

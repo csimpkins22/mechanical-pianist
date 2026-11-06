@@ -5,7 +5,11 @@
 // per instrument, to POSTURE: real drummers keep the elbows by the body (1-22 degrees out), bent 68-91 degrees,
 // the forearm near level (25 degrees down to 6 up) and the wrist near straight (the hand 0-27 degrees below the
 // forearm seen from the side); before this was pinned the robot winged its elbows 40-50 degrees out at the snare,
-// held its hands 15-17 cm over it, and bent its wrists 30 degrees and more.
+// held its hands 15-17 cm over it, and bent its wrists 30 degrees and more. Reaching up and out to the ride, a real
+// drummer raises the upper arm out and forward from the shoulder (clip 10 from behind, 46.6-51.6 s, the right arm up
+// at the cymbals, 21 frames: the elbow 30-50 degrees out, bent 73-113, the forearm 2 degrees down to 23 up, the elbow
+// 8 cm below to 1 cm above the wrist); before the reach model the robot's elbow hung by its body there (14 degrees
+// out) and its forearm climbed 42 degrees to a hand bent 32 degrees down at the wrist.
 import { DOF_BASE, J, type Side } from '../src/drums/DrummerSpec';
 import type { DrummerPose } from '../src/drums/DrummerIK';
 import type { DrumId } from '../src/drums/KitLayout';
@@ -88,7 +92,9 @@ type Bound = [keyof ArmPosture, 'median' | 'p10' | 'p90', number, number];
  * otherwise what a reach to that instrument allows; each well inside what the robot did before): medians, and the
  * ninetieth percentile for the spread. Before the posture stage, across the sixteen grooves, the snare's medians
  * were: elbow out 5-48 degrees, the hand 5-55 degrees below the forearm, the wrist flexed 6-68 degrees and 6-18 cm
- * over the spot; the toms' forearms rose 28-47 degrees to the hand; the ride's elbow was 41-77 degrees out.
+ * over the spot; the toms' forearms rose 28-47 degrees to the hand; the ride's elbow was 41-77 degrees out. Before the
+ * reach model (the stage after), the ride's elbow hung 14-16 degrees out, the forearm rose 41-44 degrees to the hand,
+ * the hand 29-36 degrees below it, the wrist bent 30-38.
  */
 export const POSTURE: Record<PostureGroup, Bound[]> = {
   snare: [
@@ -120,11 +126,14 @@ export const POSTURE: Record<PostureGroup, Bound[]> = {
     ['wristVert', 'median', -15, 8],
     ['flex', 'median', -10, 18],
   ],
+  // (the ride from clip 10's reach up to the cymbals; the robot's ride sits nearer its shoulder's height than those
+  // cymbals did to his, and a pattern on the bell higher still, so its elbow comes out a little further)
   ride: [
-    ['elbowOut', 'median', -10, 65],
-    ['forearmPitch', 'median', 20, 48],
-    ['wristVert', 'median', -38, 0],
-    ['flex', 'median', -10, 38],
+    ['elbowOut', 'median', 25, 70],
+    ['elbowFlex', 'median', 70, 115],
+    ['forearmPitch', 'median', -5, 33],
+    ['wristVert', 'median', -25, 5],
+    ['flex', 'median', -10, 26],
   ],
   crash: [
     ['forearmPitch', 'median', 10, 40],

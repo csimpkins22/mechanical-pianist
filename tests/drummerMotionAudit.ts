@@ -191,38 +191,41 @@ export type { DrumPerformance, Sticking };
  * on the edge in the frames either side of a stroke, as the open top cymbal rocks.
  */
 export const KNOWN: Record<(typeof GROOVES)[number], Known> = {
-  // (tightened with the posture stage: the arms held as real drummers hold them, the hands low, each hand on its own
-  // side of the snare when both play it, rimshots from the hand's own side of the rim, a lower lift under the crossed
-  // arm, the left hand on the hi-hat's edge from its side; no joint past its range, and the left stick no longer
-  // through the hi-hat in the rock or the jazz groove)
-  'groove-rock-87': { contacts: { 'stick R / stick L': [10, 6.8], 'stick L / hand R': [1, 2.9], 'stick R / hi-hat': [1, 1.2] }, limits: {}, handOver: 3, accelOver: 18, tipOver: 0 },
-  'groove-funk-102': { contacts: { 'stick R / stick L': [3, 2.4], 'stick R / hi-hat': [6, 2], 'stick L / tom2': [1, 1.9] }, limits: {}, handOver: 1, accelOver: 3, tipOver: 0 },
-  'groove-jazz-93': { contacts: { 'stick L / tom2': [15, 14.2], 'stick R / ride': [4, 6.4], 'stick L / crash': [11, 2.6] }, limits: {}, handOver: 4, accelOver: 13, tipOver: 0 },
+  // (tightened with the reach stage: the upper arm raised from the shoulder for the ride, the left hand home to the
+  // snare after a fill, its strokes under the crossed right arm kept low through their whole preparation, the stick
+  // lifted over the second rack tom between the first and the floor tom. The jazz groove's left stick no longer passes
+  // through tom 2 (14 mm before); its right stick grazes the ride in a few more frames, 6 mm at most as before, its
+  // raised arm holding the stick a little differently over the bow. In the rock groove the left hand touches the
+  // hi-hat's edge by 1 mm in two frames, and no longer the right hand's stick)
+  'groove-rock-87': { contacts: { 'stick R / stick L': [4, 6.8], 'hand L / hi-hat': [2, 1.2], 'stick R / hi-hat': [1, 1.2] }, limits: {}, handOver: 3, accelOver: 15, tipOver: 0 },
+  'groove-funk-102': { contacts: { 'stick R / hi-hat': [6, 2], 'stick R / stick L': [1, 1.7] }, limits: {}, handOver: 1, accelOver: 3, tipOver: 0 },
+  'groove-jazz-93': { contacts: { 'stick R / ride': [9, 6.3], 'stick L / crash': [11, 2.7] }, limits: {}, handOver: 0, accelOver: 5, tipOver: 0 },
 };
 
 /**
  * The same for the library's other grooves, as the fast audit (FAST_FPS) finds them: it samples an eighth of the
  * frames, so its counts are frames at that rate. The full 120 fps audits of every groove are in the README
- * (tools/drummer-audit.cjs). `dropped`: hits no hand could play (still heard; the kit still reacts). (A few
- * contacts sampled here are new or a little deeper than before the posture stage while each groove's whole audit is
- * better: the left hand waiting over the first rack tom after a fill while the right crosses to the hi-hat in the
- * reggae, the right stick passing over its forearm; in the samba and the shuffle the left stick or hand grazing the
- * snare's rim by 2-3 mm as it leaves a stroke.)
+ * (tools/drummer-audit.cjs). `dropped`: hits no hand could play (still heard; the kit still reacts). (Tightened with
+ * the reach stage: the reggae's left hand no longer waits over the first rack tom after a fill, so the right stick
+ * no longer passes over it. A few contacts sampled here are new or a fraction of a millimetre deeper while each
+ * groove's whole audit is as good or better: the highlife's left hand touching the hi-hat's edge by 1.4 mm in one
+ * sampled frame (at 120 fps: 7 frames, 2.2 mm at most, 12 and 4.1 before), the jazz at 158's right stick on the crash
+ * 0.1 mm deeper, the shuffle's left hand on the snare's rim 0.1 mm deeper.)
  */
 export const KNOWN_FAST: Record<NewGroove, Known & { dropped: number }> = {
   'groove-rock-135': { contacts: { 'stick R / stick L': [2, 5.6] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
-  'groove-rock-6-8-80': { contacts: { 'stick R / ride': [1, 1.4] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
+  'groove-rock-6-8-80': { contacts: { 'stick R / ride': [1, 1.1] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-pop-132': { contacts: {}, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-country-114': { contacts: { 'stick R / stick L': [2, 2.6] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-soul-105': { contacts: {}, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-hiphop-87': { contacts: {}, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-secondline-124': { contacts: { 'stick R / stick L': [10, 9.9] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
-  'groove-shuffle-104': { contacts: { 'stick R / stick L': [8, 6.3], 'hand L / snare': [1, 2.6] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
-  'groove-jazz-158': { contacts: { 'stick R / crash': [1, 1.8] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
+  'groove-shuffle-104': { contacts: { 'stick R / stick L': [8, 6.3], 'hand L / snare': [1, 2.7] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
+  'groove-jazz-158': { contacts: { 'stick R / crash': [1, 1.9] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
   'groove-samba-93': { contacts: { 'stick L / snare': [1, 2.4] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
-  'groove-reggae-78': { contacts: { 'stick R / hand L': [11, 25.8], 'stick R / forearm L': [7, 20.8], 'hand L / hi-hat': [10, 14.1], 'stick R / stick L': [5, 10.5], 'stick L / crash': [2, 5.2], 'hand R / forearm L': [1, 2.1], 'forearm R / forearm L': [1, 1.9], 'stick R / hi-hat': [1, 1.1] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 1 },
-  'groove-afrobeat-103': { contacts: { 'stick R / stick L': [5, 6.9], 'stick L / hand R': [1, 2.5], 'stick R / hi-hat': [2, 1.4] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
-  'groove-highlife-126': { contacts: { 'stick R / stick L': [3, 7.3] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 5 },
+  'groove-reggae-78': { contacts: { 'stick R / stick L': [3, 5.4], 'stick L / crash': [2, 5.2], 'forearm R / forearm L': [1, 1.9], 'stick R / hi-hat': [1, 1.1] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 1 },
+  'groove-afrobeat-103': { contacts: { 'stick R / stick L': [4, 6.9], 'stick L / hand R': [1, 2.5], 'stick R / hi-hat': [2, 1.4] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 0 },
+  'groove-highlife-126': { contacts: { 'stick R / stick L': [3, 6.6], 'hand L / hi-hat': [1, 1.4] }, limits: {}, handOver: 0, accelOver: 0, tipOver: 0, dropped: 5 },
 };
 
 /** what an audit may find: contacts and limits [frames, mm or degrees], and hand- and tip-frames past the limits */

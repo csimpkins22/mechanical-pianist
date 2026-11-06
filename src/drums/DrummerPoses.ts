@@ -40,10 +40,13 @@ export const PALM_ROLL: Record<DrumId, number> = {
   ride: 0.45,
 };
 
+/** the left hand's stick on the first rack tom, turned from its natural line toward the drummer's left, away from the hi-hat beside it (radians; StickTarget.sweep) */
+export const TOM1_SWEEP_L = 0.2;
+
 export type Spot = 'head' | 'edge' | 'bell';
 
 /** a stroke on an instrument's spot; `lift` raises the tip above it, `open` lifts the hi-hat's top cymbal */
-export function stroke(id: DrumId, spot: Spot = 'head', lift = 0, opts: { open?: boolean; along?: number; across?: number; angle?: number } = {}): StickTarget {
+export function stroke(id: DrumId, spot: Spot = 'head', lift = 0, opts: { open?: boolean; along?: number; across?: number; angle?: number; sweep?: number } = {}): StickTarget {
   const d = DRUMS[id];
   const n = surfaceNormal(d);
   const p = (spot === 'head' ? SPOTS.head(d) : spot === 'edge' ? SPOTS.edge(d) : SPOTS.bell(d)).slice() as V3;
@@ -62,6 +65,7 @@ export function stroke(id: DrumId, spot: Spot = 'head', lift = 0, opts: { open?:
     contactFromTip: crash ? STICK_SHOULDER : STICK_BEAD,
     lift,
     palmRoll: PALM_ROLL[id],
+    sweep: opts.sweep,
   };
 }
 
@@ -91,7 +95,8 @@ export function namedPoses(): NamedPose[] {
     { name: 'snareL', label: 'Snare head (left hand)', targets: pose(stroke('hihat', 'head', 0.06), stroke('snare'), 'L'), strikes: ['L'] },
     { name: 'tom1', label: 'Tom 1 head', targets: pose(stroke('tom1'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
     // the right hand waits to the snare's right, out of the left arm's way to tom 1 (the hi-hat is on its other side)
-    { name: 'tom1L', label: 'Tom 1 head (left hand)', targets: pose(stroke('snare', 'head', 0.1, { across: 0.07 }), stroke('tom1'), 'L'), strikes: ['L'] },
+    // (the left stick turned a little from its natural line, away from the hi-hat, as a performance plays it)
+    { name: 'tom1L', label: 'Tom 1 head (left hand)', targets: pose(stroke('snare', 'head', 0.1, { across: 0.07 }), stroke('tom1', 'head', 0, { sweep: TOM1_SWEEP_L }), 'L'), strikes: ['L'] },
     { name: 'tom2', label: 'Tom 2 head', targets: pose(stroke('tom2'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
     { name: 'floorTom', label: 'Floor tom head', targets: pose(stroke('floorTom'), stroke('snare', 'head', 0.1), 'R'), strikes: ['R'] },
     // cymbals
