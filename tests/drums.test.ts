@@ -1,5 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { DRUM_PIECES } from '../src/drums/drumLibrary';
+import { GROOVES, NEW_GROOVES } from './drummerMotionAudit';
 import { CC4_CLOSED, DRUM_MAP, drumMidiBytes, inferPedal, pedalAt, readDrumMidi, scanAftertouch } from '../src/drums/DrumScore';
 import { KitMotion, SWING } from '../src/drums/KitMotion';
 import * as THREE from 'three';
@@ -69,14 +71,46 @@ describe('drum MIDI mapping', () => {
   });
 
   it('reads the bundled Groove performances', () => {
-    for (const name of ['groove-rock-87', 'groove-funk-102', 'groove-jazz-93']) {
+    for (const name of [...GROOVES, ...NEW_GROOVES]) {
       const p = groove(name);
-      expect(p.hits.length).toBeGreaterThan(300);
-      expect(p.hihatFromCC).toBe(true);
-      expect(p.duration).toBeGreaterThan(40);
+      expect(p.hits.length).toBeGreaterThan(200);
+      // (the hi-hat pedal from the kit's CC4, wherever the hi-hat is played: one groove plays only the ride)
+      expect(p.hihatFromCC || !p.hits.some((h) => h.piece === 'hihat')).toBe(true);
+      expect(p.duration).toBeGreaterThan(35);
+      expect(p.duration).toBeLessThan(160);
       const pieces = new Set(p.hits.map((h) => h.piece));
-      for (const k of ['kick', 'snare', 'hihat']) expect(pieces.has(k as never)).toBe(true);
+      for (const k of ['kick', 'snare']) expect(pieces.has(k as never)).toBe(true);
+      expect(pieces.has('hihat') || pieces.has('ride')).toBe(true);
     }
+  });
+
+  it("the library's drum pieces are its files, each checked by the drummer's tests, in families", () => {
+    const files = readdirSync('src/music/drums').filter((f) => f.endsWith('.mid')).map((f) => f.slice(0, -4)).sort();
+    expect([...GROOVES, ...NEW_GROOVES].sort()).toEqual(files);
+    expect(new Set(DRUM_PIECES.map((p) => p.id)).size).toBe(DRUM_PIECES.length);
+    const used = new Set<string>();
+    for (const p of DRUM_PIECES) {
+      // the inlined data is one of the files, byte for byte
+      const raw = atob(p.data.slice(p.data.indexOf(',') + 1));
+      const name = files.find((f) => {
+        const b = readFileSync(`src/music/drums/${f}.mid`);
+        return b.length === raw.length && b.every((x, i) => x === raw.charCodeAt(i));
+      });
+      expect(name, p.id).toBeDefined();
+      used.add(name!);
+      // its title's tempo is the file's, and the source names the style and tempo the file is called by
+      const bpm = name!.match(/-(\d+)$/)![1];
+      expect(p.title).toContain(`${bpm} bpm`);
+      expect(p.source).toContain(`_${bpm}_beat_`);
+      expect(p.artist).toMatch(/^Groove MIDI Dataset · drummer \d+$/);
+      expect(p.source.startsWith(p.artist.replace('Groove MIDI Dataset · drummer ', 'drummer') + '/')).toBe(true);
+      expect(p.year).toBe('2019');
+      expect(p.family.length).toBeGreaterThan(0);
+    }
+    expect([...used].sort()).toEqual(files);
+    // the families together, in the library's order
+    const fam = DRUM_PIECES.map((p) => p.family);
+    for (let i = 1; i < fam.length; i++) if (fam[i] !== fam[i - 1]) expect(fam.slice(0, i)).not.toContain(fam[i]);
   });
 });
 
