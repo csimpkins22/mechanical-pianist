@@ -203,7 +203,9 @@ function newStroke(): Stroke {
 function contactOf(piece: DrumId, zone: Zone): { cft: number; angle: number } {
   if (piece === 'crash') return { cft: STICK_SHOULDER, angle: zone === 'edge' ? -10 * D2R : -14 * D2R };
   if (piece === 'ride') {
-    if (zone === 'bell') return { cft: STICK_SHOULDER, angle: 12 * D2R };
+    // (the bell with the tip, the stick steeper than on the bow: struck with the shoulder at a flat angle the tip
+    // would lie over the crown and the wing nut, so a bell pattern is played with the tip, as many players do)
+    if (zone === 'bell') return { cft: STICK_BEAD, angle: 22 * D2R };
     if (zone === 'edge') return { cft: STICK_SHOULDER, angle: -12 * D2R };
     return { cft: STICK_BEAD, angle: STICK_ANGLE.ride };
   }
@@ -212,10 +214,60 @@ function contactOf(piece: DrumId, zone: Zone): { cft: number; angle: number } {
     return { cft: STICK_BEAD, angle: STICK_ANGLE.hihat };
   }
   // a rimshot: the shaft meets the near rim as the tip meets the head toward its middle (a flatter stick, held where
-  // it always is); a cross-stick lies nearly flat across the head, its shaft on the rim
+  // it always is); a cross-stick lies nearly flat across the head from the hand resting on it, its shaft on the
+  // far hoop a few centimetres from the tip, which overhangs it
   if (zone === 'rim') return { cft: 0.14, angle: 3.8 * D2R };
-  if (zone === 'crossStick') return { cft: 0.16, angle: 3 * D2R };
+  if (zone === 'crossStick') return { cft: CROSS_STICK.cft, angle: CROSS_STICK.angle };
   return { cft: STICK_BEAD, angle: STICK_ANGLE[piece] };
+}
+
+/**
+ * A cross-stick (rim click): the hand rests on the near half of the head, palm down, and the stick lies across the
+ * drum, the shaft meeting the far hoop (DrumScore puts the spot there) CROSS_STICK.cft back from the tip; the stick
+ * rises gently from the hoop to the hand. Its line is turned across the drum (sweep), and the stroke is the far end
+ * lifted a few centimetres and dropped, the hand staying where it rests. (The grip cannot turn the stick round, as
+ * some players do to strike the hoop with the butt; this is the other common way, the stick held as usual.)
+ */
+const CROSS_STICK = { cft: 0.075, angle: 3.5 * D2R, sweep: -0.25, roll: 0.15, maxPrep: 0.06 };
+
+/**
+ * Two hands on the snare in a roll (a second line's sixteenths, a press roll): each plays its own side of it, the
+ * left hand SHARED_SIDE to the left of the hit's spot and the right hand as far to the right, so the tips stay
+ * apart and the sticks make a V rather than crossing. A roll is at least ROLL_MIN hand strokes on the snare's head,
+ * each within ROLL_GAP of the one before (an eighth at 120 bpm), both hands among them. (Not a flam or a short
+ * figure: there the hands have time to keep apart. Not the toms: the first rack tom stands against the hi-hat, and
+ * the left hand moved to its left side would reach under the hi-hat.)
+ */
+export const SHARED_SIDE = 0.025;
+const ROLL_GAP = 0.25;
+const ROLL_MIN = 8;
+
+/** per hit, the side its hand plays the snare on in a roll: -1 (left), +1 (right), or 0 elsewhere */
+export function sharedDrumSides(st: Sticking): Int8Array {
+  const out = new Int8Array(st.hits.length);
+  const list = st.hits.filter((h) => h.played && (h.limb === 'R' || h.limb === 'L') && h.zone === 'head' && h.piece === 'snare');
+  for (let i = 0; i < list.length; ) {
+    let j = i + 1;
+    while (j < list.length && list[j].t - list[j - 1].t <= ROLL_GAP) j++;
+    const run = list.slice(i, j);
+    if (run.length >= ROLL_MIN && run.some((h) => h.limb === 'L') && run.some((h) => h.limb === 'R'))
+      for (const h of run) out[h.hit] = h.limb === 'L' ? -1 : 1;
+    i = j;
+  }
+  return out;
+}
+
+/** a hit's spot as its hand plays it: its own r and angle, moved to the hand's side of the snare in a roll (side -1 or +1) */
+export function handSpot(d: (typeof DRUMS)[DrumId], h: DrumHit, side: number): V3 {
+  const p = strikePoint(d, h.r, h.angle);
+  if (side) {
+    // across the head, toward the drummer's right
+    const o = strikePoint(d, 0, 0);
+    const x = strikePoint(d, 1, Math.PI / 2);
+    const l = Math.hypot(x[0] - o[0], x[1] - o[1], x[2] - o[2]);
+    for (let k = 0; k < 3; k++) p[k] += ((x[k] - o[k]) / l) * SHARED_SIDE * side;
+  }
+  return p;
 }
 
 /** the hi-hat's axis, along which its pedal lifts the top cymbal */
@@ -418,6 +470,8 @@ export class DrummerMotion {
   private warmBuf: WarmStart = { R: new Float64Array(3), L: new Float64Array(3), steps: 0, smooth: true };
   /** the time of the performance's first note */
   readonly first: number;
+  /** per hit: -1 or +1 in a roll on the snare (the left hand's to the left, the right's to the right), else 0 */
+  private shared: Int8Array = new Int8Array(0);
 
   constructor(
     readonly perf: DrumPerformance,
@@ -441,6 +495,7 @@ export class DrummerMotion {
   private planHands() {
     const perf = this.perf;
     const st = this.sticking;
+    this.shared = sharedDrumSides(st);
     for (const hand of ['R', 'L'] as Hand[]) {
       const plan = this.hands[hand];
       const list: Stroke[] = plan.strokes;
@@ -477,12 +532,13 @@ export class DrummerMotion {
           const h = perf.hits[it.k];
           s.hit = it.k;
           s.piece = h.piece;
-          s.zone = h.zone;
+          // (a rim click is struck as a rimshot is, its shaft on the near hoop)
+          s.zone = h.click ? 'rim' : h.zone;
           s.level = lh.level;
           s.velocity = h.velocity;
           s.kind = lh.grace ? 'grace' : lh.double ? 'double' : 'tap';
           s.over = lh.over;
-          this.frameAt(s, h.piece, h.zone, h, hand);
+          this.frameAt(s, h.piece, s.zone as Zone, h, hand);
         }
         list.push(s);
       }
@@ -495,11 +551,12 @@ export class DrummerMotion {
   private frameAt(s: Stroke, piece: DrumId, zone: Zone | 'choke', h: DrumHit | null, hand: Hand) {
     const d = DRUMS[piece];
     const n = surfaceNormal(d);
-    // the hit's own spot (its r and angle, as the kit's reactions take it), or the instrument's usual one
-    let p: V3 = h ? strikePoint(d, h.r, h.angle) : (SPOTS.head(d).slice() as V3);
+    // the hit's own spot (its r and angle, as the kit's reactions take it), or the instrument's usual one; in a roll
+    // on the snare, each hand to its own side of it
+    let p: V3 = h ? handSpot(d, h, this.shared[h.i]) : (SPOTS.head(d).slice() as V3);
     // (the left hand, uncrossed on the hi-hat, plays its edge with the tip: its shoulder would have to reach across it)
     const c = zone === 'choke' ? { cft: STICK.length * 0.62, angle: 30 * D2R } : hand === 'L' && piece === 'hihat' ? contactOf('hihat', 'bow') : contactOf(piece, zone);
-    if (zone === 'rim') for (let k = 0; k < 3; k++) p[k] += n[k] * HOOP;
+    if (zone === 'rim' || zone === 'crossStick') for (let k = 0; k < 3; k++) p[k] += n[k] * HOOP;
     if (zone === 'choke') p = edgeNear(piece);
     // a cymbal where it is at that instant: swinging from earlier hits, the hi-hat lifted by its pedal
     if (h && d.kind === 'cymbal') {
@@ -519,10 +576,10 @@ export class DrummerMotion {
     s.P.set(p);
     s.angle = c.angle;
     s.cft = c.cft;
-    s.roll = PALM_ROLL[piece] + (zone === 'crossStick' ? 0.25 : 0);
+    s.roll = zone === 'crossStick' ? CROSS_STICK.roll : PALM_ROLL[piece];
     // the left hand on the snare plays from a little further right, its stick pointing more forward: clear of the
     // hi-hat beside it when it lifts
-    s.sweep = hand === 'L' && piece === 'snare' && zone !== 'crossStick' ? 0.12 : 0;
+    s.sweep = zone === 'crossStick' ? CROSS_STICK.sweep : hand === 'L' && piece === 'snare' ? 0.12 : 0;
   }
 
   /** heights, timings, rebounds, travel and the forearm, stroke by stroke for one hand */
@@ -552,6 +609,8 @@ export class DrummerMotion {
         // under the other arm (the left hand on the snare with the right crossed over it to the hi-hat) a stroke
         // has only the room below that arm
         if (this.crossedOver(hand, s.t)) H = Math.min(H, UNDER_ARM * (0.9 + 0.2 * var1));
+        // a cross-stick only lifts the stick's far end off the hoop, the hand resting on the head
+        if (s.zone === 'crossStick') H = Math.min(H * 0.4, CROSS_STICK.maxPrep);
         H = Math.max(H, 0.006);
       }
       s.prep = H;
@@ -724,8 +783,10 @@ export class DrummerMotion {
           if (hand === 'R') Y[k] += 0.2 * Math.exp(-((tau / 0.32) ** 2));
         }
       }
-    // the pulse: the body sways and the head nods on the beat (quarters, or halves when fast), more as the playing grows
+    // the pulse: the body sways and the head nods on the beat (or every other beat when fast, once a bar in a fast
+    // three: a jazz waltz is felt in one), more as the playing grows
     const half = 60 / B > 130;
+    const pulseLen = half ? (this.perBar % 2 === 1 ? this.perBar * B : 2 * B) : B;
     const intensity = blur(new Float32Array(Array.from({ length: n }, (_, i) => effR[i] + effL[i])), 0.8);
     let imax = 0;
     for (let i = 0; i < n; i++) imax = Math.max(imax, intensity[i]);
@@ -734,7 +795,6 @@ export class DrummerMotion {
     const hy = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const t = i / RATE;
-      const pulseLen = half ? 2 * B : B;
       const ph = (t - this.origin) / pulseLen;
       const bar = Math.floor((t - this.origin) / (B * this.perBar));
       const level = clamp(intensity[i] / (imax || 1), 0, 1);

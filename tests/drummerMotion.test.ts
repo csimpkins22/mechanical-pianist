@@ -2,12 +2,9 @@
 // the kit's reactions say it landed, the same t always gives the same pose whatever came before, and evaluating
 // it allocates nothing. (Frame-by-frame contacts, limits and speeds: drummerMotion-*.test.ts.)
 import { describe, expect, test } from 'vitest';
-import { GROOVES, loadGroove } from './drummerMotionAudit';
+import { GROOVES, loadGroove, strokeSpots } from './drummerMotionAudit';
 import { blankTargets, maxLift, PREP } from '../src/drums/DrummerMotion';
 import { createPose } from '../src/drums/DrummerIK';
-import { CYMBAL_PROFILES, DRUMS, strikePoint, surfaceNormal, type V3 } from '../src/drums/KitLayout';
-import { cymbalPoint } from '../src/drums/KitPose';
-import type { CymbalId } from '../src/drums/KitMotion';
 import { mulberry32 } from '../src/core/random';
 import { execFileSync } from 'node:child_process';
 
@@ -19,6 +16,7 @@ describe.each(GROOVES)('%s', (name) => {
   test("every hand's stroke lands on its spot at its time: the stick's contact within 2 mm, the spot where the kit's reactions put the hit", () => {
     const tg = blankTargets();
     const pose = createPose();
+    const spotOf = strokeSpots(g);
     const bad: string[] = [];
     let n = 0;
     let worst = 0;
@@ -27,10 +25,8 @@ describe.each(GROOVES)('%s', (name) => {
       const hit = g.perf.hits[h.hit];
       g.motion.pose(h.t, tg, pose);
       // where the kit's reactions take the hit to land: its r and angle on the instrument, as it is at that instant
-      const d = DRUMS[hit.piece];
-      let spot = strikePoint(d, hit.r, hit.angle) as number[];
-      if (d.kind === 'cymbal') spot = cymbalPoint(hit.piece as CymbalId, spot, g.kit.evaluate(h.t), [0, 0, 0]) as number[];
-      else if (hit.zone === 'rim') spot = spot.map((x, k) => x + surfaceNormal(d)[k] * 0.008);
+      // (on the hand's side of the snare in a roll)
+      const spot = spotOf(h.hit);
       const e = Math.max(pose.error[h.limb], dist(pose.stick[h.limb].contact, tg[h.limb].point));
       const off = dist(tg[h.limb].point, spot);
       worst = Math.max(worst, e, off);
@@ -95,5 +91,3 @@ test('evaluating targets, and posing once the arms are planned, allocate nothing
   expect(out.pose).toBeLessThan(out.solve);
 }, 240000);
 
-void CYMBAL_PROFILES;
-void ({} as V3);

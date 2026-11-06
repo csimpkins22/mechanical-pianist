@@ -114,7 +114,13 @@ export class LibrarySheet {
       if (!LIBRARY.some((x) => x.group === g.id)) continue;
       const sec = el('section', 'lib-sec');
       sec.appendChild(el('h3', 'sec', g.label));
-      for (const e of LIBRARY.filter((x) => x.group === g.id)) sec.appendChild(this.entryRow(e, ++n));
+      // (within a group, a heading wherever its section changes: the drums by family of styles)
+      let section: string | undefined;
+      for (const e of LIBRARY.filter((x) => x.group === g.id)) {
+        if (e.section && e.section !== section) sec.appendChild(el('h4', 'lib-sub', escapeHtml(e.section)));
+        section = e.section;
+        sec.appendChild(this.entryRow(e, ++n));
+      }
       this.body.appendChild(sec);
     }
     const mine = el('section', 'lib-sec');

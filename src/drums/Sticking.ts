@@ -305,9 +305,9 @@ export function strokeLevels(hits: DrumHit[]): Level[] {
   });
 }
 
-/** where the beats are: the beat's length, the first bar line, and beats per bar */
+/** where the beats are: the beat's length (the felt pulse: a dotted quarter in 6/8), the first bar line, and beats per bar */
 export function beatGrid(perf: DrumPerformance) {
-  const beat = 60 / (perf.bpm > 0 ? perf.bpm : 120);
+  const beat = (60 / (perf.bpm > 0 ? perf.bpm : 120)) * (perf.pulse ?? 1);
   const origin = perf.bars.length ? perf.bars[0] : 0;
   const perBar = perf.bars.length > 1 ? Math.max(1, Math.round((perf.bars[1] - perf.bars[0]) / beat)) : 4;
   return { beat, origin, perBar };
@@ -684,7 +684,8 @@ function handEvents(perf: DrumPerformance, at: V3[], graceOf: Map<number, number
       choke: false,
       t: h.t,
       piece: h.piece,
-      zone: h.zone,
+      // (a rim click is either hand's, as a rimshot is; a cross-stick laid across the drum is the left's)
+      zone: h.click ? 'rim' : h.zone,
       at: at[h.i],
       vel: h.velocity,
       keeper,
