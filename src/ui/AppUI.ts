@@ -32,6 +32,7 @@ const ICON = {
     '<path d="M5.5 13V5.6A1.6 1.6 0 017.1 4h9.8a1.6 1.6 0 011.6 1.6V13M5.5 16.6V20M18.5 16.6V20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.8 13h16.4v3.6H3.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 13v2M12 13v2M15.5 13v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
   pianoOpen:
     '<path d="M5.5 13V8.6M18.5 13V8.6M5.5 16.6V20M18.5 16.6V20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M6.2 2.9l11.2-1.3.5 4.4-11.2 1.3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8.6 9.2v3.4M10.8 9.2v3.4M13.2 9.2v3.4M15.4 9.2v3.4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" opacity="0.8"/><path d="M3.8 13h16.4v3.6H3.8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 13v2M12 13v2M15.5 13v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  repeat: '<path d="M7 8h9a3 3 0 013 3v1M17 16H8a3 3 0 01-3-3v-1M15 5.5L18 8l-3 2.5M9 13.5L6 16l3 2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 
@@ -59,6 +60,7 @@ export class AppUI {
   private openBtn!: HTMLButtonElement;
   private volBtn!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
+  private contBtn!: HTMLButtonElement;
   private library!: LibrarySheet;
   private livePanel!: LivePanel;
   private debugInfo!: HTMLDivElement;
@@ -90,8 +92,9 @@ export class AppUI {
     const back = this.btn(ICON.back, 'Previous frame (←)', () => this.app.step(-1));
     this.playBtn = this.btn(ICON.play, 'Play / pause (Space)', () => this.app.toggle(), 'play');
     const fwd = this.btn(ICON.fwd, 'Next frame (→)', () => this.app.step(1));
+    this.contBtn = this.btn(ICON.repeat, 'Continuous play (C): when a library piece ends, go on to the next', () => this.app.setContinuous(!this.app.continuous));
     this.timeLabel = el('span', 'time');
-    left.append(restart, back, this.playBtn, fwd, this.timeLabel);
+    left.append(restart, back, this.playBtn, fwd, this.contBtn, this.timeLabel);
     // the camera: the director's edit, or one of its shots held (stepped with the arrows)
     const mid = el('div', 'group mid');
     const cams = el('div', 'cams');
@@ -282,6 +285,8 @@ export class AppUI {
       this.volBtn.innerHTML = svg(a.audio.muted ? ICON.mute : ICON.vol);
     }
     this.speedSel.value = String(a.speed);
+    this.contBtn.classList.toggle('on', a.continuous);
+    this.contBtn.setAttribute('aria-pressed', String(a.continuous));
     document.body.classList.toggle('playing', a.playing);
     if (this.drawer.classList.contains('open')) {
       // refresh the fingering list as the playhead moves on (not every frame)
@@ -527,6 +532,11 @@ export class AppUI {
         case 'm':
         case 'M':
           a.audio.setMuted(!a.audio.muted);
+          break;
+        case 'c':
+        case 'C':
+          a.setContinuous(!a.continuous);
+          this.toast(a.continuous ? 'Continuous play: on' : 'Continuous play: off', 1600);
           break;
         case 's':
         case 'S': {
