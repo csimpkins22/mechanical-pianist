@@ -126,6 +126,7 @@ How it works (`src/live/`). A piece is planned ahead in one go; live playing is 
 | Play / pause | Space, or ▶ (sound starts on the first Play) |
 | Scrub | drag the timeline (sound is silent while dragging and resumes where you let go) |
 | Previous / next frame (1/30 s) | ← / → or the step buttons |
+| Continuous play (at the end of a library piece, go on to the next, wrapping round) | C, or the loop button next to the transport |
 | Back / forward 1 s | Shift + ← / → |
 | Start / end, restart | Home / End, ⏮ |
 | Speed (0.25×–1.5×) | the speed menu, `[` / `]` |

@@ -470,6 +470,31 @@ export class App {
     else void this.play();
   }
 
+  /** when a library piece ends, open the next one in the library (the last wraps to the first) and keep playing */
+  continuous = false;
+
+  setContinuous(on: boolean) {
+    this.continuous = on;
+    this.emit('transport');
+  }
+
+  private async playNext() {
+    const src = this.piece?.source;
+    if (!src || src.kind !== 'library') return;
+    const i = LIBRARY.findIndex((e) => e.id === src.id);
+    if (i < 0) return;
+    const next = LIBRARY[(i + 1) % LIBRARY.length];
+    try {
+      await this.openEntry(next);
+    } catch (e) {
+      console.warn(`could not continue to ${next.title}`, e);
+      return;
+    }
+    // only if that piece is the one now open (not superseded) and nothing else took over
+    const cur = this.piece?.source;
+    if (this.continuous && !this.playing && !this.live && cur?.kind === 'library' && cur.id === next.id) void this.play();
+  }
+
   restart() {
     this.seek(0);
     if (!this.playing) void this.play();
@@ -687,6 +712,7 @@ export class App {
         this.playing = false;
         this.audio.stop();
         this.emit('transport');
+        if (this.continuous) void this.playNext();
       }
       this.renderNow();
       this.emit('time');
